@@ -1,0 +1,45 @@
+name: Implementation task
+description: Define a focused implementation with verifiable acceptance criteria.
+body:
+  - type: markdown
+    attributes:
+      value: Write in English. Keep one deliverable per issue and link existing work rather than duplicating it.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the problem and the observable result this task should deliver.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Identify the affected modules, included work, and explicit exclusions.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use measurable checklist items that a reviewer can verify.
+      placeholder: '- [ ] A specific outcome is demonstrated under stated conditions.'
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Explain which checks or evidence will demonstrate acceptance. Include platform or live-service checks when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and open decisions
+      description: Link blocking issues and owner decisions, or state None. References here must be added as native blocking relationships during triage.
+  - type: textarea
+    id: specification
+    attributes:
+      label: Specification references
+      description: Link relevant PRD requirements, architecture sections, ADRs, or supporting material.

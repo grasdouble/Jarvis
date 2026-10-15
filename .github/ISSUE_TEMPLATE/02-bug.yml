@@ -1,0 +1,51 @@
+name: Bug report
+description: Report an observed failure with reproduction details and expected behavior.
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Write in English. Search for an existing report and remove credentials or private repository content from shared diagnostics.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Describe what happened, its impact, and whether it is reproducible or intermittent.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the correct result and cite the requirement when known.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest known reproduction. If steps are unknown, state that and describe the circumstances observed.
+      placeholder: |
+        1. Prepare the relevant state or sanitized fixture.
+        2. Perform the action.
+        3. Observe the failure.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the JARVIS version or revision and relevant macOS, Colima, Engine, Node.js, OpenCode, or provider versions. Mark unknown or inapplicable values honestly.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include relevant error text or correlation IDs without secrets or confidential source code.
+      render: text
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues and requirements
+      description: Link existing reports, blocking issues, or the relevant acceptance criteria.

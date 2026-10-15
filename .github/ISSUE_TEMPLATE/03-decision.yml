@@ -1,0 +1,48 @@
+name: Decision request
+description: Resolve a product, architecture, or operational choice before dependent work proceeds.
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: Write in English. A decision request records an unresolved choice; creating it does not authorize implementing an option.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and decision needed
+      description: Explain the choice, why it matters, and the affected requirement or decision-register entry.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options and trade-offs
+      description: Describe the viable options and relevant consequences for scope, isolation, cost, or operations.
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation and remaining uncertainty
+      description: Propose an option with reasons, or explain what information is still needed to recommend one.
+    validations:
+      required: true
+  - type: input
+    id: owner_gate
+    attributes:
+      label: Decision owner and required gate
+      description: Name the owner, or state that one must be assigned, and identify the milestone or gate that needs this decision. Add a date only if agreed.
+    validations:
+      required: true
+  - type: textarea
+    id: resolution
+    attributes:
+      label: Resolution criteria
+      description: State the evidence needed to close this decision, including where the chosen option and rationale must be recorded.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Blocked work and references
+      description: Link dependent issues and relevant PRD, architecture, or ADR sections. Add native blocking relationships during triage.
