@@ -76,4 +76,3 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
       - name: Scan the full available Git history with redacted findings
         run: '"${RUNNER_TEMP}/gitleaks" git . --redact --no-banner'
-

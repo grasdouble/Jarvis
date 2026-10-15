@@ -112,4 +112,3 @@ if __name__ == '__main__':
     except (ValueError, yaml.YAMLError) as error:
         print(f'Configuration check failed: {error}', file=sys.stderr)
         raise SystemExit(1)
-
