@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.0 • October 15, 2026 • Companion to the PRD and roadmap
+Document version 1.2 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -8,7 +8,7 @@ JARVIS is a TypeScript and Node.js modular monolith deployed as several Docker p
 
 The proposed profile for the Mac M2 Pro uses a sandbox with `network_mode: none`, no mounted macOS files, no GitHub secret, and no provider key. An LLM gateway dedicated to the attempt is accessible through a Unix socket shared in a Docker volume. A local HTTP relay lets OpenCode use it as a provider endpoint. A trusted controller, the sole holder of the Engine socket, transports session commands through a fixed relay launched by Docker exec. This combination avoids opening an OpenCode server on the Mac or granting a network route to the control plane.
 
-This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J1 prototype must demonstrate feasibility with the selected versions; any failure keeps the product in observation mode. Requirements F01 through F09, N01 through N12, and POL 01 through POL 07 refer to the separate [PRD and roadmap](JARVIS_v0_1_PRD_and_roadmap.md).
+This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J1 prototype must demonstrate feasibility with the selected versions; any failure keeps the product in observation mode. Requirements F01 through F10, N01 through N13, and POL 01 through POL 07 refer to the separate [PRD and roadmap](prd-and-roadmap.md).
 
 ## 2 Architecture decisions
 
@@ -23,6 +23,8 @@ This is a proposed architecture to implement. The JARVIS contracts, hardening pr
 | ADR 07 Review | Static repository analysis, no execution | Approved GitHub CI provides test evidence |
 | ADR 08 Merge | Asynchronous GitHub API, expected head, no bypass | Remote confirmation required; queues and stacked PRs excluded |
 | ADR 09 Operations | One task at a time, initial observation mode | Match Mac resources; enable autonomy per repository |
+| ADR 10 Host runtime | Colima Docker runtime, dedicated `jarvis` profile, native ARM64 | No Docker Desktop dependency; no macOS directory sharing; validate isolation on the pinned platform |
+| ADR 11 Durable memory | Core-owned PostgreSQL history, checkpoints, and scoped knowledge | Bounded context rebuilt per attempt; no persistent agent home or automatic policy learning |
 
 Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image are pinned at J0. The OpenCode runtime retains its own dependencies, with no assumption about its internal JavaScript engine. PNPM uses an explicit workspace and `workspace:` internal dependencies; versions and the lockfile are checked into version control. [T1](https://nodejs.org/en/about/previous-releases), [T2](https://pnpm.io/workspaces)
 
@@ -35,7 +37,7 @@ Mac M2 Pro
   Browser -> 127.0.0.1:3000 -> API + React interface
   Optional HTTPS relay -> webhook ingress only
 
-Docker Desktop / Linux VM
+Colima profile jarvis / Linux VM / Docker Engine
   Private core network
     ingress -> API -> PostgreSQL
                     -> worker / scheduler
@@ -71,7 +73,7 @@ GitHub secrets, effective policy configuration, approvals, and the database are 
 
 The threat model includes a malicious PR, hostile instruction file, compromised dependency, manipulated LLM report, replayed event, stuck task, and compromised agent process. Controls must confine a compromised agent to its snapshot, ephemeral state, and LLM request allocation.
 
-The security of the Mac, Docker Desktop, the guest kernel, and approved images remains an infrastructure assumption. Containers share the VM's Linux kernel; an escape vulnerability or controller compromise goes beyond OpenCode permissions. A dedicated Linux machine or an independent VM with a dedicated engine is a future option for executing more hostile arbitrary code.
+The security of the Mac, Colima/Lima virtualization, Docker Engine, the guest kernel, and approved images remains an infrastructure assumption. Containers share the VM's Linux kernel; an escape vulnerability or controller compromise goes beyond OpenCode permissions. A dedicated Linux machine or an independent VM with a dedicated engine is a future option for executing more hostile arbitrary code.
 
 ## 4 Sandbox manager options
 
@@ -80,8 +82,8 @@ The security of the Mac, Docker Desktop, the guest kernel, and approved images r
 | Option | Engine access | Benefit | Limitation and decision |
 | --- | --- | --- | --- |
 | A Containerized controller | Engine socket mounted only in this service | Every JARVIS component containerized; simple deployment | Recommended for the MVP, but highly privileged access must be isolated and audited |
-| B Small macOS service | User's Docker Desktop context socket, through launchd | No socket in application containers; separate controller | Native exception to the all-Docker objective; Mac maintenance and permissions must be accepted |
-| C Engine in a dedicated VM | Authenticated API or private channel to a separate engine | Reduces exposure of personal Docker Desktop and other projects | More RAM and administration; later hardening target |
+| B Small macOS service | Colima profile's macOS-side Docker context socket, through launchd | No socket in application containers; separate controller | Native exception to the all-Docker objective; Mac maintenance and permissions must be accepted |
+| C Separate execution VM or Linux host | Authenticated API or private channel to a separate engine | Separates agent execution from the core VM and its data | Stronger separation than the baseline dedicated Colima profile; more RAM and administration |
 | D Generic Docker API proxy | Proxy in front of Engine | Can restrict verbs or endpoints | Insufficient on its own: a container-creation POST can request bind mounts or privileges; not a sufficient security boundary |
 
 Do not use privileged Docker-in-Docker, `privileged` mode, an Engine socket in the worker, or an unauthenticated remote Docker API. A socket mounted `:ro` is not a read-only API: the mount restriction does not prevent mutation calls. The Docker daemon is a privileged control surface. [D3](https://docs.docker.com/engine/security/)
@@ -94,7 +96,7 @@ The controller checks profiles against its own read-only configuration, enforces
 
 It retains a minimal registry of managed resources and reconstructs state using the labels `jarvis.managed`, `task_id`, `attempt_id`, and `expires_at`. An Engine identifier returned by an agent is never accepted. Cleanup removes only resources whose identity and labels match the registry; it never runs a global prune.
 
-The controller container runs neither OpenCode, repository code, nor LLM prompts. It uses a minimal image, installs no package at runtime, publishes no port, and runs under a user with only the Unix socket access it needs. That access remains powerful despite the other hardening measures. With ECI, the socket-mount policy must be verified: any exception must target only the controller image and must not disable ECI globally. [D2](https://docs.docker.com/desktop/enterprise/hardened-desktop/enhanced-container-isolation/)
+The controller container runs neither OpenCode, repository code, nor LLM prompts. It uses a minimal image, installs no package at runtime, publishes no port, and runs under a user with only the Unix socket access it needs. That access remains powerful despite the other hardening measures. In the Colima deployment, only this container binds the guest socket `/var/run/docker.sock`. The macOS-side socket used by the Docker CLI is a forwarded endpoint, not the bind source for this container. Resolve the host endpoint from the `colima-jarvis` context rather than assuming a path. [C4](https://github.com/abiosoft/colima/blob/main/environment/vm/lima/yaml.go)
 
 ### 4.3 OpenCode transport without a control network
 
@@ -136,7 +138,7 @@ OpenCode's HOME and XDG config, data, and cache directories are explicitly redir
 
 ### 5.2 Dedicated LLM gateway
 
-The `none` driver leaves only loopback and provides no external network interface. [D4](https://docs.docker.com/engine/network/drivers/none/) The OpenCode container uses a local HTTP bridge on loopback, forwarding requests through the Unix socket in `/llm-transport`. The gateway, another trusted container dedicated to the attempt, listens on this socket and communicates with the provider over TLS. Mounting the directory read-only does not prevent socket connections; UID/GID permissions and Docker Desktop support are verified in the prototype.
+The `none` driver leaves only loopback and provides no external network interface. [D4](https://docs.docker.com/engine/network/drivers/none/) The OpenCode container uses a local HTTP bridge on loopback, forwarding requests through the Unix socket in `/llm-transport`. The gateway, another trusted container dedicated to the attempt, listens on this socket and communicates with the provider over TLS. Mounting the directory read-only does not prevent socket connections; UID/GID permissions and socket sharing through Linux named volumes on the pinned Colima/Engine versions are verified in the prototype.
 
 The gateway exposes neither a CONNECT proxy nor an unrestricted destination URL. Its profile fixes the provider, base URL, model, permitted API routes, body size, request count, maximum tokens, concurrency, and deadline. It rejects redirects to other origins and any resolution to loopback, private, link-local, multicast, or metadata addresses; IPv6 and resolution after redirects are included. Destinations for a provider running locally on the Mac are prohibited by default and would require a separate network profile, still outside the MVP.
 
@@ -148,19 +150,23 @@ The trusted secrets broker supplies the credential to the gateway through the co
 
 A variant using a Docker `internal` network, outbound proxy, and L3/L4 filtering can replace the socket if isolation is proven. `HTTP_PROXY` variables alone do not force an application to use the proxy. The network gateway must not route arbitrary packets; its administration plane is inaccessible to agents.
 
-This variant requires rules enforced in the VM's actual network path, handling DNS, IPv6, QUIC, and gateway access. It is more difficult on Docker Desktop and is not the initial profile. Tests must demonstrate that the agent cannot reach `host.docker.internal`, `gateway.docker.internal`, Mac and LAN addresses, the core network, or neighboring networks. Docker Desktop's networking behavior makes assumed rules on the macOS firewall alone insufficient. [D5](https://docs.docker.com/desktop/features/networking/)
+This variant requires rules enforced in the actual Colima/Lima VM network path, handling DNS, IPv6, QUIC, and gateway access, and is not the initial profile. Tests must demonstrate that the agent cannot reach `host.lima.internal`, `host.docker.internal`, `gateway.docker.internal` where defined, resolved gateway addresses, Mac and LAN addresses, the core network, or neighboring networks. Test direct addresses as well as names; a failed DNS lookup alone proves no network isolation. Do not rely on the macOS firewall alone to control guest traffic. [C5](https://lima-vm.io/docs/config/network/user/)
 
-## 6 Docker Desktop precautions on Mac
+## 6 Colima deployment and Mac isolation
 
-Docker Desktop runs the daemon and containers inside a Linux VM. macOS files shared through bind mounts remain an explicit access path. Not mounting personal folders is therefore necessary, but does not provide absolute protection against a compromised daemon. [D1](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/)
+Use the Docker runtime in a dedicated Colima profile named `jarvis`. A profile has its own VM and container data. Explicitly select `docker --context colima-jarvis` for administrative operations and assert the expected Engine identity before creating resources. Do not depend on the user's globally active context. Colima replaces Docker Desktop; the Engine API, Compose services, named volumes, and per-attempt container model remain applicable. [C1](https://colima.run/docs/runtimes/), [C2](https://colima.run/docs/profiles/)
 
-The Docker Desktop account can generally share more files than are actually mounted. Reduce directories permitted for sharing, disable unused features, and avoid hosting sensitive projects or containers in the same Engine. Mount neither the user's home directory, `.ssh`, the Keychain, nor cloud configuration. The only host files allowed for the core are explicitly inventoried bootstrap secrets in a dedicated directory; none is mounted in a sandbox.
+Before first startup, prepare the profile configuration with `runtime: docker`, `arch: aarch64`, `vmType: vz` on a compatible macOS version, `mounts: null`, and `forwardAgent: false`. Keep Kubernetes disabled and avoid bridged networking or a reachable VM address unless a separately reviewed use case requires them. Disabling a reachable address is not an egress firewall. Verify the exact settings against the pinned release. [C3](https://colima.run/docs/configuration/)
 
-Application ports bind explicitly to `127.0.0.1`, never to all interfaces. Host networking, devices, host namespaces, and additional sharing features are excluded. Docker Desktop's special addresses must be included in network-denial acceptance tests. Sleep suspends execution: no 24/7 SLA can be promised on a laptop.
+**Default-sharing trap.** Colima's default mount configuration can expose the user's home directory as writable inside the VM. `mounts: []` does not disable these defaults; `mounts: null` is the documented opt-out. Inspect the effective guest mounts and verify that a Mac-side canary file cannot be read from the VM or a sandbox. Fail startup if a macOS directory share is present. Never forward the SSH agent, mount `.ssh`, or expose cloud configuration or Keychain access. [C3](https://colima.run/docs/configuration/), [C4](https://github.com/abiosoft/colima/blob/main/environment/vm/lima/yaml.go)
 
-ECI adds container isolation inside the VM and socket restrictions; availability depends on the Business offering and its configuration. Agents remain unprivileged and have no socket even with ECI. Docker Desktop, macOS, and image updates are tracked; every platform update requires isolation verification before automerge resumes. [D2](https://docs.docker.com/desktop/enterprise/hardened-desktop/enhanced-container-isolation/)
+Keep snapshots, state, transport sockets, and database data in Linux named volumes. Build contexts can be uploaded by the Docker client without a permanent Mac directory share. Provision bootstrap secrets through a trusted administrative transfer into restricted VM-local files; Compose secret file sources must exist where the daemon can resolve them. No broad Mac mount is introduced to make provisioning work. Section 16 defines ownership and rotation.
 
-Prefer `linux/arm64` images, including OpenCode and its tools. Check native executables and each image's dependencies; amd64 emulation is not an acceptable performance assumption. An initial baseline to measure is 8 GiB of VM memory if physical RAM permits, one 4 GiB sandbox, and around 40 GiB free for images, the database, logs, and snapshots. Adjust after measurement rather than reserving most of the Mac's memory.
+Application ports bind explicitly to `127.0.0.1`. Verify both the guest bindings and the forwarded Mac listeners, including a negative connection test from another LAN device. Publish neither PostgreSQL, the controller, nor OpenCode. Host networking, devices, host namespaces, and additional sharing features are excluded. Sleep suspends execution: no 24/7 SLA can be promised on a laptop.
+
+Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before automerge resumes.
+
+Prefer native `linux/arm64` images, including OpenCode and its tools. An initial sizing proposal is 4 VM CPUs, 8 GiB of VM memory if physical RAM permits, one sandbox capped at 2 CPUs and 4 GiB, and at least 40 GiB free for images, the database, logs, and snapshots. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J1 on the actual Mac. These are design targets, not measured results.
 
 ## 7 Monorepo modules and dependencies
 
@@ -178,6 +184,7 @@ packages/
   github/              Octokit, pagination, provenance, and merge
   runtime/             AgentRuntime and OpenCode adapter
   llm/                 profiles, capabilities, estimates, and redaction
+  memory/              scoped knowledge lifecycle and bounded context assembly
   persistence/         SQL, migrations, and transactions
   queue/               leases, retries, and outbox
   observability/       structured logs, metrics, and traces
@@ -273,6 +280,10 @@ interface SandboxManager {
 | POST /api/v1/approvals/:id/decision | Approve or reject | Expected ActionDigest and version, expiry, CSRF |
 | POST /api/v1/control/pause | Durable global stop | Prioritized, authenticated, and audited |
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
+| GET /api/v1/repositories/:id/memories | Scoped knowledge and provenance | Authenticated, status filters, cursor pagination |
+| POST /api/v1/repositories/:id/memories | Create an observation or owner-authored note | Closed schema, bounded text, Idempotency-Key, CSRF, no policy fields |
+| POST /api/v1/memories/:id/revisions | Correct, validate, or invalidate knowledge | Owner session, expected version, source and applicability required, audited |
+| DELETE /api/v1/memories/:id | Forget knowledge | Owner session, expected version, CSRF, active-attempt cancellation and purge |
 | GET /api/v1/tasks/:id/events | SSE progress | Session, filtered events, no raw sensitive data |
 | GET /health/live and /health/ready | Internal probes | Details not exposed publicly |
 
@@ -348,6 +359,11 @@ Fallback is limited to a per-repository approved list with the same confidential
 | evidence_snapshots | revision, checks_json, reviews_json, rules_json, fetched_at, hash | Immutable evidence from trusted adapters |
 | tasks | revision, type, profile_hash, policy_hash, state, dedupe_key | Unique logical key per revision and profiles |
 | task_attempts | task_id, ordinal, lease_epoch, lease_until, sandbox_id, state | Append-only attempt history; absolute deadline |
+| task_checkpoints | task_id, attempt_id, lease_epoch, step, schema_version, state_json, created_at | Core-authored bounded workflow state; no arbitrary command or provider session replay |
+| knowledge_items | repository_id, id, current_version, lifecycle_state, deleted_at | Stable identity, scoped authorization, lifecycle serialization |
+| knowledge_versions | repository_id, item_id, version, claim_kind, content, source_ref, source_hash, applicability_json, review_after, validated_by, created_at, search_vector | Immutable bounded revisions; content purge supported through a privileged retention role |
+| task_contexts | task_id, attempt_id, repository_id, schema_version, profile_hash, input_hashes, selected_versions, omissions, budget, created_at | Manifest of inputs and memory versions; no duplicate raw excerpts |
+| forgotten_items | repository_id, item_id, forgotten_at | Content-free deletion markers, also exported separately for restore reconciliation |
 | review_reports | task_id, attempt_id, schema_version, report_json, digest | Immutable report; one accepted canonical version per task |
 | policy_decisions | evidence_id, report_id, policy_hash, outcome, reasons, action_digest, expires_at | Decisions never modified in place |
 | approvals | action_digest, actor_id, decision, expected_version, expires_at, consumed_at | Atomically consumed approval; explicit invalidation |
@@ -367,6 +383,46 @@ An installation has multiple repositories; a repository has multiple PRs and rul
 Composite foreign keys, including repository and PR where necessary, prevent a report from repository A from authorizing an action on B. Transitions check within the transaction that the PR revision is still current. A partial index or domain-lock constraint prevents two active intents for the same PR. Deleting secrets and temporary artifacts is independent of retaining minimal audit evidence.
 
 Application audit records are not tamper-proof against a PostgreSQL administrator or compromised Engine control. A hash chain and regular exports can make changes detectable; a regulatory guarantee would require dedicated external storage, outside scope.
+
+### 11.3 Memory ownership and categories
+
+JARVIS owns durable memory in PostgreSQL volumes. A fresh OpenCode container receives a selected context, produces a report, and is deleted; its HOME, raw conversation, and provider session are not the long-term store. Provider changes do not change knowledge identifiers or require migration of a provider's private conversation state. No model training or weight update is implied.
+
+| Category | Authoritative storage | Lifecycle and use |
+| --- | --- | --- |
+| Working state | Tasks, attempts, leases, core-authored checkpoints | Resume the workflow at a safe boundary; recreate the sandbox after a crash |
+| Operational history | Reports, observed GitHub outcomes, decisions, audit, usage | Evidence and prior incidents; preserve the distinction between analysis and observed results |
+| Repository knowledge | Knowledge items and immutable versions | Conventions, architecture facts, sensitive paths, past regressions, and hypotheses with provenance |
+| Preferences and rules | Versioned repository configuration and policies | Owner-controlled authority; not writable through knowledge APIs or agent output |
+
+The memory module owns lifecycle transitions, scope checks, retrieval, and context manifests. The worker invokes it through a typed port; agents and LLM gateways have neither SQL access nor a general memory API. Owner-authored notes enter as observations and may be validated through an explicit authenticated action. Automatically extracted notes are proposals with `claim_kind` observation or hypothesis; a model's confidence score never substitutes for validation. Validation records an actor and supporting source but grants no execution authority to text.
+
+### 11.4 Applicability, provenance, and context assembly
+
+Each knowledge version records its repository, source type and identifier, source revision/hash, creation date, claim kind, dependency/version or path applicability, review deadline, and optional superseded version. GitHub facts retain their revision and observation date. Model summaries retain their source links and limitations; a summarized assertion does not become a verified fact merely because it appears in several reports. Do not automatically follow URLs stored in memories.
+
+For each attempt, the core performs the following bounded procedure:
+
+1. Resolve the authorized repository and current H/B through trusted adapters; read the active policy separately from knowledge.
+2. Filter by repository, lifecycle state, review deadline, source validity, and applicability to the current dependency, paths, and revisions. The initial default supplies only owner-validated knowledge as additional memory; recent unvalidated reports remain visible in history and may inform a proposal, not automatic reuse.
+3. Rank eligible items using exact metadata matches and PostgreSQL full-text search, with deterministic recency and identifier tie-breaking. PostgreSQL supports indexed text matching and relevance ranking; JARVIS must implement the authorization and lifecycle filters itself. [P3](https://www.postgresql.org/docs/current/textsearch-intro.html)
+4. Select at most 10 items within 4,000 tokens and 32 KiB in total. These are proposed defaults within the selected runtime's complete input/output context allowance. Use the provider/model tokenizer or a conservative bound; no known token budget means no start. Required mission and current evidence take priority. If critical input cannot fit, return a limited review ineligible for automerge. Record omitted items and contradictions without generating an unsupported consensus.
+5. Persist a context manifest containing input hashes, knowledge versions, retrieval/profile version, and limits. Deliver selected excerpts as explicitly quoted, untrusted reference data through the controller transport; do not provide database access or a searchable history dump to the agent.
+6. Bind the accepted report to that manifest. Before accepting it, verify that the selected versions have not been deleted, invalidated, expired, or superseded. A conflicting edit cancels the attempt and schedules fresh analysis if authorized. Current GitHub checks and protections are still reread before any action.
+
+The initial retrieval path requires neither embeddings nor a vector database. Later semantic retrieval must retain the same scope and deletion filters, pass a relevance and leakage corpus, and account for the confidentiality and cost of any external embedding provider.
+
+### 11.5 Knowledge lifecycle, forgetting, and recovery
+
+Use `proposed`, `validated`, `invalidated`, `expired`, and `deleted` lifecycle states; `claim_kind` separately distinguishes an observation from a hypothesis. Owner validation or correction requires an expected version, source, applicability, and review date. Each transition records an audit event in the same transaction and increments the item version. Repeated proposal ingestion is deduplicated by repository, source version, and normalized content hash. Contradictory claims remain distinguishable; a later date alone is not proof that one is correct.
+
+Proposals initially expire after 30 days. Validated items require review within 90 days and are excluded after that deadline unless explicitly revalidated. Changed supporting files/revisions invalidate revision-specific claims; dependency claims apply only within their declared version range. When the core cannot establish applicability or supporting evidence has been purged, it excludes the item and requests review. Revalidation must retain a minimal supporting citation under the selected knowledge retention policy rather than copying entire expired reports.
+
+Deletion atomically marks an item forgotten and makes it immediately ineligible for new context selection. The worker cancels affected active attempts, invalidates pending decisions/approvals whose reports used it, purges content and derived search data within 60 seconds, and clears in-process caches. Context manifests keep only identifiers and hashes. Historical reports containing the forgotten content must also be purged or redacted; the interface explains the scope. Retained audit metadata contains no memory text. Knowledge deletion does not retract an already accepted GitHub effect, which remains tracked through its outcome.
+
+Encrypted backup copies disappear according to the documented backup rotation rather than instant physical erasure. Keep a minimal content-free forgetting ledger in a separate trusted administrative export, updated before confirming completion. On restore, reconcile that ledger and reapply deletions before exposing memory or resuming tasks. Test this procedure with a backup made before deletion; never claim immediate removal from provider-side retention or immutable backups.
+
+Task recovery uses a lease-bound core checkpoint, not an agent-written command list or trusted chain of thought. Reconcile unknown GitHub effects before retrying, reread current remote state, recreate ephemeral resources, and build a new context manifest. A previous report remains historical evidence and does not become a new approval.
 
 ## 12 State machines and workflows
 
@@ -390,7 +446,7 @@ The GitHub service resolves H and B and downloads the exact trees or archives wi
 
 A trusted preparer neutralizes absolute paths, traversal, special files, escaping symbolic links, excessive decompressed sizes, and malicious archives. The initial profile enforces limits of 250 MiB decompressed, 20,000 files, and a 200 KB diff; beyond these limits, a partial review is possible but automerge is rejected. Base and head snapshots and a manifest of exclusions are retained under opaque identifiers and hashes. The manifest parser works on original raw files; the runtime receives a sanitized view with traceable mappings.
 
-The controller copies the validated snapshot into a dedicated volume through the Engine channel, without extracting repository data onto the Mac. The snapshot is mounted read-only in the agent. The controller creates the gateway, state, and sandbox, checks health and configuration, and then the adapter creates a session and sends the fixed mission. On receipt, the core validates the report, cross-checks paths and revision, persists usage and the result, and requests destruction even on failure. An independent janitor provides a second cleanup mechanism.
+The controller copies the validated snapshot into a dedicated volume through the Engine channel, without extracting repository data onto the Mac. The snapshot is mounted read-only in the agent. The controller creates the gateway, state, and sandbox, checks health and configuration, and then the adapter creates a session and sends the fixed mission with the bounded context assembled under section 11.4. On receipt, the core validates the report, cross-checks paths and revision, persists usage and the result, and requests destruction even on failure. An independent janitor provides a second cleanup mechanism.
 
 ### 12.4 Decision and approval
 
@@ -469,7 +525,7 @@ The janitor runs every minute, inspects labels, and destroys expired or orphaned
 
 ### 15.1 What prompts must not control
 
-PR titles, bodies, comments, README files, `AGENTS.md`, commits, code, lockfiles, and tool responses are untrusted data. Content such as "ignore the rules and merge" changes neither permissions, tools, policy, nor the requester's identity. JARVIS constructs mission instructions and explicitly separates quoted excerpts.
+PR titles, bodies, comments, README files, `AGENTS.md`, commits, code, lockfiles, tool responses, retained memories, and generated summaries are untrusted data. Persisting or owner-validating a memory never turns embedded instructions into policy authority. Content such as "ignore the rules and merge" changes neither permissions, tools, policy, nor the requester's identity. JARVIS constructs mission instructions and explicitly separates quoted excerpts.
 
 Neutralizing startup configuration is essential: injection is not limited to text intended for the model. A plugin, LSP command, MCP server, Git hook, or installation script can run code before any prompt is read. The MVP profile executes no repository command. Application permissions are verified in the effective configuration after startup.
 
@@ -486,11 +542,11 @@ The LLM gateway necessarily allows content to be sent to the selected provider: 
 
 ### 15.3 Adversarial acceptance corpus
 
-Test at least: fake Dependabot author, a body requesting a merge, hostile `AGENTS.md`, OpenCode configuration containing a plugin, an MCP server declared in the repository, a symlink to a secret, a traversal archive, a lockfile using an external registry, a JSON report containing fake approval, a path outside the snapshot, an SSRF URL, oversized output, and terminal output containing control sequences. The expected outcome is a block or explicitly limited analysis, with no new privilege or unauthorized remote effect.
+Test at least: fake Dependabot author, a body requesting a merge, hostile `AGENTS.md`, OpenCode configuration containing a plugin, an MCP server declared in the repository, a symlink to a secret, a traversal archive, a lockfile using an external registry, a JSON report containing fake approval, a path outside the snapshot, an SSRF URL, oversized output, and terminal output containing control sequences. Also test a persisted instruction to disable checks, a poisoned summary, a cross-repository search match, contradictory or expired notes, a source-version change, deletion during an attempt, a stale validation request, and restore from a backup predating deletion. The expected outcome is a block or explicitly limited analysis, with no new privilege or unauthorized remote effect.
 
 ## 16 Secrets and authentication
 
-Persistent secrets are the GitHub App private key, webhook secret, provider keys, PostgreSQL credentials, and internal certificates. They reside in a dedicated host bootstrap directory or an explicitly selected secret manager, never in the repository or images. Each service receives only the secrets it needs. Docker Compose can mount secrets per service; in local deployment, this is not a substitute for an encrypted vault, and the source files on the Mac still need protection. [D6](https://docs.docker.com/compose/how-tos/use-secrets/)
+Persistent secrets are the GitHub App private key, webhook secret, provider keys, PostgreSQL credentials, and internal certificates. The authoritative copies reside in a protected Mac bootstrap location or an explicitly selected secret manager, never in the repository or images. A trusted bootstrap step transfers only required secrets through authenticated administrative transport into restricted VM-local files; it does not share the Mac directory. Compose assigns these VM-local secret sources per service. Validate daemon-side paths, permissions, rotation, and cleanup at J1; local Compose secrets are not an encrypted vault. VM administrators and the controller remain trusted. [D6](https://docs.docker.com/compose/how-tos/use-secrets/)
 
 GitHub keys stay in the trusted broker; read or merge tokens are created on demand, retained in memory, and expire or are revoked. Per-attempt LLM capabilities have a scope, limit, and deadline. Gateway keys are injected into temporary storage and disappear when it is destroyed. A control prevents them from being written to events, logs, and artifacts.
 
@@ -517,7 +573,7 @@ Cost per attempt =
   + any explicitly accounted tool or cache fees
 
 Monthly cost = sum of all attempts and digests
-  + any Docker or relay subscriptions
+  + any relay or other optional infrastructure subscriptions
   + energy, storage, and operational time
 ```
 
@@ -531,7 +587,7 @@ The interface distinguishes per-PR cost, abandoned-attempt cost, currency, and p
 
 ### 18.1 Persistent services
 
-Compose deploys PostgreSQL, the API, worker, controller, and optional webhook ingress. React is compiled and served by the API or a minimal frontend server. Gateways and sandboxes are created dynamically by the controller. The base network is private; only the interface at `127.0.0.1:3000` is published. PostgreSQL and the controller have no host port.
+Compose deploys PostgreSQL, the API, worker, controller, and optional webhook ingress inside the dedicated `jarvis` VM. For consistent secret-file resolution without Mac sharing, the trusted bootstrap provisions a pinned Compose CLI plugin and the deployment manifest inside the VM, then runs Compose there against its local Engine. Mac-side administrative Docker operations explicitly select `colima-jarvis`. React is compiled and served by the API or a minimal frontend server. Gateways and sandboxes are created dynamically by the controller. The base network is private; only the interface at `127.0.0.1:3000` is published. PostgreSQL and the controller have no host port.
 
 Persistent volumes contain the database and retained evidence. Temporary resources have per-attempt volumes. The Engine socket is mounted only in the controller; bootstrap secrets are assigned per service. No global source-tree or user-home mount is present in agent execution profiles.
 
@@ -539,9 +595,9 @@ Webhooks require an HTTPS endpoint reachable by GitHub. A relay or tunnel expose
 
 ### 18.2 Installation sequence
 
-1. Verify macOS and Docker Desktop versions, the offering in use, ARM64, memory, and free space; reduce sharing and unused features.
+1. Pin macOS, Colima/Lima, Docker Engine, CLI, Compose, and build tooling versions. Prepare the dedicated `jarvis` profile before first startup with Docker runtime, native ARM64, directory sharing disabled, and no SSH-agent forwarding. Verify effective mounts, context, memory, and free space.
 2. Build or retrieve images by approved digest, and verify provenance, vulnerabilities, and the software bill of materials.
-3. Create the dedicated secrets directory with restrictive permissions, install the test App on a selected repository, and configure the webhook.
+3. Provision the pinned Compose CLI plugin and manifest inside the VM. Transfer bootstrap secrets through trusted administrative transport to a dedicated VM-local directory with restrictive permissions; run Compose from inside the VM and verify secret paths. Install the test App on a selected repository and configure the webhook.
 4. Start PostgreSQL, apply migrations using a temporary migration role, then start services in observation mode.
 5. Verify probes, authenticated web access, signed reception, reconciliation, and a smoke-test task without GitHub writes.
 6. Run isolation tests on the actual Mac, recovery scenarios, and a restore; record the results.
@@ -549,7 +605,7 @@ Webhooks require an HTTPS endpoint reachable by GitHub. A relay or tunnel expose
 
 ### 18.3 Development environment
 
-The monorepo uses strict TypeScript, a PNPM lockfile, and reproducible formatting, lint, build, and test commands. Services may share a development mode, but agents continue to use dedicated ephemeral images and volumes. Mounting JARVIS sources for development is limited to trusted components and absent from sandboxes.
+The monorepo uses strict TypeScript, a PNPM lockfile, and reproducible formatting, lint, build, and test commands. Services may share a development mode, but agents continue to use dedicated ephemeral images and volumes. Use image rebuilds or bounded source uploads for development in the isolated `jarvis` profile. Any optional development profile with Mac source sharing is separate, restricted to trusted components, and excluded from production acceptance and agent execution.
 
 Unit tests use in-memory adapters; integration tests start a temporary database and fake GitHub/OpenCode server. Live scenarios use a test GitHub App and a disposable repository separate from the pilot. Production secrets are never available in JARVIS project CI workflows.
 
@@ -557,11 +613,11 @@ Images are pinned by digest, dependencies by lockfile, and `packageManager` by e
 
 ## 19 Backup retention and operations
 
-Take a consistent daily PostgreSQL backup using the tool appropriate for the selected version, encrypt it before export to a dedicated authorized directory, and initially retain 7 daily and 4 weekly backups. Retained artifacts and configuration without secrets are backed up with their hashes. Docker's single virtual disk is not, by itself, a verified application backup. PostgreSQL distinguishes several backup strategies; the MVP uses a logical dump and a tested restore. [P2](https://www.postgresql.org/docs/current/backup.html)
+Take a consistent daily PostgreSQL backup using the tool appropriate for the selected version, encrypt it before export to a dedicated authorized directory, and initially retain 7 daily and 4 weekly backups. Retained artifacts and configuration without secrets are backed up with their hashes. Export backups through a trusted administrative stream without enabling Mac directory sharing. Colima's virtual disk is not, by itself, a verified application backup. PostgreSQL distinguishes several backup strategies; the MVP uses a logical dump and a tested restore. [P2](https://www.postgresql.org/docs/current/backup.html)
 
 Targets: a 24-hour RPO and 60-minute RTO after the Mac becomes available. A restore starts with every action suspended. It reloads evidence, revokes attempt capabilities, and reconciles PRs and GitHub effects before any resumption, to avoid replaying intents already consumed after the backup point.
 
-Initial retention: snapshots and runtime state are deleted at attempt completion; raw diagnostic artifacts are disabled by default, otherwise retained for at most 7 days; operational logs for 30 days; reports, decisions, and audit for 90 days. Webhook payloads are minimized and purged after 7 days. Longer retention may be selected for merge evidence according to space and confidentiality needs. Secrets are not retained in these artifacts.
+Initial retention: snapshots and runtime state are deleted at attempt completion; raw diagnostic artifacts are disabled by default, otherwise retained for at most 7 days; operational logs for 30 days; reports, decisions, and audit for 90 days. Webhook payloads are minimized and purged after 7 days. Longer retention may be selected for merge evidence according to space and confidentiality needs. Secrets are not retained in these artifacts. Knowledge proposals and validated knowledge follow the separate review deadlines in section 11.5; expired content is purged according to the configured retention job and storage cap. Completed task checkpoint payloads are removed with temporary state; minimal step and context-manifest metadata follow task history retention. Forgetting purges content and search representations without waiting for ordinary retention, and backup restore reapplies the forgetting ledger.
 
 **Emergency stop.** The API persists the stop; the executor rereads it before every dispatch; leases and capabilities are revoked; sandboxes are stopped. If services are unresponsive, the owner can stop services and revoke the App in GitHub. Already accepted operations are tracked through confirmation, without a promise of recall.
 
@@ -574,8 +630,9 @@ Initial retention: snapshots and runtime state are deleted at attempt completion
 | Domain and policy | POL matrix, SemVer versions, unknown profiles, missing CI, neutral/skipped checks, stale approval | J3 then J4 |
 | OpenCode contracts | Health, creation, prompt, report, interrupted stream, cancellation, permission denial, incompatible version | J1 and J3 |
 | Provider contracts | Two providers, socket streaming, JSON, limits, interruption, no unauthorized fallback | J3 |
+| Memory | Two-repository leakage, provenance, applicability, expiry, contradiction, context limits, provider switch, restart, poisoned notes, concurrent invalidation, forgetting and pre-deletion backup restore | J3 and J5 |
 | Ingestion and queue | Raw HMAC, Unicode, duplicates, divergent hash, reversed order, pagination, lease expiry, and outbox | J2 |
-| Real isolation | Mounts, UID, capabilities, socket, Mac/LAN/core/neighbor access, IPv4/IPv6, DNS, memory/process limits | J1, then after platform updates |
+| Real isolation | Effective Colima mounts, Mac-file canary, context identity, UID, capabilities, socket, Mac/LAN/core/neighbor access including Lima host aliases, IPv4/IPv6, DNS, forwarded listeners, memory/process limits | J1, then after platform updates |
 | Hostile input | Section 15 corpus, configuration, archives, injections, web rendering, and fake test results | J3 |
 | Merge | Changed H/B, blocking ruleset, degraded CI, delay, lost response, remote pending state, revoked App, no bypass | J4 |
 | Recovery | Crash before/after commit and before/after remote call, duplicated worker, Docker stopped, simulated sleep, dump restore | J2, J4, and J5 |
@@ -589,19 +646,19 @@ Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 
 
 **Step 1 corresponding to J0/J1.** Pin profiles and versions, implement the minimal controller, bounded Docker exec transport, and socket gateway. Demonstrate a review without IP networking or real secrets in the agent. Qualify state paths and the absence of repository code loading.
 
-**Step 2 corresponding to J2.** Implement the PostgreSQL schema, inbox/outbox, leases, webhooks, and reconciliation. Provide the observation interface, authentication, and persistent stop. GitHub write actions remain disabled.
+**Step 2 corresponding to J2.** Implement the PostgreSQL schema including checkpoints and scoped knowledge versions, inbox/outbox, leases, webhooks, and reconciliation. Provide the observation interface, authentication, and persistent stop. GitHub write actions remain disabled.
 
-**Step 3 corresponding to J3.** Finalize structured reports, the dependency-diff parser, pure policy rules, budget, and adversarial corpus. Qualify a second provider and the deterministic digest.
+**Step 3 corresponding to J3.** Finalize structured reports, scoped memory retrieval and context manifests, knowledge validation, the dependency-diff parser, pure policy rules, budget, and adversarial corpus. Qualify a second provider and the deterministic digest.
 
 **Step 4 corresponding to J4.** Connect approvals, durable intents, and the asynchronous merge API. Verify protections and CI provenance on the test repository. Exercise races and lost-response failures before the assisted pilot.
 
-**Step 5 corresponding to J5.** Add daily catch-up, final cleanup, backup/restore, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
+**Step 5 corresponding to J5.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
 
-Decisions D01 through D10 in the PRD remain the product decision register. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D11 in the PRD remain the product decision register. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
 
 ## 22 Verified technical references
 
-Official sources consulted on October 15, 2026. References establish component capabilities, not guarantees of the proposed JARVIS architecture. Pages evolve: image, SDK, engine, and GitHub API versions must be recorded in the repository at J0.
+Official sources consulted on October 15, 2026; Colima/Lima references C1 through C5 and PostgreSQL text-search reference P3 were checked on October 16, 2026. References establish component capabilities, not guarantees of the proposed JARVIS architecture. Pages evolve: image, SDK, engine, and GitHub API versions must be recorded in the repository at J0.
 
 - **O1** [OpenCode Server](https://docs.opencode.ai/docs/server/): headless mode, authentication, health, sessions, and events.
 - **O2** [OpenCode SDK](https://docs.opencode.ai/docs/sdk/): TypeScript client, custom transport, and types.
@@ -618,13 +675,16 @@ Official sources consulted on October 15, 2026. References establish component c
 - **G8** [GitHub Check runs](https://docs.github.com/en/rest/checks/runs): checks on a Git reference and permissions.
 - **G9** [GitHub Commit statuses](https://docs.github.com/en/rest/commits/statuses): contexts and status aggregation.
 - **G10** [Active rules for a branch](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch): applicable rules and Metadata read permission.
-- **D1** [Docker Desktop permissions on Mac](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/): Linux VM and file sharing.
-- **D2** [Enhanced Container Isolation](https://docs.docker.com/desktop/enterprise/hardened-desktop/enhanced-container-isolation/): hardening and socket access.
+- **C1** [Colima runtimes](https://colima.run/docs/runtimes/): Docker runtime and Compose compatibility.
+- **C2** [Colima profiles](https://colima.run/docs/profiles/): separate VMs, resources, and Docker contexts.
+- **C3** [Colima configuration](https://colima.run/docs/configuration/): VM settings, directory sharing, and SSH-agent forwarding.
+- **C4** [Colima Lima configuration implementation](https://github.com/abiosoft/colima/blob/main/environment/vm/lima/yaml.go): default mounts and guest/host socket forwarding; qualify against the pinned release.
+- **C5** [Lima user-mode network](https://lima-vm.io/docs/config/network/user/): host reachability and `host.lima.internal`.
 - **D3** [Docker Engine security](https://docs.docker.com/engine/security/): daemon control surface.
 - **D4** [Docker none network driver](https://docs.docker.com/engine/network/drivers/none/): no external network.
-- **D5** [Docker Desktop Networking](https://docs.docker.com/desktop/features/networking/): networking and host addresses.
 - **D6** [Secrets in Docker Compose](https://docs.docker.com/compose/how-tos/use-secrets/): assigning secrets per service.
 - **P1** [PostgreSQL SELECT](https://www.postgresql.org/docs/current/sql-select.html): row locks and SKIP LOCKED.
 - **P2** [PostgreSQL Backup and Restore](https://www.postgresql.org/docs/current/backup.html): backup and restore methods.
+- **P3** [PostgreSQL full-text search](https://www.postgresql.org/docs/current/textsearch-intro.html): indexed text matching and relevance ranking; repository scope and memory trust are JARVIS responsibilities.
 - **T1** [Node.js releases](https://nodejs.org/en/about/previous-releases): choosing a maintained LTS branch.
 - **T2** [PNPM Workspaces](https://pnpm.io/workspaces): monorepo and workspace protocol.

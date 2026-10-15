@@ -6,5 +6,5 @@ The repository is maintained in English.
 
 ## Documentation
 
-- [JARVIS v0.1 PRD and roadmap](docs/JARVIS_v0_1_PRD_and_roadmap.md)
-- [JARVIS v0.1 Technical Architecture](docs/JARVIS_v0_1_technical_architecture.md)
+- [JARVIS v0.1 PRD and roadmap](docs/prd-and-roadmap.md)
+- [JARVIS v0.1 Technical Architecture](docs/technical-architecture.md)
