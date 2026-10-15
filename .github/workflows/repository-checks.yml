@@ -1,0 +1,79 @@
+name: Repository checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  configuration:
+    name: Repository configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install pinned validation dependency
+        run: |
+          python3 -c 'import sys; assert sys.version_info[:2] == (3, 12)'
+          python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-ci.txt
+      - name: Validate repository configuration and local documentation links
+        run: python3 scripts/ci/check_repository.py
+      - name: Exercise invalid configuration and title cases
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+  pr-title:
+    name: Conventional PR title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate the title without evaluating it as shell code
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          title = os.environ['PR_TITLE']
+          pattern = r'(feat|fix|docs|refactor|test|build|ci|chore|perf|style|revert)(\([a-z0-9][a-z0-9._/-]*\))?!?: [^\r\n]+'
+          if not re.fullmatch(pattern, title) or not title.split(': ', 1)[1].strip():
+              raise SystemExit('Use an English Conventional Commits PR title; see AGENTS.md.')
+          print('Conventional PR title passed.')
+          PY
+      - name: No PR title on this event
+        if: github.event_name != 'pull_request'
+        run: echo 'Title validation applies to pull requests.'
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download and verify the pinned scanner
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$GITLEAKS_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan the full available Git history with redacted findings
+        run: '"${RUNNER_TEMP}/gitleaks" git . --redact --no-banner'
+

@@ -1,0 +1,15 @@
+# Routine code changes have no mandatory code-owner approval.
+# These paths affect privileges, enforcement, or execution boundaries.
+/.github/ @noofreuuuh
+/.agents/ @noofreuuuh
+/AGENTS.md @noofreuuuh
+/scripts/ci/ @noofreuuuh
+/.gitleaks.toml @noofreuuuh
+/infra/ @noofreuuuh
+/packages/policy/ @noofreuuuh
+/packages/sandbox-manager/ @noofreuuuh
+/packages/runtime/ @noofreuuuh
+/packages/github/ @noofreuuuh
+/docs/repository-security.md @noofreuuuh
+/SECURITY.md @noofreuuuh
+
