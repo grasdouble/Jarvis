@@ -8,6 +8,8 @@ The repository is maintained in English.
 
 - [JARVIS v0.1 PRD and roadmap](docs/prd-and-roadmap.md)
 - [JARVIS v0.1 Technical Architecture](docs/technical-architecture.md)
+- [Development repository security](docs/repository-security.md)
+- [Security reporting](SECURITY.md)
 
 ## GitHub CLI setup for development
 
