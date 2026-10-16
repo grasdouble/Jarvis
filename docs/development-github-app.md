@@ -44,7 +44,7 @@ chmod 700 "$HOME/Library/Application Support/Jarvis Development/credentials"
 chmod 600 "$HOME/Library/Application Support/Jarvis Development/credentials/"*.pem
 ```
 
-Never paste key contents into chat, issues, PRs, tracked environment files, or CI secrets. Keep needed backups encrypted and avoid leaving unprotected extra copies in Downloads. If several PEMs exist during rotation, select the intended file explicitly for one command:
+Never paste the local key into chat, issues, PRs, tracked environment files, or CI secrets. The separately provisioned CI credential has its own [protected-environment procedure](pr-project-metadata.md#workflow-and-credential-activation); this does not authorize transferring the Mac PEM. Keep needed backups encrypted and avoid leaving unprotected extra copies in Downloads. If several PEMs exist during rotation, select the intended file explicitly for one command:
 
 ```bash
 JARVIS_GITHUB_APP_KEY_FILE="/absolute/private/path/to/key.pem" \

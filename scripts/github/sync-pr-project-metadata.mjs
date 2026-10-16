@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+/** Reviewed contributor tooling. PR prose and candidate code are never executed. */
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createMetadataApi } from './pr-project-metadata-api.mjs';
+import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
+import { CONFIG } from './pr-project-metadata.mjs';
+
+export function parseOptions(args) {
+  const options={write:false,ci:false};const seen=new Set();
+  for(let index=0;index<args.length;index++) {
+    const arg=args[index];
+    if(seen.has(arg))throw new Error('Duplicate option.');seen.add(arg);
+    if(arg==='--write')options.write=true;
+    else if(arg==='--ci')options.ci=true;
+    else if(arg==='--pr'){
+      const raw=args[++index];
+      if(!/^[1-9]\d*$/.test(raw??'')||!Number.isSafeInteger(Number(raw)))throw new Error('Invalid PR number.');
+      options.number=Number(raw);
+    } else throw new Error('Usage: node scripts/github/sync-pr-project-metadata.mjs [--pr NUMBER] [--write] [--ci]');
+  }
+  return options;
+}
+export function assertCiContext(env) {
+  if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_REPOSITORY!==CONFIG.repository||env.GITHUB_REF!=='refs/heads/main'||
+    env.GITHUB_WORKFLOW_REF!=='grasdouble/Jarvis/.github/workflows/pr-project-metadata.yml@refs/heads/main'||
+    !['pull_request_target','issues','schedule','workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)||!env.GH_TOKEN)
+    throw new Error('CI authentication requires the trusted main workflow and an explicit installation token.');
+}
+export function requestError(error) {
+  // Inspect error classification internally; never emit raw stderr, headers, tokens or response bodies.
+  const diagnostic=String(error.stderr??'');
+  const retryable=error.code==='ETIMEDOUT'||/HTTP (429|502|503|504)|API rate limit exceeded|resource limit/i.test(diagnostic);
+  return Object.assign(new Error('GitHub request failed; inspect permissions or service availability.'),{retryable});
+}
+export async function main(args=process.argv.slice(2),env=process.env) {
+  const options=parseOptions(args);
+  if(options.ci)assertCiContext(env);
+  else if(env.GITHUB_ACTIONS==='true')throw new Error('Use --ci in Actions; local Mac credentials are not a CI fallback.');
+  const temporary=options.ci?mkdtempSync(path.join(tmpdir(),'jarvis-project-sync-')):null;
+  const helper=fileURLToPath(new URL('./gh-app.mjs',import.meta.url));
+  try {
+    const childEnv={...env};
+    for(const name of Object.keys(childEnv))if(name.startsWith('GIT_CONFIG_')||
+      ['GH_DEBUG','GH_HOST','GH_REPO','GH_CONFIG_DIR','GH_ENTERPRISE_TOKEN','GITHUB_ENTERPRISE_TOKEN','GITHUB_TOKEN','NODE_OPTIONS','GIT_TRACE','GIT_TRACE_CURL','GIT_CURL_VERBOSE'].includes(name))delete childEnv[name];
+    if(options.ci)Object.assign(childEnv,{GH_HOST:'github.com',GH_REPO:CONFIG.repository,GH_CONFIG_DIR:temporary,GH_PROMPT_DISABLED:'1'});
+    const api=async request=>{
+      if(request.write&&!options.write)throw new Error('Mutation is disabled in preview.');
+      const ghArgs=['api',request.path,'--method',request.method,'--input','-'];
+      try {
+        const output=execFileSync(options.ci?'gh':process.execPath,options.ci?ghArgs:
+          [helper,...(request.write?['--write']:[]),'--',...ghArgs],
+          {input:JSON.stringify(request.body),encoding:'utf8',stdio:['pipe','pipe','pipe'],env:childEnv,timeout:45000,maxBuffer:16*1024*1024});
+        return JSON.parse(output);
+      } catch(error){throw requestError(error);}
+    };
+    const adapter=createMetadataApi({api});
+    const load=number=>adapter.load(options.number??number);
+    const result=await synchronizeMetadata({load,apply:adapter.apply,write:options.write});
+    console.log(JSON.stringify(result,null,2));
+    return result.diagnostics.some(d=>d.severity==='error')?1:0;
+  } finally {if(temporary)rmSync(temporary,{recursive:true,force:true});}
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href) {
+  try {process.exitCode=await main();}catch(error){console.error(error.message);process.exitCode=1;}
+}

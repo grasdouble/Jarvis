@@ -182,3 +182,14 @@ Use the documented API or authenticated browser for settings not exposed by dedi
 Reread the affected issue, milestone, dependency list, and project item as applicable. Compare changed attributes with the intended values, preserving unrelated metadata. Creation of an issue does not prove project membership or a correct status. Inspect partial results after any timeout or error before retrying a mutation.
 
 References: [issue editing](https://cli.github.com/manual/gh_issue_edit), [milestones REST API](https://docs.github.com/en/rest/issues/milestones), [dependency REST API](https://docs.github.com/en/rest/issues/issue-dependencies), [project item editing](https://cli.github.com/manual/gh_project_item-edit), [Projects GraphQL](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects), [view creation](https://docs.github.com/en/rest/projects/views), and [built-in automations](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-built-in-automations).
+
+## Synchronize PR Issue and Milestone
+
+Use the [PR metadata procedure](../../../../docs/pr-project-metadata.md) from a reviewed checkout after authorized issue-link or milestone edits. The command already uses the App helper; no extra authentication prefix is needed. Scope to the actual selected PR number; omit `--pr NUMBER` only for authorized project-wide catch-up.
+
+```bash
+node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+```
+
+Read diagnostics, verify the native relationship and resolve ambiguity instead of choosing a primary issue from prose. The command derives the reserved Issue field and native PR milestone only, preserving the self-update exception. It never changes Status or creates issue links. Workflow activation and secure CI credential provisioning follow the linked procedure.
