@@ -25,9 +25,9 @@ Contributor changes use the [governance procedure](project-governance.md) to tra
 - A GitHub App installed only on selected repositories, with minimal permissions and no ability to bypass protections.
 - An MVP covering Dependabot monitoring, OpenCode reviews, strict automerge, and a daily digest.
 
-### 2.2 Proposed assumptions for sizing the MVP
+### 2.2 Initial assumptions for sizing the MVP
 
-The values below are design targets to confirm at milestone J0; they are not measured performance results.
+Except for the selected initial EUR budget, the values below are design targets to confirm at milestone J0; they are not measured performance results.
 
 | Parameter | Proposed initial value |
 | --- | --- |
@@ -41,9 +41,9 @@ The values below are design targets to confirm at milestone J0; they are not mea
 | Review profile | Static analysis, without installing or executing repository code |
 | Reconciliation | Every 15 minutes while the Mac and Docker are running |
 | Daily digest | 08:00, Europe/Paris time zone, available in the interface |
-| Indicative budget | 2 currency units per review, 10 per day, 100 per month |
+| Owner-selected initial budget | 2 EUR per review, 10 EUR per day, 100 EUR per month |
 
-Budgets use the billing currency selected during configuration and include every attempt. No current provider price is assumed. The Mac's total memory is unknown, so quotas remain subject to measurement on the actual machine.
+Budgets include every attempt. Paid Copilot credits after the included quota are authorized only within these limits and once usage can be reserved and accounted for; no current provider price is assumed. The Mac's total memory is unknown, so quotas remain subject to measurement on the actual machine.
 
 ## 3 User and problems to solve
 
@@ -381,15 +381,19 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 ### J0 decision status for JV-001
 
-The owner [recorded partial inputs on October 16, 2026](https://github.com/grasdouble/Jarvis/issues/1#issuecomment-6215355248). The test repository is `grasdouble/Jarvis-Test`; `grasdouble/Jarvis-Demo` is available for optional demonstrations. Neither is an automatically selected production pilot or automerge target. The preferred primary provider group is GitHub Copilot and ChatGPT/Codex, with OpenCode Zen and Claude secondary. Existing Copilot and ChatGPT subscriptions are preferred where compatible. This is a group preference, not an exact model, account profile, routing order, qualified subscription transport, or fallback authorization. The development App could not independently read either named repository on October 17; their settings and effective App access remain unverified.
+The owner [recorded partial inputs on October 16, 2026](https://github.com/grasdouble/Jarvis/issues/1#issuecomment-6215355248). The owner subsequently selected `grasdouble/Jarvis-Test` as the first pilot, targeting its default branch; `grasdouble/Jarvis-Demo` remains optional for demonstrations. Every check required by the pilot branch protection is to be verified by identity and provenance, then frozen in the approved list before any merge. The default branch name, settings, check identities and effective App access still require verification: the development App could not independently read either named repository on October 17. This pilot selection does not enable analysis or automerge.
+
+For this pilot, the owner selected GitHub Copilot with GPT-6 Luna and an existing personal subscription as the first route to qualify. Private code may be sent through that route only after the account setting that prevents model-training use is verified, and after the isolated headless transport, usage visibility and limits are qualified. The selected secondary route is OpenCode Zen with GPT-6 Luna on an existing account. The owner accepted its documented OpenAI API request retention of up to 30 days for this pilot, subject to verifying the actual route and terms before live use. There is no automatic fallback: each switch from Copilot to Zen needs a human choice. The earlier preference for ChatGPT/Codex and Claude remains recorded but grants neither an additional configured route nor a code destination for this pilot. [GitHub model list](https://docs.github.com/en/copilot/reference/ai-models/supported-models); [GitHub individual data policy](https://docs.github.com/en/copilot/how-tos/manage-your-account/manage-policies); [OpenCode Zen model and privacy terms](https://docs.opencode.ai/docs/zen/).
+
+The owner also requested that npm/PNPM patch, minor and major updates, including grouped and indirect dependency updates, be eligible for automatic merging under security controls. Other changed files may become eligible, but the owner deferred their path list until the JV-002 threat model. This is a direction for policy evolution, not an operative change to POL 02 or the patch-only sizing assumption in §2.2. Concrete admissibility rules, major/grouped/indirect update risk controls, the additional path list, acceptance corpus and residual-risk decision remain open. JV-002 must address the threat model and acceptance evidence before any broader rule is accepted or implemented; until then, the existing narrow policy remains authoritative and the pilot stays disabled for automerge.
 
 | Decision | Current disposition and owner | Required evidence or next gate |
 | --- | --- | --- |
 | D01 | Proposed controller design; owner acceptance remains open. | At J1, select the controller approach and verify that only the trusted controller can access the Engine socket. |
-| D02 | Partial owner input: primary and secondary groups above. | At J0, select exact provider/model/account profiles and processing destinations for private code; record confidentiality terms, compatible headless subscription access, finite usage and authorized fallback. Until then, send no private code. |
-| D03 | Partial owner input: disposable test repository and optional demo above. | At J0, select the real pilot repository, target branch, eligible dependencies/paths and required CI workflows/check identities; verify repository settings and effective App access. Until then, use observation only and do not enable automerge. |
+| D02 | Owner-selected pilot routes: Copilot/GPT-6 Luna on the existing personal subscription first; Zen/GPT-6 Luna on the existing account second, with a human choice for each switch. | Verify Copilot training opt-out and Zen retention/terms, then qualify isolated headless transport, account access, finite usage and cost accounting before sending private code. No automatic fallback or other code destination is authorized. |
+| D03 | Owner-selected pilot: `Jarvis-Test` default branch; npm/PNPM patch, minor, major, grouped and indirect updates are in the requested analysis/policy scope; all branch-required checks must pass. | Verify default branch, actual dependency/path inventory, required CI workflow/check identities and provenance, repository settings and effective App access; freeze the approved check list. Broader automerge and additional paths await JV-002 policy work. Until then, use observation only and do not enable automerge. |
 | D04 | Proposed webhook-only HTTPS relay; owner selection remains open. | At J2, select and qualify ingress; use reconciliation only until then. |
-| D05 | No owner-selected currency or initial limits. | At J0, record billing currency and finite per-review, daily and monthly spending/request/token limits, including subscription quota and overage treatment. Suspend billable tasks until configured. |
+| D05 | Owner selected EUR and initial caps of 2 EUR/review, 10 EUR/day and 100 EUR/month, including paid Copilot credits after the subscription quota. | Before billable dispatch, qualify current price/quota evidence, per-request/token reservations, currency conversion if needed, and provider-side limits. Suspend billable tasks until the controls enforce these caps. |
 | D06 | No owner-selected Colima version or CPU/RAM/disk allocation. | At J1, measure the host and accept pinned versions and effective VM allocation before runtime qualification; the sizing values in §2.2 remain proposals. |
 | D07 | Squash is proposed, subject to repository permissions. | At J4, owner selects the merge method and effective repository settings are verified; no merge while undefined. |
 | D08 | Reports inside JARVIS are proposed initially. | At J4, owner confirms publication scope; no PR write permission without need. |
