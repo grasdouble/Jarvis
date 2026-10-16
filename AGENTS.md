@@ -53,6 +53,12 @@ When the user asks for the next subject, use the [Next up queue](https://github.
 
 Refresh ranks after issue delivery, new/split issues, reopened work, or dependency/priority/milestone changes. Queue refresh is part of authorized delivery/backlog management, not authority to implement other issues or merge PRs. It never promotes Backlog work, resolves owner decisions, closes issues, or overrides protections.
 
+## Record blockers and their resolution
+
+For selected or active work that cannot progress, follow the [blocker lifecycle](docs/blocker-lifecycle.md): add an English issue comment identifying the causes, links, resumption conditions, next action/owner, retained progress, and previous status, then synchronize Blocked. Add real native dependencies when applicable. Future work awaiting planned prerequisites may stay in Backlog.
+
+On material changes, record a blocker update; after verifying every active cause is resolved, add a separate linked Unblocked comment with evidence and the resulting status. Default to Ready, use In Progress only for an actual authorized resume, or In Review for a verified review-ready deliverable. Preserve resolved dependencies and comment history. Reconcile partial/ambiguous writes before retrying, avoid duplicate comments on unchanged refreshes, and refresh Next up. Issue delivery detects/proves the transition; project management maintains the GitHub records. Neither a comment nor a closed prerequisite grants approval or proves acceptance.
+
 ## Size work before implementation
 
 Apply the [contributor workflow](docs/development-workflow.md) before coding. Keep a small issue as one deliverable; split an issue with independently reviewable outcomes into native GitHub sub-issues before implementation. `jarvis-issue-delivery` detects the need and defines slices; `jarvis-project-management` creates/reuses children, parent links, native blocking dependencies, and project metadata within the authorized parent scope. Do not expand requirements or implement unrelated prerequisites.

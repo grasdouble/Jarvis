@@ -54,7 +54,7 @@ git -C "$task_worktree_path" branch --show-current
 git -C "$task_worktree_path" log -1 --oneline
 ```
 
-Use the project-management status recipe to set the issue to `In Progress` when work starts. An incomplete draft remains `In Progress` or becomes `Blocked` with a concrete reason.
+Use the project-management status recipe to set the issue to `In Progress` when work starts. An incomplete draft remains `In Progress` or becomes `Blocked` with a concrete reason. For blocking, material blocker updates, and verified resumption, use the [shared lifecycle](../../../../docs/blocker-lifecycle.md) and [project-management comment commands](../../jarvis-project-management/references/github-cli.md#blocker-comments-and-transition-recovery). Preserve the worktree and PR, record evidence before changing status, and reread after partial/ambiguous writes.
 
 ## Discover and run relevant checks
 
