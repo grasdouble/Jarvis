@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.3 • October 16, 2026 • Personal self-hosted product
+Document version 1.4 • October 16, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -302,6 +302,18 @@ A failed security gate delays automerge. The system can remain useful in observa
 
 **Contributor delivery available separately.** Agents developing JARVIS use the [session-driven independent review procedure](autonomous-delivery.md#contributor-review-loop). It is a development skill workflow with local host limitations; it does not establish that the sandboxed product feature is implemented.
 
+**Planned after v0.3: evidence-driven self-improvement.** JARVIS may identify recurring failures, quality defects or inefficient work in its own authorized operational history, propose an issue and, under an accepted policy, improve its own code or versioned working configuration. Reuse the v0.3 delivery loop rather than granting an agent direct control over its running service. Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) with children [signals/proposals](https://github.com/grasdouble/Jarvis/issues/52), [evaluation/policy](https://github.com/grasdouble/Jarvis/issues/53), [controlled experiments](https://github.com/grasdouble/Jarvis/issues/54) and [rollout/qualification](https://github.com/grasdouble/Jarvis/issues/55). This is a planned post-v0.3 capability, not installed automation, a new MVP gate or a committed version/date.
+
+**P12 user story.** I want JARVIS to propose and prove improvements to its own reliability, quality, duration or consumption while retaining control of objectives, permissions, spending and release activation.
+
+**P12 requirements.** Observe → deduplicate a sourced proposal/issue → select within authorized priorities → isolate a candidate → independently review and compare → integrate only proven eligible changes → separately authorize rollout/rollback. Define measurable objectives and quality/security guardrails before experimenting. Freeze incumbent/candidate revisions, workloads/corpus, environment/provider/evaluation profiles and decision criteria. Record sample sufficiency, variability, uncertainty and the total costs of every attempt, including failures. Missing, incomparable or inconclusive evidence yields no improvement eligibility; lower latency/tokens cannot compensate for dropped work, weaker tests or degraded correctness. A candidate cannot change its acceptance oracle to certify itself; reserved evaluation cases stay outside author context and writable scope.
+
+The self-repository, target branch/paths and allowed actions require explicit policy. Keep the released core and trusted evaluator outside candidate writable scope. The author cannot approve itself, extend budgets, promote memory into authority, modify its own permissions or bypass protections. Sensitive/unknown changes, including criteria, execution/approval rules and credentials, retain current human approval. Scoped finite collection/proposal/experiment limits, cancellation and revocation survive restart. Existing memory validation/forgetting rules still apply; no model-weight training is implied.
+
+Merge and deployment remain separate states and permissions. A qualified limited-rollout profile must define artifact identity, environment, sample/window, success/abort criteria, task ownership, last-known-good artifact/config and schema compatibility. Replay/shadow evaluation cannot repeat mutating GitHub effects. Missing canary capacity, insufficient evidence or incompatible/irreversible migrations require a human recovery plan rather than claiming automatic rollback. No live self-update is enabled by this planning change.
+
+**P12 measurable acceptance.** A repeated-failure fixture creates one sourced proposal and at most one issue across duplicate/reordered observations; rejected/deferred work does not retrigger indefinitely. The same frozen comparison protocol accepts a genuine qualified improvement and rejects metric gaming, while sparse/noisy/missing evidence is explicitly inconclusive. Every revision, criterion, corpus or relevant profile change invalidates eligibility. All attempts consume the configured finite budget across retries/restarts; stop/revocation prevents new effects. At least 30 owner-agreed integrated success/adversarial/recovery cases and a controlled pilot cover accepted/rejected/inconclusive experiments, a sensitive human handoff, exhaustion and failed rollout/rollback with zero unauthorized effects. The UI/digest records sources, findings, comparisons, total cost and distinct merge/deployment results. Verified JV-044 delivery and D13 experiment-policy acceptance precede experiments; D13 rollout-policy acceptance separately precedes activation. See [architecture 12.9](technical-architecture.md#129-proposed-post-v03-self-improvement) and the [shared design](autonomous-delivery.md#planned-post-v03-self-improvement).
+
 **Later.** Multiple concurrent runs, dedicated Linux hosting, multiple projects or users, and planning of more complex work. Each extension requires a new threat assessment and its own criteria.
 
 ## 12 Open decisions and fallback values
@@ -320,6 +332,7 @@ A failed security gate delays automerge. The system can remain useful in observa
 | D10 | Local authentication | Developer; single account, strong password, and secure session | J2; administration inaccessible without authentication |
 | D11 | Knowledge lifecycle and context budget | Owner; proposals 30 days, validated items reviewed at least every 90 days; 10 items / 4,000 tokens / 32 KiB per attempt | J3/J5; expired items excluded until revalidated; backup expiry and forgetting procedure documented |
 | D12 | v0.3 writable delivery profiles, sensitive scope and finite budgets | Owner accepts the JV-045 threat/profile/policy proposal; routine autonomy with human sensitive gates is selected | Before writable v0.3 implementation; no writable/autonomous product run if unset |
+| D13 | Post-v0.3 self-improvement objectives, evaluator, scope and rollout | Owner accepts experiment scope, metrics, samples, evaluator and finite budgets in JV-053; separately accepts rollout/recovery profile and authority in JV-055 | Experiment policy before JV-054 trials; rollout policy before activation. Missing decisions defer the corresponding action |
 
 ## 13 Release criteria
 

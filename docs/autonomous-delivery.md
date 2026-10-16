@@ -75,12 +75,21 @@ Author and reviewer each use separately qualified ephemeral sandboxes. The autho
 
 Core transitions are proposed as `authoring → validating → publishing → reviewing → fixing → reviewing → eligible/needs_human → merging → delivered`, with explicit `limited`, `blocked`, `exhausted`, `cancelled` and uncertain-effect states. Every revision change invalidates prior eligibility. Persist finite budgets/leases and deduplicate inbox/outbox events and remote effects. Stop/revocation survives restart; agent output cannot reset limits or grant authority. The UI/digest exposes rounds, findings, cost, gates, approvals and next action. Exact schemas/profiles and pilot budgets are accepted in JV-045 before writable runtime work.
 
+## Planned post-v0.3 self-improvement
+
+The owner requested a distinct evidence-driven self-improvement capability, tracked by [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-052–JV-055 after verified [JV-044](https://github.com/grasdouble/Jarvis/issues/44). See P12/D13 in the [roadmap](prd-and-roadmap.md#111-post-mvp-evolution) and [architecture 12.9](technical-architecture.md#129-proposed-post-v03-self-improvement). This plans future product behavior; it grants no current contributor permission to scan, experiment, train models, deploy or change the running JARVIS service.
+
+The future loop is observations → deduplicated proposal/issue → authorized priority/scope → isolated candidate → independent review and fixed before/after evaluation → guarded merge → separately authorized rollout/rollback. Objectives, quality/security guardrails, sufficient samples, finite budgets and evidence provenance are owner-controlled. Candidate agents cannot replace their evaluator/criteria, hide failed attempts, promote memory into authority or weaken CI to claim a gain. Inconclusive evidence stops eligibility. Reuse v0.3 delivery and its human-sensitive gates; do not create a parallel self-approval path.
+
+Merge is only source integration. The released core/evaluator remain outside candidate writable scope; activation requires a separate explicit artifact/environment authorization and qualified bounded rollout/recovery profile. Replay/shadow validation must not repeat external effects; live canaries require exclusive task ownership/leases. Missing capacity, noisy comparisons or incompatible/irreversible migrations require human action, not an assumed successful rollback. UI/digest retain proposal dispositions, comparative results, every attempt's cost and separate merge/activation outcomes. Existing contributor operation remains session-driven, with no background self-improvement service installed.
+
 ## Verification and sources
 
 Contributor acceptance includes bounded job briefs, disjoint ownership and shared-resource serialization, stopped-worker reconciliation, integrated review excluding every implementation contributor, recovery from compacted context, and independent review on exact commits, one requested-change/fix/rereview path when a real finding exists, an honest clean result otherwise, stale evidence, unavailable reviewer, sensitive/renamed paths, limited coverage, three-round exhaustion, stop/restart ledger recovery, and partial publication/merge recovery. Walkthroughs are design evidence; only actual agent/tool runs and live effects may be reported as executed tests. Do not invent a defect or weaken a review just to demonstrate the loop.
 
 Official references checked October 16, 2026:
 
+- [Google SRE canarying releases](https://sre.google/workbook/canarying-releases/): limited rollout and control comparison; local JARVIS feasibility and authority need separate qualification.
 - [GitHub reviews API](https://docs.github.com/en/rest/pulls/reviews): installation tokens with Pull requests write can submit reviews; `commit_id` binds the reviewed commit. A separate eligible identity would be needed for native approval of an App-authored PR.
 - [Reviewing PRs](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/reviewing-proposed-changes-in-a-pull-request): review decisions and stale approval behavior.
 - [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners): base-branch ownership and required owner review.

@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.3 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.4 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -498,6 +498,22 @@ Transitions: authoring → validating → publishing → reviewing; requested fi
 
 The core enforces owner-configured finite review-round, time, token/currency and resource limits across crashes and retries. Exceeding a limit stops the run and records the required owner action; model output cannot extend it. Cancellation/revocation invalidates leases and future effects. UI/digest expose rounds, findings/dispositions, costs, head/base, approval gates and actual remote results. Qualification includes stale reviews, malicious suggestions, CI/protection changes, forked/renamed paths, duplicate events, lost responses, restore/revocation and zero unauthorized effects in a controlled pilot. See P11 and D12 in the PRD.
 
+### 12.9 Proposed post-v0.3 self-improvement
+
+Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-052–JV-055 after verified JV-044 delivery. P12/D13 define the post-v0.3 gate; the contributor skills and v0.1/v0.3 delivery plans do not implement this capability. Reuse the memory/observability inputs, domain/policy, orchestration, durable queue, qualified runtime/validation ports and GitHub executor in the PNPM modular monolith. The core controls proposal selection, evaluation decisions and remote effects; no new unrestricted planner, model training or live self-edit endpoint is implied.
+
+**Signals and selection.** Ingest only authorized, sanitized operational observations with repository/run/revision/window provenance. Persist deduplicated proposals with hypothesis, expected measurable outcome, risk, uncertainty, source validity and linked issue. Bound ingestion/proposal volume, use cooldowns and retain rejected/deferred dispositions so a recurring metric does not create endless work. Observation text and memory cannot change policy, select an unauthorized repository or promote themselves into validated knowledge. F10 forgetting/retention applies to evidence and derived proposals; unavailable evidence prevents selection/reuse.
+
+**Independent comparison.** A trusted evaluation controller pins the released incumbent, candidate commit/artifact, protocol/corpus, environment/provider/check profile and thresholds outside candidate write scope. Compare equivalent authorized workloads, account for stochastic variability and sufficient samples, and include correctness/security/completion guardrails alongside latency/tokens/currency. Preserve unsuccessful attempts and total spending, not just winning trials. Changed or incomparable inputs, missing measurement or insufficient confidence produce inconclusive/rejected, never an agent assertion of improvement. Keep reserved evaluation cases outside the author context and writable workspace; record exposure and control repeated-trial overfitting. Candidate edits to tests or prompts do not replace the protected acceptance corpus; changes to evaluation criteria require a separate human-approved protocol version and a new comparison.
+
+**Isolated delivery.** Select only a bounded policy-authorized proposal and reuse the qualified author/test/reviewer/publication workflow from section 12.8. Agents receive no GitHub/deployment credentials, protected evaluator write access or writable released core. The independent reviewer authored none of the candidate and examines functional regressions as well as claimed gains. Eligibility binds the complete evidence/protocol/policy digest and current head/base; every relevant change invalidates it. Finite cumulative experiment/time/token/currency/resource budgets, stop epochs and leases persist across crashes and cannot be extended by a candidate. Sensitive or unknown execution/permission/approval changes retain human gates.
+
+**State and persistence.** Proposed records are `improvement_proposals` (source/deduplication key, hypothesis, scope, disposition, issue), `improvement_experiments` (proposal, immutable comparison manifest, attempts/budgets, measured results/uncertainty, decision) and `rollout_intents` (authorized artifact/config, environment/cohort, ownership/lease, abort/recovery profile, observed outcome). Existing delivery runs/reports and inbox/outbox remain authoritative for PR effects. Transitions are observed → proposed → selected/deferred/rejected → experimenting → improved/inconclusive/rejected → delivery-eligible → merged/pending-rollout → authorized rollout → confirmed/aborted/recovered/needs_human. Unique keys and reconciliation prevent duplicate proposal/issue/experiment/rollout effects. Stop/deletion/restore rechecks applicability and invalidates pending actions rather than reviving old eligibility.
+
+**Activation and rollback.** Merge neither deploys nor hot-reloads source/prompts/configuration. A separate trusted release controller accepts only an explicitly authorized immutable artifact and qualified bounded rollout profile; it does not inherit an experiment's publication authority. The incumbent remains available as last-known-good. Replay/shadow tests disable external writes; a live canary partitions task ownership/leases and action budgets so two versions cannot perform the same mutation. Local Colima resource/canary feasibility must be measured; if the environment cannot support a meaningful bounded comparison, hand off instead of inventing a successful rollout. Verify artifact/config/schema compatibility and a tested backup/restore path before activation. An irreversible migration or incompatible downgrade requires an explicit human recovery plan; automatic rollback cannot be asserted from image availability alone.
+
+UI/digest show every proposal and disposition, sources, revisions, fixed protocol, baseline/candidate measurements, uncertainty, total cost, independent review/human gates, and separate merge/deployment/recovery results. JV-055 qualifies the integrated corpus and controlled pilot before owner enablement. The release design draws on [Google SRE canary guidance](https://sre.google/workbook/canarying-releases/), checked October 16, 2026: limited rollout and comparison against a control inform release decisions. That guidance does not establish that JARVIS or its local Colima deployment already supports canaries.
+
 ## 13 Idempotence and consistency
 
 | Level | Key and mechanism | Intended guarantee |
@@ -671,9 +687,11 @@ Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 
 
 **Step 5 corresponding to J5.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
 
-Decisions D01 through D12 in the PRD remain the product decision register; D12 gates the post-MVP writable delivery extension, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D13 in the PRD remain the product decision register; D12 gates v0.3 writable delivery and D13 gates post-v0.3 self-improvement, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
 
 **Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
+
+**Post-v0.3 self-improvement.** After verified JV-044 delivery, implement bounded signals/proposals (JV-052), accept D13 experiment policy and qualify fixed evaluation (JV-053), reuse delivery for controlled candidates (JV-054), then accept D13 rollout policy and qualify activation/rollback and operational evidence (JV-055). No deployment authority or background optimizer is enabled by this plan.
 
 ## 22 Verified technical references
 
