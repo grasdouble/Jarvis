@@ -26,9 +26,9 @@ The `.gitignore` prevents ordinary accidental inclusion of local credentials; it
 
 ## Dedicated development identity
 
-The current owner's OAuth login is suitable for initial setup but is not an isolated autonomous identity: its administrative rights can change protections. Do not claim that rulesets constrain an administrator who can edit them. Issue #26 does not revoke the owner's login or create a machine account without its owner completing registration.
+The private development App `jarvis-development-grasdouble` is registered and installed only on `grasdouble/Jarvis`. Its key is held in an owner-only macOS directory outside Git. Read the [App setup and key-storage guide](development-github-app.md) for IDs, paths, authentication commands, rotation, and verification. The owner's personal OAuth login remains available for authorized administration; its rights can still change protections, so the local helper is not an OS isolation boundary.
 
-Register a **separate development GitHub App**, install it only on `grasdouble/Jarvis`, and grant:
+The approved development App permissions are:
 
 | Permission | Level | Need |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ Register a **separate development GitHub App**, install it only on `grasdouble/J
 
 Do not grant repository Administration, organization administration, Members write, secret management, or rule bypass. Projects permission is organization-scoped; grant this capability separately from ordinary issue delivery when board isolation is required. Use short-lived installation tokens issued by a trusted credential broker, scoped to this repository and required permissions. Keep the App private key in a protected credential store outside the checkout; never pass it to application code, PR test jobs, or OpenCode review sandboxes. Ordinary commands use the installation token through an isolated process environment. Do not silently replace the owner's global `gh` login.
 
-Owner completion is needed to register/install this App and provision its private key securely. Verify a read, disposable issue-branch write, PR creation, denied administration, and absence from bypass lists before calling this identity operational. App-authenticated pushes trigger CI normally, unlike many writes made using a workflow's `GITHUB_TOKEN`.
+Owner registration, installation, and key provisioning are complete. Verify reads, issue-branch publication, PR creation, denied administration, and absence from bypass lists when changing the identity. The local helper is delivered through issue #29; use a reviewed copy for routine credentials operations. App-authenticated pushes trigger CI normally, unlike many writes made using a workflow's `GITHUB_TOKEN`.
 
 The production JARVIS App in issue #10 is a separate runtime concern and must not inherit these development permissions. Organization-wide 2FA enforcement affects other repositories and members; review that rollout separately with organization owners.
 

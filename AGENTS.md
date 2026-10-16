@@ -21,6 +21,8 @@ Read the sections relevant to the task rather than loading both documents in ful
 
 ## Issue intake
 
+Use the reviewed [development App helper](docs/development-github-app.md) for routine GitHub operations: `node scripts/github/gh-app.mjs -- <gh arguments>` for reads, `--write -- <gh arguments>` for authorized writes, and `--write --git-push` for the current issue branch. Give PR commands an explicit repository/base/head. Plain `gh` or SSH pushes can use the owner's administrative identity; do not silently fall back after an App failure. Never print or commit the PEM. The helper is trusted local tooling, not a Mac isolation boundary; use a previously reviewed copy for routine credential operations when modifying it.
+
 Use the matching English issue form: [implementation task](.github/ISSUE_TEMPLATE/01-task.yml), [bug report](.github/ISSUE_TEMPLATE/02-bug.yml), or [decision request](.github/ISSUE_TEMPLATE/03-decision.yml). Blank issues remain available for work that does not fit these forms. Existing issues do not need to be recreated.
 
 Task issues need a bounded outcome, scope, measurable acceptance, and a verification plan. Bug reports need observed/expected behavior, known reproduction details, and relevant environment information. Decisions need options, rationale or uncertainty, an owner/gate, and resolution criteria. Triage assigns existing priority/area labels and the appropriate milestone. Written dependency references must also become native blocking relationships; forms do not create those links automatically.
