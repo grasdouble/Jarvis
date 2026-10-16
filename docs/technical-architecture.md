@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.10 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.11 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -287,6 +287,7 @@ interface SandboxManager {
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
 | GET /api/v1/usage | Consumption summary and groupings | Authenticated scope, bounded period/groups, IANA zone, currencies and completeness |
 | GET /api/v1/usage/requests | Request usage, attribution and provenance | Authenticated filters, cursor pagination, at most 100 rows, no raw model content |
+| GET /api/v1/tasks/:id/estimates | Proposed J10 current/historical duration snapshots | Scoped authentication, bounded filters/pagination, target/coverage/calibration, explicit unknown values; no dispatch authority |
 | GET /api/v1/repositories/:id/memories | Scoped knowledge and provenance | Authenticated, status filters, cursor pagination |
 | POST /api/v1/repositories/:id/memories | Create an observation or owner-authored note | Closed schema, bounded text, Idempotency-Key, CSRF, no policy fields |
 | POST /api/v1/memories/:id/revisions | Correct, validate, or invalidate knowledge | Owner session, expected version, source and applicability required, audited |
@@ -491,7 +492,10 @@ The scheduler determines the daily occurrence in Europe/Paris and records its UT
 
 Action totals and lists come from SQL queries over confirmed facts. Optional LLM-written prose receives these facts and links under a separate budget; if generation fails, a deterministic template remains available. Outbound links and Markdown are sanitized. Merges in `unknown` state are never presented as successful.
 
-### 12.8 Proposed v0.3 autonomous delivery
+<!-- Preserve previously published section links. -->
+<a id="128-proposed-v03-autonomous-delivery"></a>
+
+### 12.8 Proposed autonomous delivery
 
 This extension is planned in [JV-044](https://github.com/grasdouble/Jarvis/issues/44), with profile/policy, author/publication, review/repair and qualification slices JV-045–JV-048. It does not change MVP contracts or enable writable agent tools. The session-driven [contributor procedure](autonomous-delivery.md) is a separate development capability.
 
@@ -508,9 +512,12 @@ Transitions: authoring → validating → publishing → reviewing; requested fi
 
 The core enforces owner-configured finite review-round, time, token/currency and resource limits across crashes and retries. Exceeding a limit stops the run and records the required owner action; model output cannot extend it. Cancellation/revocation invalidates leases and future effects. UI/digest expose rounds, findings/dispositions, costs, head/base, approval gates and actual remote results. Qualification includes stale reviews, malicious suggestions, CI/protection changes, forked/renamed paths, duplicate events, lost responses, restore/revocation and zero unauthorized effects in a controlled pilot. See P11 and D12 in the PRD.
 
-### 12.9 Proposed post-v0.3 self-improvement
+<!-- Preserve previously published section links. -->
+<a id="129-proposed-post-v03-self-improvement"></a>
 
-Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-052–JV-055 after verified JV-044 delivery. P12/D13 define the post-v0.3 gate; the contributor skills and v0.1/v0.3 delivery plans do not implement this capability. Reuse the memory/observability inputs, domain/policy, orchestration, durable queue, qualified runtime/validation ports and GitHub executor in the PNPM modular monolith. The core controls proposal selection, evaluation decisions and remote effects; no new unrestricted planner, model training or live self-edit endpoint is implied.
+### 12.9 Proposed self-improvement
+
+Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-052–JV-055 after verified JV-044 delivery. P12/D13 define the J7 gate; the contributor skills and MVP/J6 delivery plans do not implement this capability. Reuse the memory/observability inputs, domain/policy, orchestration, durable queue, qualified runtime/validation ports and GitHub executor in the PNPM modular monolith. The core controls proposal selection, evaluation decisions and remote effects; no new unrestricted planner, model training or live self-edit endpoint is implied.
 
 **Signals and selection.** Ingest only authorized, sanitized operational observations with repository/run/revision/window provenance. Persist deduplicated proposals with hypothesis, expected measurable outcome, risk, uncertainty, source validity and optional canonical promotion PR once real changes exist. Bound ingestion/proposal volume, use cooldowns and retain rejected/deferred dispositions so a recurring metric does not create endless work. Observation text and memory cannot change policy, select an unauthorized repository or promote themselves into validated knowledge. F10 forgetting/retention applies to evidence and derived proposals; unavailable evidence prevents selection/reuse.
 
@@ -520,9 +527,9 @@ Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-0
 
 **Operational tracking and skill.** Persist repository-scoped unique proposal/campaign identities and at most one active promotion, with native label/project/view IDs. Keep pre-patch or rejected/deferred proposals internal; a real candidate diff permits one draft main-promotion PR labeled `self-update`, added to the dedicated project view and maintained with detailed evidence. No operational issue or milestone is required; J7 issues build the mechanism. The controller validates the same content for browser and programmatic publication and reads back PR/base/head/label/project metadata. A saved filter does not import PRs into the project or grant authority. Reconcile missing/drifted metadata and partial/superseded effects without creating another campaign or budget; the [campaign contract](self-improvement-campaigns.md) specifies uniqueness, draft readiness and audit history.
 
-Use the versioned [product skill source](../skills/jarvis-self-improvement/SKILL.md) only through the future qualified post-v0.3 adapter: pin its released bundle/reference digest, include it in the context manifest, supply read-only and exclude candidate/project/global skill substitution. The skill returns structured proposal/patch/result intents; core owns tools, credentials and all publication/promotion/activation gates. No loader/tool handler or OpenCode plugin is installed. Static MVP skill loading remains disabled; schema/profile/loader tests in JV-053/JV-054 precede enablement.
+Use the versioned [product skill source](../skills/jarvis-self-improvement/SKILL.md) only through the future qualified J7 adapter: pin its released bundle/reference digest, include it in the context manifest, supply read-only and exclude candidate/project/global skill substitution. The skill returns structured proposal/patch/result intents; core owns tools, credentials and all publication/promotion/activation gates. No loader/tool handler or OpenCode plugin is installed. Static MVP skill loading remains disabled; schema/profile/loader tests in JV-053/JV-054 precede enablement.
 
-**Campaign promotion and repair.** Implement the [bounded campaign contract](self-improvement-campaigns.md) through the existing orchestration/GitHub ports. The stable controller owns claims, policy and credentials; author/test candidates cannot mutate it or their evaluator. Pin deployed incumbent `S`, target main `B` and assembled candidate `H` separately. One temporary integration branch per hypothesis accepts authorized independently reviewed task PRs, with serialized fenced publication and child-to-integrated revision mappings. Even routine self-improvement needs current human approval of the final main promotion digest; native review/check protections still apply. Preserve the ordinary v0.3/contributor policy outside this mode.
+**Campaign promotion and repair.** Implement the [bounded campaign contract](self-improvement-campaigns.md) through the existing orchestration/GitHub ports. The stable controller owns claims, policy and credentials; author/test candidates cannot mutate it or their evaluator. Pin deployed incumbent `S`, target main `B` and assembled candidate `H` separately. One temporary integration branch per hypothesis accepts authorized independently reviewed task PRs, with serialized fenced publication and child-to-integrated revision mappings. Even routine self-improvement needs current human approval of the final main promotion digest; native review/check protections still apply. Preserve the ordinary autonomous-delivery/contributor policy outside this mode.
 
 Freeze admission on drift/conflicts. A separately claimed repair branch reconciles latest main using a qualified ancestry-preserving strategy without rewriting shared history, preserves both sides' acceptance, reruns full-diff tests/comparison and independent review, and publishes through a guarded repair PR. A squash-only target uses a fresh main-based promotion candidate with manifest-backed replay and linked PR supersession; it cannot assume squashing a repair into an old campaign preserves main ancestry. Rebind evidence to the resulting integrated SHA before renewed human promotion approval. Semantic conflicts need the same treatment even without Git markers. Races, unknown effects, exhausted cumulative budgets, revoked authority or unresolved intent stop and reconcile/handoff. Candidate-integrated internal tasks remain undelivered until verified main delivery and their acceptance; record activation separately and retire the short-lived branch after promotion/abandonment. The campaign contract specifies future scenario evidence, not an installed remediation service.
 
@@ -660,6 +667,14 @@ The interface distinguishes per-PR cost, abandoned-attempt cost, currency, and p
 
 Input/output totals and cache/reasoning subsets use qualified provider-specific mappings; overlapping categories are never charged twice. Gateway and OpenCode events for the same actual request update one canonical record, not separate expenses. Every retry, format repair, digest and later agent call is attributable, including failed/unknown outcomes. Runtime-reported cost is evidence to cross-check, not authority to release funds or an invoice guarantee. Unknown prices/subscription valuation and different currencies remain explicit. D02/D05/D09/D11 retain provider, configured token/currency limits and retention choices. JV-015/JV-017/JV-022/JV-024 own MVP implementation and acceptance; this detailed specification enables no runtime behavior.
 
+### 17.3 Proposed task duration forecasting
+
+J10/P15 ([JV-084](https://github.com/grasdouble/Jarvis/issues/84), children JV-085–JV-088) adds a bounded statistical component in existing llm/domain/contracts/persistence/observability modules, after verified MVP delivery. The [duration contract](duration-forecasting.md) defines preflight/post-plan estimates, conditional remaining-time updates and actual comparison. Reuse task/attempt/request timestamps and qualified effective model/effort metadata; distinguish provider/version/profile, safe workload features, unknown settings and observed environment. No second runtime, forecasting service or model-training/inference call is required.
+
+Proposed `execution_timings`, `duration_forecasts` and `forecast_calibrations` bind canonical interval/feature observations, immutable issued predictions and chronological evaluation evidence to scope, task/profile/estimator versions and completeness. Separate queue/CI/human/suspension/unknown intervals from execution elapsed; use monotonic local timing with explicit restart/clock/sleep gaps and end-to-end critical paths for parallel work. Do not sum overlapping spans, infer completion from a timeout, or add marginal percentiles as a workflow guarantee. Retain failed/censored cases and calibration limitations.
+
+Scoped empirical cohorts return central/range/optional percentile with sample count, as-of/freshness, method/calibration version and abstention/stale states. No universal effort-speed factor, guessed current model throughput or unsupported accuracy label. Remaining time conditions on observed stage/elapsed survival; otherwise it remains unknown. Bound queries/updates and enforce deletion/restore on derived data. The existing authenticated task/queue view and future qualified J8/J9 surfaces can display results, while unavailable estimates leave dispatch policy, ranking, limits, selected profile and approval gates unchanged. JV-088 validates chronological holdout and actual runtime evidence before production forecasting; no estimator or accuracy evidence is installed here.
+
 ## 18 Local deployment and development
 
 ### 18.1 Persistent services
@@ -731,11 +746,11 @@ Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 
 
 **Step 5 corresponding to J5.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
 
-Decisions D01 through D14 in the PRD remain the product decision register; D12 gates v0.3 writable delivery, D13 gates post-v0.3 self-improvement and D14 gates post-MVP general assistance, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D14 in the PRD remain the product decision register; D12 gates J6 writable delivery, D13 gates J7 self-improvement and D14 gates post-MVP general assistance, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
 
 **Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
 
-**Post-v0.3 self-improvement.** After verified JV-044 delivery, implement bounded signals/proposals (JV-052), accept D13 experiment policy and qualify fixed evaluation (JV-053), reuse delivery for controlled candidates (JV-054), then accept D13 rollout policy and qualify activation/rollback and operational evidence (JV-055). No deployment authority or background optimizer is enabled by this plan.
+**Self-improvement (J7).** After verified JV-044 delivery, implement bounded signals/proposals (JV-052), accept D13 experiment policy and qualify fixed evaluation (JV-053), reuse delivery for controlled candidates (JV-054), then accept D13 rollout policy and qualify activation/rollback and operational evidence (JV-055). No deployment authority or background optimizer is enabled by this plan.
 
 **Post-MVP general assistance (J8).** After verified JV-025, qualify shared profile/policy contracts (JV-065), the bounded tool broker/adapter (JV-066), authenticated conversation and scoped memory (JV-067), then weather/pilot acceptance (JV-068). D14 must accept the corresponding tool/provider/retention/profile limits before live execution. J6/J7 remain separate capabilities.
 
