@@ -42,6 +42,12 @@ Use the [contributor workflow](../../../docs/development-workflow.md) when an is
 
 Delivery detects the need for slicing and defines implementation boundaries; project management owns the GitHub records. This handoff does not authorize implementing unselected or unrelated work. Each child implementation uses one branch/worktree/PR. Parent closure requires confirmed required child deliveries and integrated parent acceptance; a closed or abandoned child alone does not prove delivery.
 
+## Record blocking and unblocking transitions
+
+Apply the [blocker lifecycle and English comment structures](../../../docs/blocker-lifecycle.md) when selected/active work becomes blocked or a known blocker changes. Project management owns the comments, real native dependency links, project status, and queue refresh within the authorized task; issue delivery supplies the cause, retained work, resumption condition, and verification evidence.
+
+Publish a distinct Blocked comment for a new episode, material updates while causes remain, and a linked Unblocked comment only after all active causes are verified resolved. Inspect existing comments first and reuse the same episode/transition marker on retries; an unchanged refresh is not a new event. Preserve history and resolved dependency links. Reread comments, status, and dependency changes; reconcile incomplete writes before claiming synchronization. Ready is the default after resolution; In Progress requires actual authorized resumption, and In Review requires a complete verified deliverable. The rank tool changes neither comments nor statuses and cannot detect every external/decision blocker. During authorized planning refreshes and after a prerequisite is delivered, inspect directly affected Blocked issues and reassess all recorded causes before selecting new work. Use the native blocking inventory to find dependents; external/decision causes also require reading the active episode.
+
 ## Keep the board meaningful
 
 | Status | Meaning |

@@ -93,6 +93,22 @@ gh api --method POST "repos/$task_repo/issues/$task_issue_number/dependencies/bl
 
 Reread `dependencies/blocked_by` after a write. `--field` encodes a numeric value as a JSON number. A dependency link written in an issue body does not create this native relationship.
 
+## Blocker comments and transition recovery
+
+Follow the shared [blocker lifecycle](../../../../docs/blocker-lifecycle.md) and its English comment structures. Apply the App authentication prefix above; comment creation is a write operation included only in an authorized issue-management/delivery task. Before a new event or retry, inspect the issue, complete paginated comment history, native blockers, and actual project status. Match the prepared episode/transition marker and its content; an arbitrary comment or marker is not resolution evidence.
+
+```bash
+gh issue view "$task_issue_number" --repo "$task_repo" --comments
+gh api --method GET "repos/$task_repo/issues/$task_issue_number/comments?per_page=100" --paginate
+gh issue comment "$task_issue_number" --repo "$task_repo" --body-file "$task_comment_body_file"
+```
+
+Prepare the UTF-8 body with the real cause/evidence and a stable episode/transition marker before posting. Capture the returned comment URL and reread it in the comment inventory. Reuse a confirmed matching comment after an ambiguous result; do not create a duplicate. Then apply the appropriate status using the project recipes and refresh the queue. If only one operation succeeded, finish the missing operation from reread state; do not repeat the whole sequence blindly. If the ambiguity remains unresolved, report it and stop retrying that transition until state/access is clear.
+
+Keep the opening and resolution comments separate. Do not use `--edit-last`/`--delete-last` to rewrite blocker history or assume the latest App comment is the intended episode. Preserve other authors' comments, resolved dependency links, and unrelated metadata. Correct a factual mistake explicitly rather than erasing the event. No additional polling/scheduled commenting is implied.
+
+References: [issue comments CLI](https://cli.github.com/manual/gh_issue_comment) and [issue comments REST API](https://docs.github.com/en/rest/issues/comments).
+
 ## Native sub-issues
 
 Inspect existing children and the intended child's current parent before linking. Creating a child issue uses the same intake requirements and stable `JV-*` naming as any other issue. Use its numeric REST `id`, not its display number or GraphQL node ID. Link only within the authorized parent scope; do not reparent an existing child silently.
