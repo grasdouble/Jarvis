@@ -20,6 +20,8 @@ The product roadmap also plans [evidence-driven self-improvement after v0.3](doc
 
 Use [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) for the dependency-aware execution order. Agents refresh it before selecting the first eligible Ready issue and after delivery or planning changes. The [selection and refresh procedure](docs/development-workflow.md#select-and-refresh-the-next-issue) explains readiness, ownership, and maintenance. JV numbers identify issues; they do not define execution order.
 
+Every issue must have an appropriate native GitHub milestone, including coordination parents and implementation children. See the [milestone policy and audit](docs/development-workflow.md#required-issue-milestones).
+
 ## GitHub CLI setup for development
 
 For routine issue delivery and backlog management, use the [dedicated development App](docs/development-github-app.md). Its helper defaults to read-only tokens and supports explicit authorized writes and App-authenticated branch pushes. Keep its PEM in `$HOME/Library/Application Support/Jarvis Development/credentials` with directory/file permissions `700`/`600`.

@@ -1,0 +1,44 @@
+name: Issue milestone audit
+
+on:
+  issues:
+    types: [opened, reopened, milestoned, demilestoned]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-milestones
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Every issue has a native milestone
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: grasdouble/Jarvis
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Fetch every open and closed issue page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method GET --paginate --slurp \
+            'repos/grasdouble/Jarvis/issues?state=all&per_page=100' \
+            > "${RUNNER_TEMP}/issue-inventory.json"
+      - name: Audit native milestones
+        run: node scripts/github/check-issue-milestones.mjs "${RUNNER_TEMP}/issue-inventory.json"

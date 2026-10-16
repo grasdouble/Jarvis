@@ -47,7 +47,7 @@ gh issue create --repo "$task_repo" --title "$task_issue_title" \
   --label "$task_priority_label" --milestone "$task_milestone_title"
 ```
 
-Capture the returned issue URL and reread the issue before further writes. For an existing issue, edit only intended attributes; `--body-file` replaces the entire body, so first preserve unaffected sections in the edited file. Omit metadata flags that should remain unchanged.
+The milestone flag is mandatory for every new issue, including coordination parents and children. Resolve the appropriate phase before creation; do not use J0 as a fallback. Capture the returned issue URL and reread `milestone` using `gh issue view "$task_issue_number" --repo "$task_repo" --json number,milestone` before further writes. Verify the expected title; a reference in the body does not assign metadata. For an existing issue, edit only intended attributes; `--body-file` replaces the entire body, so first preserve unaffected sections in the edited file. Omit metadata flags that should remain unchanged.
 
 ```bash
 gh issue edit "$task_issue_number" --repo "$task_repo" --body-file "$task_issue_body_file"
@@ -64,6 +64,18 @@ gh label create "$task_label_name" --repo "$task_repo" \
 gh label edit "$task_label_name" --repo "$task_repo" \
   --color "$task_label_color" --description "$task_label_description"
 ```
+
+## Audit required issue milestones
+
+Fetch the complete all-state REST inventory; PR records are excluded by the audit. Apply the trusted App read prefix above to the `gh` recipe. Set the temporary path outside tracked source. Do not combine `--slurp` and `--jq`.
+
+```bash
+gh api --method GET "repos/$task_repo/issues?state=all&per_page=100" \
+  --paginate --slurp > "$task_issue_inventory_file"
+node scripts/github/check-issue-milestones.mjs "$task_issue_inventory_file"
+```
+
+Exit 0 means every supplied issue has a milestone, 1 lists omissions, and 2 means invalid input or usage. The caller must fetch all pages; arbitrary supplied data cannot prove completeness. The [read-only workflow](../../../../docs/development-workflow.md#required-issue-milestones) reports drift without choosing phases or commenting automatically. Correct actual native metadata, reread it, and rerun the audit and queue refresh.
 
 ## Milestones and native dependencies
 

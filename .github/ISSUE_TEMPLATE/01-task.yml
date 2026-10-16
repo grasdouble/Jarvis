@@ -3,7 +3,7 @@ description: Define a focused implementation with verifiable acceptance criteria
 body:
   - type: markdown
     attributes:
-      value: Write in English. Keep one deliverable per issue and link existing work rather than duplicating it.
+      value: Write in English. Keep one deliverable per issue and link existing work rather than duplicating it. Select the appropriate native Milestone in the sidebar before submitting; if unavailable, ask a maintainer to assign it during triage. A milestone written in the body does not assign GitHub metadata.
   - type: textarea
     id: outcome
     attributes:
