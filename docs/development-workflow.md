@@ -32,6 +32,10 @@ If scope grows, split remaining work before growing the PR. Backlog planning may
 
 An actionable implementation child moves through Ready → In Progress → In Review → Done. A coordination parent may remain In Progress across several child PRs and review cycles. Inspect project automations before setting Done; it can close the issue. Done requires verified acceptance and confirmed delivery, including merge when a PR is used.
 
+## Independent review and autonomous routine delivery
+
+Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended scheduler is installed. Future product runtime delivery is planned separately after v0.1.
+
 ## Blocking and resuming work
 
 Use the [blocker lifecycle](blocker-lifecycle.md) for English Blocked, Blocker update, and Unblocked comments, their required evidence, and recoverable comment/status synchronization. Selected/active work with unmet resumption conditions is Blocked; future planned prerequisites may remain Backlog. Resolve every active cause before returning to Ready or actually resuming. Refresh the execution queue after the verified transition; the queue tool does not create comments or change statuses.

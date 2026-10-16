@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.2 • October 16, 2026 • Personal self-hosted product
+Document version 1.3 • October 16, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -283,7 +283,15 @@ A failed security gate delays automerge. The system can remain useful in observa
 
 **Proposed v0.2.** Evaluate semantic or hybrid memory retrieval against a labeled corpus before adding embeddings; keep the same provenance and authorization rules. Extend to other ecosystems and minor updates after operational feedback; merge queues and group checks; Telegram or another selected notification channel; test execution in a separate sandbox without an LLM key; better review evaluation.
 
-**Proposed v0.3.** Resolve bounded issues and prepare PRs with a new permission profile and approval before publication. Reuse runtime contracts without granting merge permissions to the agent.
+**Planned v0.3 feature: bounded autonomous delivery.** Resolve an explicitly selected issue, prepare and publish a PR, obtain independent review, apply justified requested corrections, re-review each changed revision, and merge only eligible routine work. The owner selected autonomous routine delivery with human review retained for sensitive changes. This is a post-MVP commitment to plan and qualify, not an installed capability or a delivery date. Track the parent [JV-044](https://github.com/grasdouble/Jarvis/issues/44) and children JV-045 through JV-048. v0.1's exclusions, release criteria and static review profile remain unchanged.
+
+**P11 user story.** I want an authorized issue delivered through independent review and bounded repairs without approving every routine PR, while retaining control of sensitive changes and spending.
+
+**P11 requirements.** Separate author, read-only reviewer, credential-free test executor and trusted publisher/merge controller. Bind reports to exact head/base and policy; invalidate eligibility after any revision or material evidence change. Native GitHub approval is distinct from an agent assessment and remains subject to required reviewers. A model cannot grant publication/merge permission. Persist finite rounds, elapsed time and configured spend limits; stop/handoff on uncertainty, limited evidence, exhaustion, cancellation or revoked authority. Surface findings, fixes, costs and remote outcomes in the UI/digest.
+
+**P11 measurable acceptance.** An authorized fixture issue produces one PR; a real blocking review finding triggers a tested fix and an independent new review before eligibility. Duplicate/reordered events and lost responses yield no duplicate PR or unauthorized merge. Routine eligibility requires current CI/provenance/protections and no blocking reviews; sensitive/unknown changes require current human approval. Every head/base change invalidates prior eligibility, and budgets/stop state survive restart. The agreed corpus contains at least 30 success/adversarial/recovery scenarios; a controlled pilot demonstrates correction/merge, sensitive handoff, exhaustion and lost-response recovery with zero unauthorized effects. Owner-approved profiles/budgets and the v0.1 gate precede writable implementation. See the [proposed architecture](technical-architecture.md#128-proposed-v03-autonomous-delivery) and [shared design](autonomous-delivery.md#product-v03-design-commitments).
+
+**Contributor delivery available separately.** Agents developing JARVIS use the [session-driven independent review procedure](autonomous-delivery.md#contributor-review-loop). It is a development skill workflow with local host limitations; it does not establish that the sandboxed product feature is implemented.
 
 **Later.** Multiple concurrent runs, dedicated Linux hosting, multiple projects or users, and planning of more complex work. Each extension requires a new threat assessment and its own criteria.
 
@@ -302,6 +310,7 @@ A failed security gate delays automerge. The system can remain useful in observa
 | D09 | Retention and backup | Owner; logs 30 days, reports/audit 90 days, 7 daily and 4 weekly dumps | J5; encrypted export to a dedicated directory |
 | D10 | Local authentication | Developer; single account, strong password, and secure session | J2; administration inaccessible without authentication |
 | D11 | Knowledge lifecycle and context budget | Owner; proposals 30 days, validated items reviewed at least every 90 days; 10 items / 4,000 tokens / 32 KiB per attempt | J3/J5; expired items excluded until revalidated; backup expiry and forgetting procedure documented |
+| D12 | v0.3 writable delivery profiles, sensitive scope and finite budgets | Owner accepts the JV-045 threat/profile/policy proposal; routine autonomy with human sensitive gates is selected | Before writable v0.3 implementation; no writable/autonomous product run if unset |
 
 ## 13 Release criteria
 

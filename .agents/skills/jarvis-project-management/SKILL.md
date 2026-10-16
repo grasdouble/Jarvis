@@ -48,6 +48,10 @@ Apply the [blocker lifecycle and English comment structures](../../../docs/block
 
 Publish a distinct Blocked comment for a new episode, material updates while causes remain, and a linked Unblocked comment only after all active causes are verified resolved. Inspect existing comments first and reuse the same episode/transition marker on retries; an unchanged refresh is not a new event. Preserve history and resolved dependency links. Reread comments, status, and dependency changes; reconcile incomplete writes before claiming synchronization. Ready is the default after resolution; In Progress requires actual authorized resumption, and In Review requires a complete verified deliverable. The rank tool changes neither comments nor statuses and cannot detect every external/decision blocker. During authorized planning refreshes and after a prerequisite is delivered, inspect directly affected Blocked issues and reassess all recorded causes before selecting new work. Use the native blocking inventory to find dependents; external/decision causes also require reading the active episode.
 
+## Track independent review and repair
+
+Use the [autonomous delivery procedure](../../../docs/autonomous-delivery.md) when issue delivery performs its bounded reviewer/fix loop. Record direct reviewer provenance, exact revisions, findings and outcome in a clearly identified PR comment; an agent result is not a native approval. Read complete comment history before retries and reconcile partial publication. During actual corrections the issue is In Progress; a clean verified deliverable is In Review; only confirmed delivery is Done. Missing reviewer/evidence or exhausted limits follows the blocker lifecycle; normal waiting for required owner approval stays In Review. Do not reset the run ledger, spend budget or resolve someone else's blocking review through project metadata.
+
 ## Keep the board meaningful
 
 | Status | Meaning |

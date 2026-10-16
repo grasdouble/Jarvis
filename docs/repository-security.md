@@ -48,7 +48,9 @@ The production JARVIS App in issue #10 is a separate runtime concern and must no
 
 ## Autonomous merging
 
-Repository permission to merge is not user authorization for an agent to do so. Existing AGENTS.md rules still apply: authorized implementation ends in a PR unless the user also authorizes merging. Once authorized for a class of routine work, the agent may merge only after current checks and protections permit it. Sensitive changes continue to need the owner review. Never use `--admin`; verify the final merged state before marking delivery Done.
+Repository permission to merge is not user authorization for an agent to do so. The owner selected the [bounded contributor review loop](autonomous-delivery.md): after this policy is adopted, a human request to implement a selected issue includes independent review/corrections and guarded merging of routine changes unless restricted. Existing sensitive paths and any unknown/sensitive content still require owner approval under the trusted base and effective GitHub rules. This policy's adoption PR uses the previous rules and human gate.
+
+Agent reviewer verdicts are distinct from native GitHub approvals; the author App publishes an identified assessment comment and cannot approve itself. No second App, bypass or new credential is installed. Never use `--admin`, lower review/check requirements or treat proposed policy as its own authority. Revision/CI/protection checks must be current and remote MERGED confirmed before Done. Contributor subagents are not an enforced security boundary; the product's future role sandboxes require separate qualification.
 
 ## Verify live settings
 

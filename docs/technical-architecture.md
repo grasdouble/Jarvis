@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.2 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.3 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -481,6 +481,23 @@ The scheduler determines the daily occurrence in Europe/Paris and records its UT
 
 Action totals and lists come from SQL queries over confirmed facts. Optional LLM-written prose receives these facts and links under a separate budget; if generation fails, a deterministic template remains available. Outbound links and Markdown are sanitized. Merges in `unknown` state are never presented as successful.
 
+### 12.8 Proposed v0.3 autonomous delivery
+
+This extension is planned in [JV-044](https://github.com/grasdouble/Jarvis/issues/44), with profile/policy, author/publication, review/repair and qualification slices JV-045–JV-048. It does not change MVP contracts or enable writable agent tools. The session-driven [contributor procedure](autonomous-delivery.md) is a separate development capability.
+
+Reuse domain/policy, orchestration, runtime ports, sandbox-manager, persistence and GitHub executor modules in the PNPM modular monolith. Keep role-specific adapters behind typed ports; no OpenCode plugin or second general-purpose planner is required. Core alone selects context, validates outputs and owns credentials/effects.
+
+- **Author attempt:** isolated writable task volume; sanitized scoped issue/base snapshot; export a bounded patch/artifact. No host shares, Engine socket, GitHub credentials or permanent provider key. A trusted validator rejects traversal, symlinks, unexpected artifacts and out-of-scope changes before publication.
+- **Reviewer attempt:** new read-only snapshot/context bound to exact base/head and accepted criteria, separate from author conversation/state. The core verifies coverage, paths and reviewer-attempt provenance. Findings and `approved`/`changes_requested`/`limited` are model assessments; no field becomes native approval or merge authority.
+- **Validation executor:** separately qualified repository-command environment, without LLM gateway or GitHub/provider credentials. Dependency acquisition, egress, quotas and artifact channels need an accepted profile; never relax the static MVP sandbox automatically.
+- **Publisher/merge controller:** validates scope and authenticated CI/protection/review facts, prepares durable intents, publishes via trusted GitHub adapters and rechecks revision-bound eligibility. Routine automation requires explicit per-repository policy; sensitive/unknown changes retain human approval. No author/reviewer bypass or personal credential fallback.
+
+Proposed durable records extend the existing schema with `delivery_runs` (issue/PR/branch claim, authorization/policy versions, state, limits/spend/start/deadline, stop epoch), `delivery_rounds` (run/round/base/head, author/reviewer attempt IDs, validated report digest), `delivery_findings` (stable ID, location, blocking severity, disposition/evidence) and publication intents. Unique keys bind run/round/role and remote effect targets; leases and inbox/outbox prevent duplicate work. A PR comment is an audit projection, not the authoritative run ledger. Validate final schemas in JV-045 rather than declaring these tables installed.
+
+Transitions: authoring → validating → publishing → reviewing; requested fixes go through fixing → validating → reviewing on a new revision. Complete clean evidence goes to eligible or needs_human, then the existing guarded merge intent and confirmed delivered state. Persist limited/blocked/exhausted/cancelled and uncertain-effect states explicitly. Every relevant revision/policy/evidence change invalidates eligibility. Reread/reconcile PRs, comments, refs, reviews and merge outcomes before retrying ambiguous effects; never reuse an approval for a different action digest.
+
+The core enforces owner-configured finite review-round, time, token/currency and resource limits across crashes and retries. Exceeding a limit stops the run and records the required owner action; model output cannot extend it. Cancellation/revocation invalidates leases and future effects. UI/digest expose rounds, findings/dispositions, costs, head/base, approval gates and actual remote results. Qualification includes stale reviews, malicious suggestions, CI/protection changes, forked/renamed paths, duplicate events, lost responses, restore/revocation and zero unauthorized effects in a controlled pilot. See P11 and D12 in the PRD.
+
 ## 13 Idempotence and consistency
 
 | Level | Key and mechanism | Intended guarantee |
@@ -654,7 +671,9 @@ Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 
 
 **Step 5 corresponding to J5.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
 
-Decisions D01 through D11 in the PRD remain the product decision register. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D12 in the PRD remain the product decision register; D12 gates the post-MVP writable delivery extension, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+
+**Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
 
 ## 22 Verified technical references
 
