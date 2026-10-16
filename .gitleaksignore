@@ -1,0 +1,3 @@
+# One reviewed architecture-narrative false positive in published history.
+# Scope: exact commit, file, rule and line; no path-wide or rule-wide exclusion.
+e2e7cea4dd90bc1bdc59d0357ad04a281b137724:docs/technical-architecture.md:generic-api-key:511

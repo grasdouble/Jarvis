@@ -6,6 +6,7 @@
 /scripts/ci/ @noofreuuuh
 /scripts/github/ @noofreuuuh
 /.gitleaks.toml @noofreuuuh
+/.gitleaksignore @noofreuuuh
 /infra/ @noofreuuuh
 /packages/policy/ @noofreuuuh
 /packages/sandbox-manager/ @noofreuuuh
