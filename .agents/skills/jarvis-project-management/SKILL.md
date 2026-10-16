@@ -30,6 +30,12 @@ Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog 
 - Verify each dependency is real and belongs to the intended work. Add native blocking relationships, avoid cycles, and include readable issue links in the body. Existing planned dependencies alone do not require moving every future item to `Blocked`.
 - Use structured mutation arguments or a UTF-8 body file with `--body-file`. After a timeout or ambiguous response, reread GitHub before retrying to avoid duplicates. Preserve existing issue content outside the authorized edit.
 
+## Decompose broad issues
+
+Use the [contributor workflow](../../../docs/development-workflow.md) when an issue contains independently reviewable deliverables or delivery requests slicing. Reuse existing children before creating new ones. Preserve the parent's scope and acceptance; give each child its own `JV-*` key, bounded outcome, verification, labels, milestone, and project membership. Add native parent/child links and only the genuine blocking dependencies; parenthood is not itself a dependency.
+
+Delivery detects the need for slicing and defines implementation boundaries; project management owns the GitHub records. This handoff does not authorize implementing unselected or unrelated work. Each child implementation uses one branch/worktree/PR. Parent closure requires confirmed required child deliveries and integrated parent acceptance; a closed or abandoned child alone does not prove delivery.
+
 ## Keep the board meaningful
 
 | Status | Meaning |
@@ -43,7 +49,7 @@ Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog 
 
 Inspect current project workflows before changing statuses: an automatic workflow can close an issue when it moves to `Done`. Implementation uses a dedicated issue branch and linked worktree, then one PR; keep that PR linked to the issue/project. Keep a draft implementation in `In Progress` or `Blocked`, and move to `In Review` when it is ready for review. Do not mark implementation complete merely because an agent finished a turn, created a branch/worktree, or opened a PR. Closing a dependency as abandoned does not prove its required outcome was delivered.
 
-Maintain Delivery as a status board, Backlog as a milestone-grouped table, and Roadmap as a milestone-grouped timeline. Leave dates unset unless supported by an agreed schedule. Prefer labels over duplicated priority/area fields. Preserve project visibility, access, and unrelated items. Auto-add rules must remain scoped to the intended repository.
+Maintain Delivery as an issues-only status board (`is:issue`), Backlog as a milestone-grouped table, and Roadmap as a milestone-grouped timeline. Preserve the separate Pull requests table (`is:pr`) and the linked PR badges on issue cards; filtering a view does not remove PRs from the project. Leave dates unset unless supported by an agreed schedule. Prefer labels over duplicated priority/area fields. Preserve project visibility, access, and unrelated items. Auto-add rules must remain scoped to the intended repository.
 
 ## Verify and report
 
