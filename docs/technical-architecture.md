@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.8 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.9 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -284,6 +284,8 @@ interface SandboxManager {
 | POST /api/v1/approvals/:id/decision | Approve or reject | Expected ActionDigest and version, expiry, CSRF |
 | POST /api/v1/control/pause | Durable global stop | Prioritized, authenticated, and audited |
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
+| GET /api/v1/usage | Consumption summary and groupings | Authenticated scope, bounded period/groups, IANA zone, currencies and completeness |
+| GET /api/v1/usage/requests | Request usage, attribution and provenance | Authenticated filters, cursor pagination, at most 100 rows, no raw model content |
 | GET /api/v1/repositories/:id/memories | Scoped knowledge and provenance | Authenticated, status filters, cursor pagination |
 | POST /api/v1/repositories/:id/memories | Create an observation or owner-authored note | Closed schema, bounded text, Idempotency-Key, CSRF, no policy fields |
 | POST /api/v1/memories/:id/revisions | Correct, validate, or invalidate knowledge | Owner session, expected version, source and applicability required, audited |
@@ -375,7 +377,10 @@ Fallback is limited to a per-repository approved list with the same confidential
 | outbox | id, aggregate_id, event_type, payload, available_at, delivered_at | Event written in the same transaction as domain state |
 | scheduled_runs | schedule_id, local_date, period_start, period_end, state | Unique per schedule and logical occurrence |
 | daily_digests | scope_id, local_date, source_watermark, body, totals_json | One current version per date; totals retain provenance |
-| usage_ledger | attempt_id, provider, model, reserved, actual, currency, price_version | Reservations and spending; estimated/reconciled distinction |
+| model_requests | request_id, operation_id, scope_ids, attempt_id, purpose, provider, model, profile_version, dispatched_at, state | Persist before dispatch; distinct billable retries have distinct identities; optional future agent/parent attribution |
+| usage_allocations | allocation_id, parent_id, scope_id, period, limits, held_exposure, state, version | Durable scoped reservations; transactional child allocation without counting reservations as spending |
+| usage_observations | request_id, source, observation_id, revision, numeric_usage, mapping_version, coverage, observed_at | Unique request/source/observation/revision; bounded allowlist, no prompt text; snapshots are not summed |
+| usage_ledger | request_id, canonical_revision, reserved, token_counts, field_statuses, estimated_charge, provider_reported_charge, currency, price_version, reconciliation_state | One canonical charge per request, immutable correction evidence and uncertain exposure; atomic reservation/projection updates |
 | audit_events | actor, action, resource, correlation_id, occurred_at, details_hash | Insert-only for the application role; purge by a separate role |
 
 GitHub identifiers are stored as `bigint` or text and serialized as API strings to avoid JavaScript precision loss. Monetary amounts use decimals or integer currency units with sufficient precision, never binary floating point. Timestamps use UTC `timestamptz`, with the schedule's IANA time zone stored separately. JSONB fields carry a schema version and do not replace columns needed for constraints.
@@ -619,26 +624,30 @@ Structured JSON logs carry `correlation_id`, repository, PR, task, attempt, revi
 
 Metrics include queue age, reconciliation lag, preparation and review duration, timeout rate, expired leases, orphaned resources, cleanup, errors per adapter, GitHub calls, rate-limit headroom, reserved/estimated/reconciled cost, refusals by reason, and `unknown` intents. PR identifiers are not used as high-cardinality metric labels; they remain in logs and traces.
 
+Consumption metrics additionally expose token totals, supported cache/reasoning breakdowns, request failures and missing/estimated usage coverage by bounded provider/model/purpose dimensions. Detailed task/agent/campaign attribution stays in authenticated SQL-backed views. The [token accounting contract](token-consumption.md) specifies canonical per-request collection, no duplicate parent/child aggregation, read APIs, daily corrections and retention/restore handling. Reuse existing llm/contracts/domain/persistence/observability modules; no separate analytics service is required.
+
 Visible JARVIS alerts include: no reconciliation for more than 30 minutes while the system is active, an unknown merge result for more than 5 minutes, cleanup failing for 5 minutes, budget reaching 80% and then 100%, VM space below 10 GiB, and repeated authentication or isolation failures. External notifications are optional and deferred.
 
 ### 17.2 Cost model
 
 ```text
-Cost per attempt =
-  input tokens / 1,000,000 × input price
-  + output tokens / 1,000,000 × output price
-  + any explicitly accounted tool or cache fees
+Model estimate per request =
+  sum over mutually exclusive billable buckets b of
+    (tokens_b / 1,000,000 × versioned_price_b)
 
-Monthly cost = sum of all attempts and digests
+Period spend = sum of canonical request charges attributed to that period
+  + separately accounted non-token fees not already included
   + any relay or other optional infrastructure subscriptions
   + energy, storage, and operational time
 ```
 
 Purely arithmetic example, not a current price quote: at 2 units per million input tokens and 10 per million output tokens, a review using 50,000 input tokens and 5,000 output tokens costs 0.15 units. At 20 reviews per day for 30 days, this amounts to 90 units before retries, digests, taxes, and other fees. A 10% retry overhead would bring this component to approximately 99 units.
 
-The reservation is calculated before starting from the maximum authorized requests and tokens. The gateway rejects a new request when the remaining reservation is insufficient and constrains output maxima; the worker does not merely alert after spending. Provider-reported usage is reconciled when available; otherwise usage remains estimated. An in-flight request can exceed an estimate; a strict provider-side spending limit supplements local controls.
+The reservation is calculated before starting from the maximum authorized requests and tokens. The core persists a request intent and atomically reserves capacity across applicable scopes before the gateway dispatches; concurrent calls cannot both spend the same balance. The gateway rejects a new request when the remaining reservation is insufficient and constrains output maxima; the worker does not merely alert after spending. Provider-reported usage is reconciled when available; otherwise usage remains estimated or explicitly unknown. Crashes, cancellation and missing stream endings retain uncertain exposure, including across restore or budget-period boundaries. An in-flight request can exceed an estimate; a strict provider-side spending limit supplements local controls.
 
 The interface distinguishes per-PR cost, abandoned-attempt cost, currency, and price version. Prices are entered or explicitly updated, without relying on constants assumed to remain current. Local costs are measured through CPU time, memory, and storage; a local model adds consumption and RAM constraints rather than having zero cost.
+
+Input/output totals and cache/reasoning subsets use qualified provider-specific mappings; overlapping categories are never charged twice. Gateway and OpenCode events for the same actual request update one canonical record, not separate expenses. Every retry, format repair, digest and later agent call is attributable, including failed/unknown outcomes. Runtime-reported cost is evidence to cross-check, not authority to release funds or an invoice guarantee. Unknown prices/subscription valuation and different currencies remain explicit. D02/D05/D09/D11 retain provider, configured token/currency limits and retention choices. JV-015/JV-017/JV-022/JV-024 own MVP implementation and acceptance; this detailed specification enables no runtime behavior.
 
 ## 18 Local deployment and development
 

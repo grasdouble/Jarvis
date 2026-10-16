@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.8 • October 16, 2026 • Personal self-hosted product
+Document version 1.9 • October 16, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -177,6 +177,8 @@ The emergency stop prohibits any new remote request and revokes task capabilitie
 
 **Requirements.** One digest per local date and scope groups detected PRs, reviews, confirmed merges, rejections, pending human decisions, incidents, tasks exceeding budget, and known or estimated spending. Each item links to its details. Totals come from PostgreSQL; LLM-written prose is optional.
 
+Include token totals/breakdowns and estimated/unknown coverage from the same F09 ledger, including retries, failures and optional digest-generation usage. Late usage revises the original period with a visible watermark/correction, without a duplicate digest.
+
 **Acceptance.** A fixture containing 12 PRs, 4 merges, and 2 failures reproduces exactly those totals. A daylight saving time change does not create two digests. If the Mac is asleep at 08:00, a catch-up digest is available within 5 minutes of recovery and identifies the period without monitoring. Several missed days are grouped without losing events.
 
 ### F08 Supervise and stop
@@ -193,7 +195,11 @@ The emergency stop prohibits any new remote request and revokes task capabilitie
 
 **Requirements.** The model and provider are selected per profile. Required capabilities, limits, and confidentiality rules are verified. No fallback to an unauthorized provider is allowed. Limits reserve the maximum estimated cost before starting and account for retries and digests.
 
+Track each dispatched model request durably with provider/model, purpose, task/attempt and authorized repository/PR attribution. Preserve input/output totals, cache read/write and reasoning breakdowns where supported, without adding overlapping categories. Missing values are unknown/unsupported rather than zero; reported counts, estimates, reservations and monetary valuations remain distinct. Count failures, cancellations, retries and future agent/parent overhead once per actual request. Authenticated consumption views and exports support daily/monthly summaries and drilldown; no prompt or code content is needed for tracking. The [accounting contract](token-consumption.md) defines provenance, reconciliation, privacy and reuse by later capabilities.
+
 **Acceptance.** Two authorized providers pass the same report contract test without changing the business domain. An incompatible provider blocks the task cleanly. Once the limit is reached, no new billable request is sent; a request already in flight may exceed its estimate and remains displayed as such.
+
+Provider usage mappings and missing-value cases pass the accounting fixtures. Replaying a final observation 100 times or combining SDK/gateway observations never duplicates consumption; a separately billed retry does. A fixture of 1,000/100 plus 2,000/300 input/output tokens remains exactly 3,000/400 despite cache/reasoning subsets. Two concurrent 6-unit reservations against 10 available admit at most one, including restart/recovery cases. Unknown in-flight exposure remains accounted for. SQL, API, UI and digest totals agree with explicit period/currency/coverage; known persisted usage is visible within 60 seconds under normal operation. These are implementation targets, not current results; D05 retains actual limits/prices.
 
 ### F10 Retain and reuse controlled memory
 
@@ -228,6 +234,8 @@ Colima provides the Linux VM hosting Docker Engine; the selected Docker runtime 
 ## 8 Web experience and displayed information
 
 The home screen prioritizes approvals, failures, and operations awaiting confirmation. A PR view distinguishes GitHub facts, model analysis, and the policy decision. Full SHAs are available; file and check links point to the reviewed revision.
+
+A consumption view shows input/output tokens, supported cache/reasoning breakdowns, provider/model, task purpose, known/estimated/unknown coverage and reserved versus estimated/provider-reported spending. Period and repository/PR/task filters support drilldown; future agent/campaign views reuse it when delivered. Parent totals and child details cannot be added twice. Currency, price version, freshness and retention gaps remain visible; token savings alone do not prove quality gains.
 
 Configuration must explain the permissions actually granted. Observation mode remains visible at all times. Enabling automerge shows the precise scope: repository, branch, patch updates, dependencies, expected CI, and limits. Blocking messages must suggest a useful action, such as "expected CI check missing" or "head changed; new analysis pending."
 
