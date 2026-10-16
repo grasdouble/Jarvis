@@ -11,11 +11,16 @@ The repository is maintained in English.
 - [Contributor workflow, TDD, task slicing, and planned versioning](docs/development-workflow.md)
 - [Independent review, repair loops and autonomous routine delivery](docs/autonomous-delivery.md)
 - [Bounded self-improvement campaigns and conflict remediation](docs/self-improvement-campaigns.md)
+- [Shared OpenCode runtime and controlled capabilities](docs/common-agent-runtime.md)
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
 
 The product roadmap also plans [evidence-driven self-improvement after v0.3](docs/prd-and-roadmap.md#111-post-mvp-evolution), tracked by [JV-051](https://github.com/grasdouble/Jarvis/issues/51). It is future work with fixed evaluation, human-sensitive gates and separately authorized rollout; no runtime optimizer is installed.
+
+## Shared agent runtime
+
+OpenCode is the planned common engine for conversation, code review/development and self-improvement through separate trusted profiles. JARVIS owns permissions, memory, budgets, scheduling and external effects. The MVP admits static review only; [J8 general-purpose assistance](https://github.com/grasdouble/Jarvis/issues/64) plans authenticated conversation and approved read-only tools, with weather as the first qualification example. No chat/tool broker/connector is enabled and Herdr is not a dependency. See the [runtime design](docs/common-agent-runtime.md).
 
 ## Self-update pull requests
 
