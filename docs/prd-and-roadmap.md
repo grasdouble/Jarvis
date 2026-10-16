@@ -277,6 +277,15 @@ Initial estimate for one person working full time: 8 to 10 weeks, excluding wait
 | J4 Assisted actions | Weeks 7 to 8 | Approvals, intents, and verified merge on a test repository | F05/F06; SHA races, CI, and failures covered; at least 20 PRs observed |
 | J5 v0.1 release | Weeks 9 to 10 | Pilot patch automerge, digest, memory management, backup, and operations guide | F07/F08/F10, forgetting and restore, 7-day pilot, and critical targets met |
 
+Post-MVP tracking uses separate, undated native GitHub milestones. This mapping adds no v0.1 release criterion or calendar commitment:
+
+| Milestone | Scope | Tracking |
+| --- | --- | --- |
+| J6 — v0.3 autonomous delivery | Bounded issue-to-PR delivery, independent review and guarded merge after the MVP gates | Parent [JV-044](https://github.com/grasdouble/Jarvis/issues/44), children JV-045–JV-048 |
+| J7 — Post-v0.3 self-improvement | Evidence-driven improvement proposals, comparison and separately approved activation after v0.3 | Parent [JV-051](https://github.com/grasdouble/Jarvis/issues/51), children JV-052–JV-055 |
+
+Every repository issue must carry the appropriate native milestone under the [contributor policy](development-workflow.md#required-issue-milestones); body references alone do not assign it.
+
 A failed security gate delays automerge. The system can remain useful in observation or assisted review mode; that mode is not a complete v0.1 until the requested safe merge capability has been validated.
 
 ### 11.1 Post-MVP evolution

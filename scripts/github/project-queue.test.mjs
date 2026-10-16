@@ -33,3 +33,34 @@ test('completed issues are omitted and remaining ranks are contiguous', () => {
   const rows=planQueue([issue(1,{state:'CLOSED',stateReason:'COMPLETED'}),issue(2),issue(3)]);
   assert.deepEqual(rows.map(x=>x.rank),[1,2]);
 });
+
+test('later numeric delivery phases precede named milestones regardless of age or priority', () => {
+  const rows=planQueue([
+    issue(1,{milestone:'Later',labels:['priority:P0']}),
+    issue(2,{milestone:'J10 — Later work'}),
+    issue(3,{milestone:'J7 — Self-improvement'}),
+    issue(4,{milestone:'J6 — Autonomous delivery'}),
+    issue(5,{milestone:'J100 — Distant work'}),
+  ]);
+  assert.deepEqual(numbers(rows),[4,3,2,5,1]);
+});
+test('dependencies still precede a lower phase number', () => {
+  assert.deepEqual(numbers(planQueue([issue(1,{milestone:'J6',blockers:['2']}),issue(2,{milestone:'J7'})])),[2,1]);
+});
+test('all open leaves and coordination parents require a nonblank native milestone', () => {
+  for (const milestone of [undefined,null,'','  ']) {
+    assert.throws(()=>planQueue([issue(1,{milestone})]),/milestone/i);
+    assert.throws(()=>planQueue([issue(1,{milestone,children:['2']}),issue(2)]),/milestone/i);
+  }
+});
+test('completed historical issues without a milestone remain omitted from the implementation queue', () => {
+  assert.deepEqual(numbers(planQueue([issue(1,{state:'CLOSED',stateReason:'COMPLETED',milestone:null}),issue(2)])),[2]);
+});
+test('only a whole nonnegative safe integer J phase is treated as numeric', () => {
+  assert.deepEqual(numbers(planQueue([
+    issue(1,{milestone:'J1.5 — Named'}),
+    issue(2,{milestone:'J01 — Named'}),
+    issue(3,{milestone:'J99999999999999999999 — Named'}),
+    issue(4,{milestone:'J100'}),
+  ])),[4,1,2,3]);
+});

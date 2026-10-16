@@ -192,3 +192,11 @@ test('truncated reconciliation fields stop further writes', async () => {
   }}),/Incomplete item fields/);
   assert.equal(f.writes.length,1);
 });
+
+test('a missing milestone aborts before any rank write, including for a coordination parent', async () => {
+  const f=fixture(3);
+  f.state.issues[0].milestone=null;
+  f.state.issues[0].children=['2'];
+  await assert.rejects(synchronizeQueue({...f,write:true}),/milestone/i);
+  assert.deepEqual(f.writes,[]);
+});

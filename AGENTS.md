@@ -7,7 +7,7 @@ These instructions guide agents developing this repository. They are not runtime
 - [PRD and roadmap](docs/prd-and-roadmap.md): scope, F01–F10, N01–N13, POL01–POL07, milestones, and owner decisions.
 - [Technical architecture](docs/technical-architecture.md): module boundaries, contracts, isolation, memory, and deployment.
 - [Issues](https://github.com/grasdouble/Jarvis/issues): task acceptance criteria and native blocking dependencies.
-- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J5 carry delivery phases; `priority:*` and `area:*` labels carry priority and module ownership.
+- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J7 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement); `priority:*` and `area:*` labels carry priority and module ownership.
 
 Read the sections relevant to the task rather than loading both documents in full. Resolve material contradictions before implementing dependent behavior. Clearly distinguish proposed architecture, implemented behavior, and measured acceptance evidence.
 
@@ -26,6 +26,8 @@ Use the reviewed [development App helper](docs/development-github-app.md) for ro
 Use the matching English issue form: [implementation task](.github/ISSUE_TEMPLATE/01-task.yml), [bug report](.github/ISSUE_TEMPLATE/02-bug.yml), or [decision request](.github/ISSUE_TEMPLATE/03-decision.yml). Blank issues remain available for work that does not fit these forms. Existing issues do not need to be recreated.
 
 Task issues need a bounded outcome, scope, measurable acceptance, and a verification plan. Bug reports need observed/expected behavior, known reproduction details, and relevant environment information. Decisions need options, rationale or uncertainty, an owner/gate, and resolution criteria. Triage assigns existing priority/area labels and the appropriate milestone. Written dependency references must also become native blocking relationships; forms do not create those links automatically.
+
+Every issue must have a native GitHub milestone, including coordination parents, implementation children, bugs and decisions. Select the appropriate existing phase before creation, pass it when creating through the CLI/API, and verify the saved metadata afterward and during reopen/triage. A body reference is insufficient. Children inherit the parent phase only when appropriate. Resolve an unknown phase through project management before creating or starting work; do not silently assign J0 or invent dates. The [milestone audit](docs/development-workflow.md#required-issue-milestones) reports omissions because GitHub cannot make this metadata mandatory at creation.
 
 When creating issues through a CLI or connector, populate equivalent body sections explicitly; do not assume GitHub's web-form requirements are enforced by the API. Issue intake does not grant implementation or publication authority beyond the user's request.
 

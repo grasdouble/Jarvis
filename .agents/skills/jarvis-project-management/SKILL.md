@@ -9,7 +9,7 @@ description: Maintain JARVIS GitHub issues, milestones, labels, dependencies, an
 
 Read [AGENTS.md](../../../AGENTS.md) and the relevant sections of the [PRD](../../../docs/prd-and-roadmap.md). The development repository is `grasdouble/Jarvis`; its organization project is [JARVIS — Development](https://github.com/orgs/grasdouble/projects/1).
 
-Issues describe work and acceptance. Milestones J0–J5 define delivery phases; the PRD and architecture define commitments. Preserve this distinction rather than maintaining conflicting copies of requirements or progress.
+Issues describe work and acceptance. Milestones J0–J7 define delivery phases (J0–J5 MVP, J6 v0.3 autonomous delivery, J7 post-v0.3 self-improvement); the PRD and architecture define commitments. Preserve this distinction rather than maintaining conflicting copies of requirements or progress.
 
 ## Establish scope and access
 
@@ -23,6 +23,7 @@ Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog 
 
 ## Refine or create work
 
+- Every issue needs a native GitHub milestone, including parents, children, bugs and decisions. Select the real phase before creation; use `--milestone` or equivalent metadata and reread the saved issue. A body mention is insufficient. Children inherit only an appropriate parent phase; otherwise record the reason for a different phase. Recheck on reopen/triage and before Ready or implementation. Resolve or create an appropriate milestone within authorization before creating work; never silently default to J0, invent dates, or remove the milestone to postpone a decision. Remediate omissions reported by the [read-only audit](../../../docs/development-workflow.md#required-issue-milestones), then rerun verification.
 - Inspect existing open and closed issues, milestones, and the project before creating items. Reuse matching work; keep existing `JV-*` identifiers stable and check for collisions when adding one.
 - Write in English using the matching [task](../../../.github/ISSUE_TEMPLATE/01-task.yml), [bug](../../../.github/ISSUE_TEMPLATE/02-bug.yml), or [decision](../../../.github/ISSUE_TEMPLATE/03-decision.yml) form. For CLI/connector creation, populate equivalent sections explicitly; web-form validation does not enforce API-created issue content. Keep existing issues and use a blank issue when none of the forms fits.
 - Task issues need an outcome, scope, measurable acceptance, and verification plan. Bug reports need observed/expected behavior, reproduction circumstances, and relevant environment details; do not invent unknown values. Decision requests need options, recommendation or uncertainty, an owner/gate, and resolution criteria. Include dependency links and relevant specification sections. Flag unresolved owner decisions rather than inventing a provider, budget, pilot, or deadline.
