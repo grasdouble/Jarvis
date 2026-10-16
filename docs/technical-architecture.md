@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.7 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.8 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -11,6 +11,8 @@ The proposed profile for the Mac M2 Pro uses a sandbox with `network_mode: none`
 This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J1 prototype must demonstrate feasibility with the selected versions; any failure keeps the product in observation mode. Requirements F01 through F10, N01 through N13, and POL 01 through POL 07 refer to the separate [PRD and roadmap](prd-and-roadmap.md).
 
 ## 2 Architecture decisions
+
+The existing ADR01–ADR11 identities below remain stable. Use [project governance](project-governance.md) and the [ADR index/lifecycle](adr/index.md) to record significant evolution, actual acceptance provenance and linked supersession without inventing historical decisions. Proposed mechanisms and accepted choices remain distinct from implementation/qualification; this contributor process grants no runtime authority.
 
 | Decision | v0.1 choice | Consequence |
 | --- | --- | --- |

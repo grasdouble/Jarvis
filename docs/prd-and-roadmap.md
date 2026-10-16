@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.7 • October 16, 2026 • Personal self-hosted product
+Document version 1.8 • October 16, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -11,6 +11,8 @@ The product runs on a MacBook M2 Pro with Docker Engine inside a dedicated Colim
 This document defines product behavior, acceptance criteria, and the path to v0.1. The separate [JARVIS v0.1 Technical Architecture](technical-architecture.md) document describes the contracts, trust boundaries, and mechanisms needed to meet these commitments.
 
 **Launch principle.** Version 0.1 starts in observation mode, then goes through a human approval phase before explicitly enabling automerge for an authorized subset of patch updates. A favorable LLM recommendation is required under this profile, but is never sufficient to authorize a merge.
+
+Contributor changes use the [governance procedure](project-governance.md) to trace affected requirements/decisions and maintain relevant documents/backlog with actual authority and evidence. The [ADR index](adr/index.md) preserves significant technical decision history; Dxx entries remain the separate owner-decision register. This contributor process adds no product feature, runtime permission, semantic CI guarantee or MVP exit gate.
 
 ## 2 Initial decisions and product assumptions
 

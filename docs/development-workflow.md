@@ -2,6 +2,10 @@
 
 This document governs development of JARVIS. It is not an instruction set for the untrusted OpenCode review runtime. Repository changes are maintained in English.
 
+## Keep specifications and decisions coherent
+
+Use [project governance](project-governance.md) before implementation and again for the final diff. Delivery prepares the compact PR impact record and affected document/ADR updates; project management maintains live planning records; independent review checks the sources, authority and evidence. Routine work within accepted scope remains autonomous under current gates. Preserve actual owner authorization already given, stop only dependent unresolved work, and never change the specification solely to hide a defect. The [ADR index/template](adr/index.md) preserve significant decisions and supersession; current CI does not establish semantic alignment.
+
 ## Test-first behavior changes
 
 Use RED → GREEN → refactor for features and bug fixes:
@@ -50,7 +54,7 @@ Use the [blocker lifecycle](blocker-lifecycle.md) for English Blocked, Blocker u
 
 Every issue must have a native GitHub milestone: coordination parents, implementation children, bugs and decisions, open or closed. Choose the phase before creation and verify the saved metadata afterward, on reopen/triage, and before Ready or implementation. CLI/API creation must pass the milestone explicitly. Children inherit the parent phase only when appropriate; document a different phase when needed. If the phase is unclear, resolve it through project management first. Never silently assign J0, substitute a body reference, or invent a due date.
 
-J0–J5 cover the MVP, J6 covers v0.3 autonomous delivery, and J7 covers post-v0.3 self-improvement. These later milestones have no committed dates and add no MVP exit gate. A milestone is a delivery phase, not a promise of a calendar deadline.
+J0–J5 cover the MVP, J6 covers v0.3 autonomous delivery, J7 covers post-v0.3 self-improvement, and J8 covers post-MVP general-purpose assistance. J8 has no automatic dependency on J6/J7 solely by phase number; use the accepted roadmap and native prerequisites. These later milestones have no committed dates and add no MVP exit gate. A milestone is a delivery phase, not a promise of a calendar deadline.
 
 GitHub's [issue form syntax](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) cannot require native milestone metadata. Web/API users can temporarily create an issue without one or remove one afterward. The forms provide guidance; they do not enforce metadata. The [Issue milestone audit](../.github/workflows/issue-milestones.yml) runs on opening, reopening, milestone assignment/removal, main updates, manual dispatch and daily reconciliation. After merge, it fetches all open and closed repository issue pages, excludes PR records, and fails with issue links when any milestone is absent. Malformed input fails rather than reporting success. It uses read-only permissions and trusted main code, never issue text as commands, and never assigns arbitrary phases or posts comments. Failures are visible in Actions under the repository's existing notification settings; no separate notification service is installed.
 
