@@ -2,7 +2,7 @@
 /** Trusted contributor tooling; never executes code from issues or analyzed repositories. */
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { planQueue } from './project-queue.mjs';
+import { synchronizeQueue, queueRequestError } from './project-queue-sync.mjs';
 
 const args = process.argv.slice(2);
 if (args.some(x => x !== '--write')) throw new Error('Usage: node scripts/github/sync-project-queue.mjs [--write]');
@@ -10,15 +10,17 @@ const write = args.includes('--write');
 const helper = fileURLToPath(new URL('./gh-app.mjs', import.meta.url));
 function gh(values, mutate = false) {
   return JSON.parse(execFileSync(process.execPath, [helper, ...(mutate ? ['--write'] : []), '--', ...values],
-    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }));
+    { encoding: 'utf8', stdio:['ignore','pipe','pipe'], maxBuffer: 32 * 1024 * 1024 }));
 }
 function graphql(query, mutate = false) {
-  const result = gh(['api', 'graphql', '-f', `query=${query}`], mutate);
-  if (result.errors?.length) throw new Error('GitHub returned GraphQL errors; inspect state before retrying.');
-  return result.data;
+  try {
+    const result = gh(['api', 'graphql', '-f', `query=${query}`], mutate);
+    if (result.errors?.length) throw { stdout:JSON.stringify({errors:result.errors}) };
+    return result.data;
+  } catch (error) { throw queueRequestError(error); }
 }
 function complete(connection, name) {
-  if (!connection || connection.pageInfo.hasNextPage) throw new Error(`Incomplete ${name}; no queue writes performed.`);
+  if (!connection || connection.pageInfo.hasNextPage) throw new Error(`Incomplete ${name}; refresh stopped. Inspect any partial progress.`);
   return connection.nodes;
 }
 const pageInfo = 'pageInfo{hasNextPage endCursor}';
@@ -66,37 +68,16 @@ function load() {
     throw new Error(`Open issue #${issue.number} is missing project membership; add it before refresh.`);
   return { projectId: project.id, fieldId: field.id, issues: normalized, items: relevant };
 }
-function updates(snapshot) {
-  const plan = planQueue(snapshot.issues);
-  const ranks = new Map(plan.map(x => [x.number, x.rank]));
-  const byId = new Map(snapshot.issues.map(x=>[x.id,x]));
-  const changes = [];
-  for (const item of snapshot.items) {
-    const number = byId.get(item.content.id)?.number;
-    if (number === undefined) throw new Error('Missing project issue data.');
-    const desired = ranks.get(number);
-    const current = complete(item.fieldValues, 'item fields').find(x=>x.field?.id === snapshot.fieldId)?.number;
-    if (current !== desired) changes.push({ itemId:item.id, number, rank:desired });
-  }
-  return { plan, changes };
+function writeBatch(snapshot,batch) {
+  const shared = `projectId:${JSON.stringify(snapshot.projectId)},fieldId:${JSON.stringify(snapshot.fieldId)}`;
+  const mutations=batch.map((x,index)=> x.rank === undefined
+    ? `m${index}:clearProjectV2ItemFieldValue(input:{${shared},itemId:${JSON.stringify(x.itemId)}}){projectV2Item{id}}`
+    : `m${index}:updateProjectV2ItemFieldValue(input:{${shared},itemId:${JSON.stringify(x.itemId)},value:{number:${x.rank}}}){projectV2Item{id}}`);
+  graphql(`mutation{${mutations.join('\n')}}`,true);
 }
-const initial = load();
-const initialResult = updates(initial);
-if (write && initialResult.changes.length) {
-  const fresh = load();
-  if (JSON.stringify(fresh) !== JSON.stringify(initial)) throw new Error('Project changed during planning; reread before retrying.');
-  const { plan, changes } = updates(fresh);
-  const shared = `projectId:${JSON.stringify(fresh.projectId)},fieldId:${JSON.stringify(fresh.fieldId)}`;
-  // Small sequential batches allow deterministic reconciliation after a partial failure.
-  for (let offset=0; offset<changes.length; offset+=20) {
-    const batch=changes.slice(offset,offset+20);
-    const mutations=batch.map((x,index)=> x.rank === undefined
-      ? `m${index}:clearProjectV2ItemFieldValue(input:{${shared},itemId:${JSON.stringify(x.itemId)}}){projectV2Item{id}}`
-      : `m${index}:updateProjectV2ItemFieldValue(input:{${shared},itemId:${JSON.stringify(x.itemId)},value:{number:${x.rank}}}){projectV2Item{id}}`);
-    graphql(`mutation{${mutations.join('\n')}}`,true);
-  }
-  if (updates(load()).changes.length) throw new Error('Queue changed or write verification failed; inspect before refreshing again.');
-  console.log(JSON.stringify({ mode:'updated', changes:changes.length, plan },null,2));
-} else {
-  console.log(JSON.stringify({ mode:write ? 'unchanged' : 'preview', changes:initialResult.changes.length, plan:initialResult.plan },null,2));
+try {
+  console.log(JSON.stringify(await synchronizeQueue({load,writeBatch,write}),null,2));
+} catch (error) {
+  console.error(error.message);
+  process.exitCode=1;
 }
