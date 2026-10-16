@@ -31,6 +31,8 @@ Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog 
 - Verify each dependency is real and belongs to the intended work. Add native blocking relationships, avoid cycles, and include readable issue links in the body. Existing planned dependencies alone do not require moving every future item to `Blocked`.
 - Use structured mutation arguments or a UTF-8 body file with `--body-file`. After a timeout or ambiguous response, reread GitHub before retrying to avoid duplicates. Preserve existing issue content outside the authorized edit.
 
+For actual self-improvement proposals, read the [operational intake contract](../../../docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake). The native Self-improvement milestone/root label/view track those proposals; J7 tracks building the mechanism. Require a detailed deduplicated root and verified metadata, with controller-owned campaign/promotion identity. A view or milestone does not enforce one PR or grant execution authority.
+
 ## Maintain the execution queue
 
 Use the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue) and [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) when the user requests the next subject or changes delivery order. Preview `node scripts/github/sync-project-queue.mjs`; apply `--write` within authorized project maintenance. The script writes only derived Execution order ranks through the reviewed App, not statuses or acceptance. After changing delivery, dependencies, priorities, milestones, or issue slicing/reopening, refresh again and verify the result.

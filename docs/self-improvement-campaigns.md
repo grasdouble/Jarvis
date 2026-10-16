@@ -12,6 +12,24 @@ Use a temporary branch such as `improvement/<campaign-id>` created from a record
 
 The durable core claims the campaign, branch and child tasks with exclusive ownership and fenced leases. Serialize writes to a campaign branch; the remote head precondition and a current fencing check reject stale dispatches. Already accepted remote operations cannot be recalled reliably and must be reconciled before ownership is released. Concurrent campaigns require an explicitly qualified overlap/resource policy; otherwise a conflicting claim waits or hands off. Quotas include retained candidate resources so review waiting cannot accumulate unbounded sandboxes. No candidate service runs with production authority merely because code reached the campaign branch.
 
+## Operational tracking and proposal intake
+
+Use native milestone [Self-improvement](https://github.com/grasdouble/Jarvis/milestone/9) for actual operational proposals/campaigns. It is undated and ongoing, distinct from **J7 — Post-v0.3 self-improvement**, which tracks development of the mechanism (JV-051–JV-055). Do not move those implementation issues or fabricate optimization proposals to populate an empty view. The milestone is an organizational container, not a release commitment, execution grant or deterministic guarantee of one PR per improvement.
+
+A controller-confirmed proposal gets one canonical detailed root issue and `kind:self-improvement` label, native operational milestone and project membership before candidate work. The dedicated [Self-improvement table](https://github.com/orgs/grasdouble/projects/1/views/7) filters `repo:grasdouble/Jarvis is:issue label:"kind:self-improvement" milestone:"Self-improvement"`, showing roots rather than task PRs. Each root retains child/progress and promotion links/stage; the existing PR view continues to show PR items. Children inherit the operational milestone, but the root label is not copied automatically. View filtering supplies no authorization or readiness. Released configuration pins the actual milestone/label/project/view IDs; reconcile renamed/deleted/missing metadata before execution rather than guessing another milestone or silently creating duplicates.
+
+Use the [web proposal form](../.github/ISSUE_TEMPLATE/04-self-improvement.yml) or equivalent structured controller intake. Require source/provenance and observation window, one hypothesis, baseline/desired measurable gain and quality/security guardrails, scoped changes/dependencies, comparison/acceptance, uncertainty, limits/decision owner and risks/stop/recovery plan. Missing facts are identified honestly; a draft with unknowns is not execution-ready. GitHub form validation does not cover API creation or require native milestones: the controller validates the same content and reads native metadata back, with the existing milestone audit detecting drift.
+
+Enforce durable unique mappings of proposal key → canonical root issue → campaign and at most one active promotion PR per campaign/root. Scope the keys to the self-repository and bind identities to native IDs, not editable titles or labels. Reconcile remote creation/merge outcomes and existing PR inventories before retry; a timeout, rejection or restart cannot create another root, new budget or duplicate active promotion. A different hypothesis needs another root. Rejected/deferred/inconclusive proposals need no implementation PR. Task PRs may be multiple within one improvement, but each main-promotion PR represents only its own root campaign, not a bundle of unrelated improvements. Supersession during conflict repair preserves the old PR's history while admitting only one active replacement. Candidate integration and issue closure continue to follow the lifecycle below; a manually set Done or milestone membership cannot certify delivery.
+
+## Versioned product skill source
+
+[skills/jarvis-self-improvement/SKILL.md](../skills/jarvis-self-improvement/SKILL.md) and its [proposal reference](../skills/jarvis-self-improvement/references/proposal.md) provide the JARVIS-owned procedure source. They are separate from contributor skills under `.agents/skills/` and deliberately outside OpenCode's current discovery locations. This change installs no plugin, skill loader, SDK adapter or global skill. The existing MVP static review profile still must not load repository skills/configuration.
+
+The future post-v0.3 adapter must package the skill plus reference from a pinned trusted released artifact, with bundle digest and skill version in the attempt context manifest. Supply them read-only in a controlled location and expose only allowed skills in the qualified profile. Isolate/omit project/global skill discovery so candidate `.opencode`, `.agents`, `.claude` or home content, duplicate names and symlinks cannot substitute instructions. Verify actual loading/permission behavior against the pinned OpenCode version; if exclusion cannot be established, do not enable this profile. OpenCode supports SKILL.md discovery/permissions, but that alone proves neither safe packaging nor runtime readiness.
+
+The skill prepares proposals or bounded patch/result artifacts and requests structured effects through the controller contract; it never obtains GitHub/deployment credentials, calls contributor helpers, approves, merges or activates itself. No new callable handler is implemented here. Core validates intake, claims, limits, publication, evidence and human gates outside model output; reviewers/evaluators remain independent attempts. Edits to the skill in a candidate do not replace the procedure of an active run or its protected evaluator. Promotion and separate explicit activation of a qualified trusted bundle are required before a changed procedure can be selected. D13 and JV-053/JV-054 accept schema/loader/profile/tool contracts and numeric limits before enabling work.
+
 ## Trust and promotion gates
 
 | Role or target | Allowed scope |
@@ -64,7 +82,7 @@ Verify the selected current-main revision is an ancestor of the resulting promot
 
 ## Durable records and recovery
 
-Extend proposed delivery/experiment records with a campaign manifest: campaign/proposal/parent IDs; child issue/PR and commit mappings; target repository/branch and `B`; incumbent artifact/source/config/schema `S`; assembled candidate `H`; protocol/policy/environment/evidence digests; current claim/fence; cumulative limits/consumption; stop epoch; promotion PR and human approval digest; remote merge result; separate activation intent/result. Persist repair episodes with `H0/B1`, findings, decisions, repaired/integrated SHAs, attempts and dispositions.
+Extend proposed delivery/experiment records with a campaign manifest: campaign/proposal/canonical root IDs and unique repository-scoped mapping; native milestone/label/project/view configuration IDs and skill/bundle digest; child issue/PR and commit mappings; target repository/branch and `B`; incumbent artifact/source/config/schema `S`; assembled candidate `H`; protocol/policy/environment/evidence digests; current claim/fence; cumulative limits/consumption; stop epoch; promotion PR and human approval digest; remote merge result; separate activation intent/result. Persist repair episodes with `H0/B1`, findings, decisions, repaired/integrated SHAs, attempts and dispositions.
 
 Record lifecycle stages such as authorized → assembling → evaluating → awaiting_human_promotion → promoting → integrated_main/pending_activation; synchronization may enter remediating, and limited/blocked/exhausted/cancelled/unknown outcomes stay explicit. Native GitHub state is an external projection, not the authoritative campaign stage. Unique effect keys bind the target/action/revision digest; inbox/outbox, fenced leases and remote rereads handle duplicates, crashes and ambiguous PR/merge/closure results. A success response for one child or queued merge is not proof that the whole campaign reached main. Restart restores budgets/stop/claims and reconciles before any new effect.
 
@@ -74,14 +92,18 @@ These are future acceptance scenarios, not tests executed by this specification.
 
 | Slice | Required scenario evidence |
 | --- | --- |
-| JV-052 proposals | One hypothesis and bounded proposed campaign; duplicate/rejected signals do not create extra campaigns or authority |
+| JV-052 proposals | Operational milestone/view and detailed root issue; canonical proposal/issue/campaign mapping, native metadata readback and API-equivalent intake; one hypothesis and bounded proposed campaign; duplicate/rejected signals do not create extra campaigns or authority |
 | JV-053 evaluation/policy | Separate `S/B/H`, protected oracle, human promotion for routine and sensitive changes; incomplete/stale/missing evidence and stale human digests deny promotion |
-| JV-054 orchestration | Per-child branches/sandboxes/PRs; serialized claims; no Done at candidate integration; conflicting claims, textual and semantic conflicts, ambiguous effects, restart, exhaustion and stop |
+| JV-054 orchestration | Trusted released skill/reference bundle and isolated loader; no candidate skill substitution; one active promotion per root with restart/supersession reconciliation; per-child branches/sandboxes/PRs; serialized claims; no Done at candidate integration; conflicting claims, textual and semantic conflicts, ambiguous effects, restart, exhaustion and stop |
 | JV-055 qualification/activation | Full campaign main promotion with current human approval; repeat main drift; repair re-review; squash-only repair preserving main ancestry and linked promotion supersession; abandoned branches and squash traceability; accepted/rejected/inconclusive campaigns; main merge without activation; separate rollout/rollback |
 
 ## Verified references
 
 Official references checked October 16, 2026:
+
+- [OpenCode agent skills](https://opencode.ai/docs/skills/): documented discovery directories, SKILL.md format and skill permissions. Trusted bundle isolation remains a JARVIS adapter qualification requirement.
+- [GitHub project views](https://docs.github.com/en/rest/projects/views): organization project view creation with filters.
+- [GitHub milestones](https://docs.github.com/en/rest/issues/milestones): native issue milestone management.
 
 - [Git worktrees](https://git-scm.com/docs/git-worktree): multiple working trees share repository state; task sandbox isolation is a separate architecture requirement.
 - [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners): ownership comes from the PR base branch.

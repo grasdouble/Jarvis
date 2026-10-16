@@ -7,7 +7,7 @@ These instructions guide agents developing this repository. They are not runtime
 - [PRD and roadmap](docs/prd-and-roadmap.md): scope, F01–F10, N01–N13, POL01–POL07, milestones, and owner decisions.
 - [Technical architecture](docs/technical-architecture.md): module boundaries, contracts, isolation, memory, and deployment.
 - [Issues](https://github.com/grasdouble/Jarvis/issues): task acceptance criteria and native blocking dependencies.
-- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J7 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement); `priority:*` and `area:*` labels carry priority and module ownership.
+- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J7 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement); `priority:*` and `area:*` labels carry priority and module ownership. The separate operational Self-improvement milestone/view track actual improvement proposals, not development of the J7 mechanism.
 
 Read the sections relevant to the task rather than loading both documents in full. Resolve material contradictions before implementing dependent behavior. Clearly distinguish proposed architecture, implemented behavior, and measured acceptance evidence.
 
@@ -111,5 +111,7 @@ Keep issue criteria, implementation, and relevant documentation consistent. Repo
 - [jarvis-pr-review](.agents/skills/jarvis-pr-review/SKILL.md): independently assess an exact change revision; never author fixes or grant merge authority.
 - [jarvis-project-management](.agents/skills/jarvis-project-management/SKILL.md): maintain issues, dependencies, milestones, labels, and project views within the user's authorized scope.
 - [jarvis-issue-delivery](.agents/skills/jarvis-issue-delivery/SKILL.md): implement a selected issue through verification and the authorized PR handoff.
+
+The versioned product procedure [jarvis-self-improvement](skills/jarvis-self-improvement/SKILL.md) is separate source under `skills/`, outside contributor/automatic discovery paths. It is not installed or runtime-enabled. Read the [campaign contract](docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake) when refining operational proposals; the qualified future adapter must pin and isolate the trusted released skill/reference bundle rather than load candidate-repository instructions.
 
 These are development skills. Do not package them into the OpenCode review sandbox or automatically load them from a PR snapshot. Skills provide procedures, not credentials or standing authorization for external actions.
