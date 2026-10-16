@@ -14,6 +14,8 @@ The repository is maintained in English.
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
 
+The product roadmap also plans [evidence-driven self-improvement after v0.3](docs/prd-and-roadmap.md#111-post-mvp-evolution), tracked by [JV-051](https://github.com/grasdouble/Jarvis/issues/51). It is future work with fixed evaluation, human-sensitive gates and separately authorized rollout; no runtime optimizer is installed.
+
 ## Next development subject
 
 Use [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) for the dependency-aware execution order. Agents refresh it before selecting the first eligible Ready issue and after delivery or planning changes. The [selection and refresh procedure](docs/development-workflow.md#select-and-refresh-the-next-issue) explains readiness, ownership, and maintenance. JV numbers identify issues; they do not define execution order.
