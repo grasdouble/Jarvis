@@ -1,10 +1,10 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.6 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.7 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
-JARVIS is a TypeScript and Node.js modular monolith deployed as several Docker processes, separated by privilege level. PostgreSQL holds state, the work queue, and audit records. The API serves the React interface; a worker executes the MVP's fixed workflows. An adapter controls headless OpenCode in a new container for every review attempt. GitHub decisions and actions belong exclusively to the deterministic core.
+JARVIS is a TypeScript and Node.js modular monolith deployed as several Docker processes, separated by privilege level. PostgreSQL holds state, the work queue, and audit records. The API serves the React interface; a worker executes the MVP's fixed workflows. An adapter controls headless OpenCode in a new container for every review attempt. The planned common runtime also supports separately qualified conversational and code-work profiles; section 12.10 extends the design without enabling those profiles or changing the MVP. GitHub decisions and actions belong exclusively to the deterministic core.
 
 The proposed profile for the Mac M2 Pro uses a sandbox with `network_mode: none`, no mounted macOS files, no GitHub secret, and no provider key. An LLM gateway dedicated to the attempt is accessible through a Unix socket shared in a Docker volume. A local HTTP relay lets OpenCode use it as a provider endpoint. A trusted controller, the sole holder of the Engine socket, transports session commands through a fixed relay launched by Docker exec. This combination avoids opening an OpenCode server on the Mac or granting a network route to the control plane.
 
@@ -16,7 +16,7 @@ This is a proposed architecture to implement. The JARVIS contracts, hardening pr
 | --- | --- | --- |
 | ADR 01 Organization | Modular monolith, multiple processes and privilege zones | One repository, one domain model, no requirement for microservices |
 | ADR 02 Persistence | PostgreSQL and a durable SQL queue | No Redis or external bus initially |
-| ADR 03 Runtime | OpenCode through SDK/API, with server and SDK pinned together | No OpenCode plugin or shared personal session |
+| ADR 03 Runtime | OpenCode through SDK/API, with server and SDK pinned together; a common engine with separately qualified future profiles | No OpenCode plugin or shared personal session; the MVP remains static review |
 | ADR 04 Authority | Policy Engine without an LLM; dedicated GitHub executor | A report cannot trigger a write directly |
 | ADR 05 Sandboxes | One ARM64 container per attempt, without IP networking | Local relay and gateway transport to prototype |
 | ADR 06 Controller | Trusted container with Engine socket and restricted API | Explicit privileged-component risk; no socket in API, worker, or agent |
@@ -182,7 +182,9 @@ packages/
   contracts/           types, JSON Schema, errors, and events
   policy/              deterministic evaluator and versioned profiles
   github/              Octokit, pagination, provenance, and merge
-  runtime/             AgentRuntime and OpenCode adapter
+  runtime/             AgentRuntime and common OpenCode adapter
+  conversation/        proposed J8 owner/session turns and context lifecycle
+  capabilities/        proposed J8 tool registry, broker and provider adapters
   llm/                 profiles, capabilities, estimates, and redaction
   memory/              scoped knowledge lifecycle and bounded context assembly
   persistence/         SQL, migrations, and transactions
@@ -522,6 +524,18 @@ Freeze admission on drift/conflicts. A separately claimed repair branch reconcil
 
 UI/digest show every proposal and disposition, sources, revisions, fixed protocol, baseline/candidate measurements, uncertainty, total cost, independent review/human gates, and separate merge/deployment/recovery results. JV-055 qualifies the integrated corpus and controlled pilot before owner enablement. The release design draws on [Google SRE canary guidance](https://sre.google/workbook/canarying-releases/), checked October 16, 2026: limited rollout and comparison against a control inform release decisions. That guidance does not establish that JARVIS or its local Colima deployment already supports canaries.
 
+### 12.10 Proposed shared runtime and general-purpose assistance
+
+[JV-064](https://github.com/grasdouble/Jarvis/issues/64) and children JV-065–JV-068 plan a post-MVP conversational capability in J8, with no committed version/date and no automatic dependency on J6/J7. The [shared runtime/capability contract](common-agent-runtime.md) defines full profiles, contracts, trust boundaries, recovery and qualification. Reuse the PNPM modular monolith and headless OpenCode adapter; JARVIS retains deterministic authorization, persistence/memory, budgets, scheduling, secrets and external-effect ownership. No second agent framework, Herdr service or OpenCode plugin is required.
+
+Keep `AgentRuntime.review` and required revision-bound static-review validation intact. Add a versioned tagged mission/result port for general requests versus exact repository/revision work, bound to authenticated owner/session/turn/attempt, trusted released profile/policy/tool/model digests, context manifest, reservation, deadline, fence and stop epoch. General requests require neither repository nor issue. Model-suggested tools/profile changes are requests for deterministic admission; unsupported or ambiguous requests return limits/clarification, not escalation. Conversation, code author, independent reviewer and self-improvement use distinct attempts and context/tool scopes.
+
+The future `assistant-readonly-v1` profile has no repository/host mount, Engine socket, shell/edit/delegation tools, permanent key, GitHub writes or direct network. Expose only admitted typed capabilities through a separately qualified narrow per-attempt transport, such as a guest-volume socket with controlled MCP stdio or a typed adapter bridge. Core validates identity, schema, catalog/policy, arguments, scope, limits and current stop/lease before a trusted executor calls the allowlisted service. Keep service secrets and outbound networking outside the agent, and constrain redirects, DNS/IPv4/IPv6, response sizes and timeouts. Do not turn the LLM gateway into a generic proxy or load repository/global tool configuration. Missing proof under pinned OpenCode/Colima disables the new profile while leaving the MVP restrictions in place.
+
+Extend proposed records with owner-scoped conversations/turns and capability invocations/results, using existing persistence, queue, memory, policy and observability ports. Unique message and invocation keys, fenced claims, durable intents and remote rereads reconcile duplicates, reconnect/restart and unknown effects without resetting limits. Conversation context is bounded and separate from repository knowledge; provenance, sensitivity, expiry and forgetting apply to raw/derived data and restored backups. Conversation persistence and reusable knowledge need accepted D14 retention/consent. Record model plus tool costs and partial/cancelled/unknown outcomes without raw private log dumps. A model answer, closed turn or tool result cannot authorize GitHub actions, promotion or activation.
+
+The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; the v0.1 API/sandbox and J6/J7 gates remain unchanged.
+
 ## 13 Idempotence and consistency
 
 | Level | Key and mechanism | Intended guarantee |
@@ -695,11 +709,13 @@ Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 
 
 **Step 5 corresponding to J5.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
 
-Decisions D01 through D13 in the PRD remain the product decision register; D12 gates v0.3 writable delivery and D13 gates post-v0.3 self-improvement, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D14 in the PRD remain the product decision register; D12 gates v0.3 writable delivery, D13 gates post-v0.3 self-improvement and D14 gates post-MVP general assistance, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
 
 **Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
 
 **Post-v0.3 self-improvement.** After verified JV-044 delivery, implement bounded signals/proposals (JV-052), accept D13 experiment policy and qualify fixed evaluation (JV-053), reuse delivery for controlled candidates (JV-054), then accept D13 rollout policy and qualify activation/rollback and operational evidence (JV-055). No deployment authority or background optimizer is enabled by this plan.
+
+**Post-MVP general assistance (J8).** After verified JV-025, qualify shared profile/policy contracts (JV-065), the bounded tool broker/adapter (JV-066), authenticated conversation and scoped memory (JV-067), then weather/pilot acceptance (JV-068). D14 must accept the corresponding tool/provider/retention/profile limits before live execution. J6/J7 remain separate capabilities.
 
 ## 22 Verified technical references
 

@@ -7,7 +7,7 @@ These instructions guide agents developing this repository. They are not runtime
 - [PRD and roadmap](docs/prd-and-roadmap.md): scope, F01–F10, N01–N13, POL01–POL07, milestones, and owner decisions.
 - [Technical architecture](docs/technical-architecture.md): module boundaries, contracts, isolation, memory, and deployment.
 - [Issues](https://github.com/grasdouble/Jarvis/issues): task acceptance criteria and native blocking dependencies.
-- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J7 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement); `priority:*` and `area:*` labels carry priority and module ownership. Actual product self-improvements use `self-update` promotion PRs and a dedicated project view; they require no operational issue or milestone. J7 issues track building the mechanism.
+- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J8 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement, J8: post-MVP general-purpose assistance); `priority:*` and `area:*` labels carry priority and module ownership. Actual product self-improvements use `self-update` promotion PRs and a dedicated project view; they require no operational issue or milestone. J7 issues track building the mechanism.
 
 Read the sections relevant to the task rather than loading both documents in full. Resolve material contradictions before implementing dependent behavior. Clearly distinguish proposed architecture, implemented behavior, and measured acceptance evidence.
 
@@ -92,7 +92,7 @@ Under this owner-selected policy, a request to implement a selected issue includ
 - The deterministic core owns GitHub writes and approval/policy decisions. Agent output and retained memory never grant permissions, satisfy CI, or override protections.
 - Use the dedicated Colima `jarvis` profile with Docker runtime and native ARM64 images. Disable Mac directory sharing with `mounts: null`; `mounts: []` retains defaults. Administrative Docker operations explicitly target `colima-jarvis`.
 - Only the trusted sandbox-manager accesses the guest Engine socket. Agents receive no Docker socket, personal Mac mounts, GitHub credentials, or permanent provider key. Preserve the network-isolated per-attempt profile and bounded LLM transport.
-- OpenCode is a headless runtime behind an adapter. The MVP performs static reviews; repository commands, plugins, skills, and startup configuration from analyzed repositories must not execute or load automatically.
+- OpenCode is the shared headless agent engine behind an adapter, with separately qualified profiles. The MVP performs static reviews; repository commands, plugins, skills, and startup configuration from analyzed repositories must not execute or load automatically. Future general conversation uses the [capability contract](docs/common-agent-runtime.md), without inheriting code-profile permissions or moving credentials, memory authority or tool authorization into the model.
 - PostgreSQL owns durable state and scoped memory. Preserve revision binding, idempotency, leases, provenance, applicability, retention, and forgetting behavior when changing workflows.
 - Keep secrets out of tracked files, images, prompts, reports, and logs. Use sanitized fixtures for development and test integrations.
 

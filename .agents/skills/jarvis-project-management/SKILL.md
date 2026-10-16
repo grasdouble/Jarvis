@@ -9,7 +9,7 @@ description: Maintain JARVIS GitHub issues, milestones, labels, dependencies, an
 
 Read [AGENTS.md](../../../AGENTS.md) and the relevant sections of the [PRD](../../../docs/prd-and-roadmap.md). The development repository is `grasdouble/Jarvis`; its organization project is [JARVIS — Development](https://github.com/orgs/grasdouble/projects/1).
 
-Issues describe work and acceptance. Milestones J0–J7 define delivery phases (J0–J5 MVP, J6 v0.3 autonomous delivery, J7 post-v0.3 self-improvement); the PRD and architecture define commitments. Preserve this distinction rather than maintaining conflicting copies of requirements or progress.
+Issues describe work and acceptance. Milestones J0–J8 define delivery phases (J0–J5 MVP, J6 v0.3 autonomous delivery, J7 post-v0.3 self-improvement, J8 post-MVP general-purpose assistance); the PRD and architecture define commitments. Preserve this distinction rather than maintaining conflicting copies of requirements or progress.
 
 ## Establish scope and access
 
