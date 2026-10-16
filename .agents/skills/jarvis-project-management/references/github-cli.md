@@ -93,6 +93,22 @@ gh api --method POST "repos/$task_repo/issues/$task_issue_number/dependencies/bl
 
 Reread `dependencies/blocked_by` after a write. `--field` encodes a numeric value as a JSON number. A dependency link written in an issue body does not create this native relationship.
 
+## Native sub-issues
+
+Inspect existing children and the intended child's current parent before linking. Creating a child issue uses the same intake requirements and stable `JV-*` naming as any other issue. Use its numeric REST `id`, not its display number or GraphQL node ID. Link only within the authorized parent scope; do not reparent an existing child silently.
+
+```bash
+gh api --method GET "repos/$task_repo/issues/$task_parent_number/sub_issues?per_page=100" --paginate
+gh api --method GET "repos/$task_repo/issues/$task_child_number/parent"
+gh api --method GET "repos/$task_repo/issues/$task_child_number" --jq .id
+gh api --method POST "repos/$task_repo/issues/$task_parent_number/sub_issues" \
+  --field sub_issue_id="$task_child_database_id"
+```
+
+The parent lookup returns 404 when no parent exists; distinguish this from inaccessible content. Recheck the child list and parent after linking. Add each child to the project and set its appropriate status separately. Add actual blocking dependencies using the dependency recipes above; parent links do not create them. Do not auto-close the parent from a partial child PR.
+
+Reference: [sub-issues REST API](https://docs.github.com/en/rest/issues/sub-issues).
+
 ## Project membership and status
 
 Set `task_item_url` to the actual issue or PR URL, not the project URL. Inspect membership first and add only if absent. After an ambiguous result, reread before retrying.

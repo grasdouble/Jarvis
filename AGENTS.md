@@ -47,6 +47,12 @@ fix(github): reconcile uncertain merge outcomes
 
 As a repository convention, apply the same format to PR titles so they can become valid squash-commit subjects. When preparing an authorized squash merge, verify the final commit message, including any breaking-change details, rather than assuming GitHub's generated message is compliant.
 
+## Size work before implementation
+
+Apply the [contributor workflow](docs/development-workflow.md) before coding. Keep a small issue as one deliverable; split an issue with independently reviewable outcomes into native GitHub sub-issues before implementation. `jarvis-issue-delivery` detects the need and defines slices; `jarvis-project-management` creates/reuses children, parent links, native blocking dependencies, and project metadata within the authorized parent scope. Do not expand requirements or implement unrelated prerequisites.
+
+Each implementation child gets its own stable `JV-*` key, acceptance criteria, branch, worktree, and PR. The parent coordinates acceptance and need not have an umbrella implementation PR. Close only the fully delivered child from its PR; reference the parent with `Refs #N`. Parent completion requires verified child delivery plus the parent's remaining integration criteria, not only a completed child counter.
+
 ## One issue, one branch, one worktree, one PR
 
 For each issue selected for implementation, including documentation issues, use a dedicated branch in a separate linked Git worktree. Create or select it before making issue changes; do not implement directly in the primary checkout or on the target branch. Reuse a worktree only when it already belongs to that same issue and task. Inspect existing worktrees, branches, and PRs to avoid duplicates and preserve unrelated work.
@@ -70,7 +76,9 @@ Keep the worktree available during review and further fixes. Clean up only after
 
 Discover actual scripts from the workspace manifests before running checks. If the PNPM scaffold or a referenced command does not exist yet, state that limitation rather than claiming it ran. Once present, run relevant formatting/lint, type, build, and behavioral checks for the affected modules. Documentation-only changes need link, consistency, and diff checks.
 
-Use focused tests for changed behavior. Changes to isolation, permissions, policy, memory scope, or recovery need the corresponding acceptance scenarios; record any platform or live-service checks that remain unverified. Do not weaken assertions to make a gate pass.
+Use RED → GREEN → refactor for behavioral changes: first run a meaningful test that fails because the behavior is missing or incorrect, implement the smallest coherent passing change, then refactor with the relevant checks green. Report the actual failing/passing commands and outcomes in the PR. A syntax, environment, or missing-tool failure does not establish RED. Documentation-only changes and pure configuration/scaffolding work use proportionate validation; behavior-preserving refactors can start with passing characterization coverage. Explain any applicable exception rather than inventing a RED run or writing tests that only mirror implementation.
+
+Changes to isolation, permissions, policy, memory scope, or recovery need the corresponding acceptance scenarios; record any platform or live-service checks that remain unverified. Do not weaken assertions to make a gate pass. Assess package version impact and add a Changeset once its tooling is delivered; until then follow the explicitly planned [versioning work](docs/development-workflow.md#planned-package-versioning).
 
 Keep issue criteria, implementation, and relevant documentation consistent. Report the outcome, verification, and remaining limitations. `In Review` means ready for review; `Done` requires completed acceptance and delivery, including confirmed merge when a PR is used.
 
