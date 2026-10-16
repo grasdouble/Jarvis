@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.9 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.10 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -187,6 +187,7 @@ packages/
   runtime/             AgentRuntime and common OpenCode adapter
   conversation/        proposed J8 owner/session turns and context lifecycle
   capabilities/        proposed J8 tool registry, broker and provider adapters
+  channels/            proposed J9 identity, notification and messaging adapters
   llm/                 profiles, capabilities, estimates, and redaction
   memory/              scoped knowledge lifecycle and bounded context assembly
   persistence/         SQL, migrations, and transactions
@@ -542,6 +543,16 @@ The future `assistant-readonly-v1` profile has no repository/host mount, Engine 
 Extend proposed records with owner-scoped conversations/turns and capability invocations/results, using existing persistence, queue, memory, policy and observability ports. Unique message and invocation keys, fenced claims, durable intents and remote rereads reconcile duplicates, reconnect/restart and unknown effects without resetting limits. Conversation context is bounded and separate from repository knowledge; provenance, sensitivity, expiry and forgetting apply to raw/derived data and restored backups. Conversation persistence and reusable knowledge need accepted D14 retention/consent. Record model plus tool costs and partial/cancelled/unknown outcomes without raw private log dumps. A model answer, closed turn or tool result cannot authorize GitHub actions, promotion or activation.
 
 The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; the v0.1 API/sandbox and J6/J7 gates remain unchanged.
+
+### 12.11 Proposed messaging channels
+
+J9/P14 plans Telegram and Signal as separate trusted transport adapters, with [JV-075](https://github.com/grasdouble/Jarvis/issues/75) and children JV-076–JV-081. The [messaging contract](messaging-channels.md) defines notification-first delivery, later per-channel J8 conversation, owner pairing/consent, closed interfaces, candidate Signal bridge qualification and D15 gates. Reuse the PNPM modular monolith with `packages/channels`, existing API/worker/domain/contracts/persistence/queue, conversation and F09 accounting. No OpenCode plugin or second model loop is required. Notifications depend on MVP delivery; conversation also depends on J8 qualification. Neither adapter requires the other or J6/J7 solely by phase number.
+
+Trusted connectors hold bot/account/device secrets, restrict egress and normalize provider identity; agents retain no network or credential access. A selected Signal bridge runs with restricted VM-local state and narrow authenticated RPC, without personal Mac/profile mounts or raw browser/agent access. Telegram polling is an option without inbound publication; a selected webhook requires HTTPS, configured secret-header validation and a narrowly exposed intake only. Existing administration loopback bindings remain unchanged; a mobile message link does not justify exposing the UI/API.
+
+Proposed PostgreSQL records are `channel_connections`, `channel_bindings`, `channel_inbox`, `channel_deliveries` and `channel_delivery_attempts`, keyed by owner/connection/provider message or logical event/turn and binding. Transactional intake/outbox and fenced claims coalesce repeated observations, retain all attempts and reconcile unknown effects. Do not assume exactly-once external sends, indefinite provider replay or remote deletion. Expiry, budget, consent/revocation and forgetting/restore apply before dispatch/replay. High-cardinality recipient/content facts stay outside telemetry; no raw credential-bearing URLs or chat transcripts in logs by default.
+
+The paired private sender maps to existing owner scope, not a broader approval role. Questions/status use qualified J8 profiles; code requests become separately admitted J6 missions only when available, and self-update retains current human promotion/activation rules. Sensitive approvals remain in authenticated UI/GitHub; text, buttons and reactions cannot approve a revision. D15 leaves actual accounts/bridge/transport, limits, retention/disclosure and pilot/enablement unresolved; no live integration or new permission is installed here. Qualification includes hostile/duplicate/edited/echo inputs, unknown delivery, sleep, rate limits, stop, deletion/restore and actual per-channel transport evidence.
 
 ## 13 Idempotence and consistency
 

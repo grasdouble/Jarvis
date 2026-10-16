@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.9 • October 16, 2026 • Personal self-hosted product
+Document version 1.10 • October 16, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -82,7 +82,7 @@ The MVP also includes JARVIS-owned durable memory: task checkpoints, operational
 - Running repository scripts, tests, or installation steps in the MVP profile; test evidence comes from approved GitHub CI.
 - GitHub administration, changing protections, software deployment, or access to macOS, SSH, the Keychain, or personal folders.
 - Multi-user SaaS, high availability, or guaranteed operation while the Mac is powered off or asleep.
-- Telegram, email, or Slack delivery. External notifications can be added after selecting a channel; the web digest is sufficient for the MVP.
+- Telegram/Signal messaging, email or Slack delivery. J9 separately plans Telegram/Signal notifications and subsequent conversation; the web digest is sufficient for the MVP.
 
 ## 5 Operating modes and decision policy
 
@@ -296,6 +296,7 @@ Post-MVP tracking uses separate, undated native GitHub milestones. This mapping 
 | J6 — v0.3 autonomous delivery | Bounded issue-to-PR delivery, independent review and guarded merge after the MVP gates | Parent [JV-044](https://github.com/grasdouble/Jarvis/issues/44), children JV-045–JV-048 |
 | J7 — Post-v0.3 self-improvement | Evidence-driven improvement proposals, comparison and separately approved activation after v0.3 | Parent [JV-051](https://github.com/grasdouble/Jarvis/issues/51), children JV-052–JV-055 |
 | J8 — General-purpose assistance | Shared OpenCode profiles, controlled read-only capabilities and authenticated conversation after the MVP; no committed version/date or dependency on J6/J7 solely by phase number | Parent [JV-064](https://github.com/grasdouble/Jarvis/issues/64), children JV-065–JV-068 |
+| J9 — Messaging channels | Telegram/Signal notifications after the MVP, then each channel's authenticated conversation after J8; no cross-channel or J6/J7 prerequisite solely by phase number | Parent [JV-075](https://github.com/grasdouble/Jarvis/issues/75), children JV-076–JV-081 |
 
 Every repository issue must carry the appropriate native milestone under the [contributor policy](development-workflow.md#required-issue-milestones); body references alone do not assign it.
 
@@ -303,7 +304,7 @@ A failed security gate delays automerge. The system can remain useful in observa
 
 ### 11.1 Post-MVP evolution
 
-**Proposed v0.2.** Evaluate semantic or hybrid memory retrieval against a labeled corpus before adding embeddings; keep the same provenance and authorization rules. Extend to other ecosystems and minor updates after operational feedback; merge queues and group checks; Telegram or another selected notification channel; test execution in a separate sandbox without an LLM key; better review evaluation.
+**Proposed v0.2.** Evaluate semantic or hybrid memory retrieval against a labeled corpus before adding embeddings; keep the same provenance and authorization rules. Extend to other ecosystems and minor updates after operational feedback; merge queues and group checks; test execution in a separate sandbox without an LLM key; better review evaluation. Telegram/Signal notifications now have the separate owner-requested J9/P14 plan below, with no committed version/date.
 
 **Planned v0.3 feature: bounded autonomous delivery.** Resolve an explicitly selected issue, prepare and publish a PR, obtain independent review, apply justified requested corrections, re-review each changed revision, and merge only eligible routine work. The owner selected autonomous routine delivery with human review retained for sensitive changes. This is a post-MVP commitment to plan and qualify, not an installed capability or a delivery date. Track the parent [JV-044](https://github.com/grasdouble/Jarvis/issues/44) and children JV-045 through JV-048. v0.1's exclusions, release criteria and static review profile remain unchanged.
 
@@ -341,6 +342,12 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 **P13 measurable acceptance.** A controlled Nantes request yields a validated location/period, units, source, observation time where available, retrieval/cache freshness and a grounded answer or explicit limitation. Equivalent repeated client messages reuse one turn; unknown effects reconcile before bounded/accounted retries. The accepted corpus covers ambiguous place/time, stale/missing data, outages/rate limits, malformed/oversized/hostile output, forged identity/profile/catalog, unauthorized tools/destinations, cross-session/repository context, quota exhaustion, stop/deletion and pre-deletion restore, with zero unauthorized effects. Actual pinned runtime/Colima transport and egress tests demonstrate no host/LAN/core or credential access; simulated tests are identified separately. Existing static-review and future code/self-update gates still apply. Record real pilot latency and all model/tool usage against owner-accepted D14 limits before explicit enablement; JV-025 delivery and the corresponding accepted D14 policy precede live execution. See the [detailed design](common-agent-runtime.md) and [architecture 12.10](technical-architecture.md#1210-proposed-shared-runtime-and-general-purpose-assistance).
 
+**Planned post-MVP: Telegram and Signal channels (P14).** The owner wants opted-in outbound notifications first, then authenticated bidirectional text conversation through the same core. [JV-075](https://github.com/grasdouble/Jarvis/issues/75) coordinates shared policy/identity/inbox/outbox (JV-076), Telegram notifications (JV-077), Signal bridge qualification/notifications (JV-078), respective J8 conversation adapters (JV-079/JV-080) and integrated operations (JV-081). Neither channel requires the other; notifications wait on verified JV-025, while conversation additionally waits on verified JV-068 and accepted D14. Preserve the initial P13 slice: J9 provides a separately qualified transport, not an implicit expansion of its tools or authority. No J6/J7 dependency exists solely by milestone number.
+
+**P14 requirements.** Pair the authenticated owner with explicit private sender/recipient identities, scoped consent and revocable bindings. Use trusted adapters with secrets/egress outside agents, durable intake and notification/answer intents, bounded retries, expiry/rate/budget controls and honest failed/unknown delivery. Reuse J8 memory/context/profile and F09 usage; do not create another agent loop. Channel text/buttons/reactions cannot satisfy native GitHub review or human sensitive approval; use existing authenticated UI/GitHub gates. Code work still requires available J6/D12, self-update retains J7/D13 and human promotion/separate activation. No groups, attachments/voice, account administration, arbitrary history import or implicit public administration access in the first integration. Signal's unofficial bridge candidate needs separate pinned feasibility and owner acceptance. See [the detailed contract](messaging-channels.md).
+
+**P14 measurable acceptance.** Ten input events with two unsubscribed categories produce eight canonical notification intents;100replays add none. Repeated authenticated input 100 times creates one turn/allocation, with zero model/tool calls for rejected identities or payloads. Forgery/forwarding, echoes, edits/reordering, concurrent workers, lost acknowledgements, rate limits, stop/revocation, stale notices, outages/sleep and deletion/restore preserve scope and finite accounting; unknown sends never become assumed success or blind duplicate retries. Per-channel real pinned transport/Colima pilots precede owner enablement; at least 30 owner-agreed integrated success/adversarial/recovery cases verify zero unauthorized disclosure/action and SQL/usage agreement. Missing bridge feasibility leaves Signal unavailable without weakening boundaries or blocking independently qualified Telegram. D15 accepts accounts/transport, privacy/retention, numeric limits and corresponding pilot/activation before live work. These are future targets, not runtime evidence or a new MVP gate.
+
 **Later.** Multiple concurrent runs, dedicated Linux hosting, multiple projects or users, and planning of more complex work. Each extension requires a new threat assessment and its own criteria.
 
 ## 12 Open decisions and fallback values
@@ -361,6 +368,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 | D12 | v0.3 writable delivery profiles, sensitive scope and finite budgets | Owner accepts the JV-045 threat/profile/policy proposal; routine autonomy with human sensitive gates is selected | Before writable v0.3 implementation; no writable/autonomous product run if unset |
 | D13 | Post-v0.3 self-improvement objectives, evaluator, scope and rollout | Owner accepts campaign scope/limits, metrics, samples, evaluator, exact-digest human promotion gate and remediation profile in JV-053; separately accepts rollout/recovery profile and authority in JV-055 | Experiment policy before JV-054 trials; rollout policy before activation. Missing decisions defer the corresponding action |
 | D14 | Post-MVP general-assistance profile and capability policy | Owner accepts JV-065/JV-068 profiles, pinned tool transport/runtime, provider and data processing, finite model/tool/time/cost limits, freshness/cache/retention rules and controlled pilot | Before affected live calls, conversation persistence or profile enablement; missing decisions disable that capability, never widen the MVP |
+| D15 | Telegram/Signal accounts, transport and channel policy | Owner accepts JV-076 policy and respective adapter pilots: pairing/recipients/consent, Signal bridge/account feasibility, intake method, disclosure/retention/expiry, finite limits, unknown-delivery/catch-up policy and per-capability enablement | Before corresponding account provisioning, data persistence or live sends/intake; conversation also retains D14/J8. No chat-based sensitive approval or public administration is selected |
 
 ## 13 Release criteria
 
