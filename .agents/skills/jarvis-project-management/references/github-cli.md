@@ -2,6 +2,10 @@
 
 Use only the recipes needed by the authorized task. Commands were checked against `gh 2.102.0`; consult local `--help` for newer or older versions. Snippets are independent examples, not a batch to execute. Set each `task_*` variable from inspected state or the user's request before using it. Keep temporary body/payload files outside tracked source files.
 
+## App authentication for these recipes
+
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+
 ## Access and discovery
 
 Use the [README authentication setup](../../../../README.md#github-cli-setup-for-development) when credentials need configuration. Scope changes require the user's authorization; these examples do not initiate login.

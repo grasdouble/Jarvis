@@ -2,6 +2,10 @@
 
 These recipes support the authorized issue workflow, not a batch to run automatically. Set each `task_*` variable from the selected issue, inspected repository, or prepared artifact. Commands were checked against `gh 2.102.0`; inspect local `--help` for version-dependent flags. Use temporary files outside tracked source for issue/PR bodies. Authentication setup is in the [README](../../../../README.md#github-cli-setup-for-development).
 
+## App authentication for these recipes
+
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+
 ## Inspect the issue and existing work
 
 Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-project-management/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.

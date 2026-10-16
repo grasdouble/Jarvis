@@ -9,9 +9,19 @@ The repository is maintained in English.
 - [JARVIS v0.1 PRD and roadmap](docs/prd-and-roadmap.md)
 - [JARVIS v0.1 Technical Architecture](docs/technical-architecture.md)
 - [Development repository security](docs/repository-security.md)
+- [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
 
 ## GitHub CLI setup for development
+
+For routine issue delivery and backlog management, use the [dedicated development App](docs/development-github-app.md). Its helper defaults to read-only tokens and supports explicit authorized writes and App-authenticated branch pushes. Keep its PEM in `$HOME/Library/Application Support/Jarvis Development/credentials` with directory/file permissions `700`/`600`.
+
+```bash
+node scripts/github/gh-app.mjs --verify
+node scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
+```
+
+The OAuth setup below is for the human owner's personal CLI and authorized administration; it is separate from the development App identity.
 
 Install [GitHub CLI](https://cli.github.com/) and use a GitHub account with write access to `grasdouble/Jarvis` and [JARVIS — Development](https://github.com/orgs/grasdouble/projects/1). The development skills use this access to manage issues, labels, milestones, dependencies, pull requests, and project items.
 
