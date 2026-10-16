@@ -7,6 +7,7 @@
 ## Issue
 
 <!-- Use Closes #N when this PR fully resolves the issue; use Refs #N for partial work. -->
+<!-- Product self-update promotions require no issue: identify proposal/campaign, apply self-update, and follow skills/jarvis-self-improvement/references/proposal.md. Ordinary contributor delivery still requires its issue. -->
 <!-- For a child issue, close the child and reference its parent; do not close the parent from a partial slice. -->
 
 ## Verification

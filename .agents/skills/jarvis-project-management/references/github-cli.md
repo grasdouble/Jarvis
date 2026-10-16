@@ -173,6 +173,8 @@ gh api --method POST "orgs/$task_owner/projectsV2/$task_project_number/views" \
   --input "$task_view_payload_file"
 ```
 
+To update an existing view, first discover its native view ID and inspect `UpdateProjectV2ViewInput` in the live schema. The supported `updateProjectV2View` mutation accepts `viewId`, `name`, `layout`, `filter` and `configuration`; send only the intended fields through a prepared GraphQL request/variables file, then read back all views to verify unrelated settings. This avoids recreating a view just to change its filter. See the [Projects schema reference](https://docs.github.com/en/graphql/reference/projects).
+
 Use the documented API or authenticated browser for settings not exposed by dedicated commands. Built-in Projects automation configuration is documented through the web interface; `gh workflow` controls GitHub Actions instead. Do not recreate views or add an Actions workflow merely to work around an unsupported setting without task scope for that change.
 
 ## Verify results

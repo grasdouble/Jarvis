@@ -31,7 +31,7 @@ Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog 
 - Verify each dependency is real and belongs to the intended work. Add native blocking relationships, avoid cycles, and include readable issue links in the body. Existing planned dependencies alone do not require moving every future item to `Blocked`.
 - Use structured mutation arguments or a UTF-8 body file with `--body-file`. After a timeout or ambiguous response, reread GitHub before retrying to avoid duplicates. Preserve existing issue content outside the authorized edit.
 
-For actual self-improvement proposals, read the [operational intake contract](../../../docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake). The native Self-improvement milestone/root label/view track those proposals; J7 tracks building the mechanism. Require a detailed deduplicated root and verified metadata, with controller-owned campaign/promotion identity. A view or milestone does not enforce one PR or grant execution authority.
+For actual self-improvement proposals, read the [operational intake contract](../../../docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake). Track actual improvements directly through detailed main-promotion PRs labeled `self-update` and added to the dedicated view; no operational issue or milestone is required. J7 issues track building the mechanism. The controller owns proposal/campaign/PR uniqueness, metadata reconciliation and authority; labels and views grant none. This product exception does not remove milestones or issue/branch/worktree/PR requirements from ordinary contributor delivery.
 
 ## Maintain the execution queue
 

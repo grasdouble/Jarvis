@@ -17,9 +17,9 @@ The repository is maintained in English.
 
 The product roadmap also plans [evidence-driven self-improvement after v0.3](docs/prd-and-roadmap.md#111-post-mvp-evolution), tracked by [JV-051](https://github.com/grasdouble/Jarvis/issues/51). It is future work with fixed evaluation, human-sensitive gates and separately authorized rollout; no runtime optimizer is installed.
 
-## Self-improvement proposals
+## Self-update pull requests
 
-The operational [Self-improvement milestone](https://github.com/grasdouble/Jarvis/milestone/9) and [dedicated project view](https://github.com/orgs/grasdouble/projects/1/views/7) track actual proposals; J7 tracks building the mechanism. Each evidence-backed improvement gets a detailed root issue, one campaign and at most one active main-promotion PR. Use the [proposal form](.github/ISSUE_TEMPLATE/04-self-improvement.yml) and [tracking/skill contract](docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake). The versioned [product skill source](skills/jarvis-self-improvement/SKILL.md) is prepared for qualified future runtime integration; no loader, autonomous proposal service or self-update is enabled.
+Actual product self-improvements are tracked directly by a detailed promotion PR carrying `self-update`, with no mandatory operational issue or milestone. The [Self-update project view](https://github.com/orgs/grasdouble/projects/1/views/7) filters `repo:grasdouble/Jarvis is:pr label:self-update`; the controller must also add each PR to the project. J7 issues track building the capability. One bounded hypothesis has one campaign and at most one active main-promotion PR; technical task PRs remain linked in its manifest. See the [tracking/skill contract](docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake) and [PR content contract](skills/jarvis-self-improvement/references/proposal.md). The versioned [product skill source](skills/jarvis-self-improvement/SKILL.md) is prepared for future qualified integration; no loader, autonomous proposal service or self-update is enabled.
 
 ## Next development subject
 

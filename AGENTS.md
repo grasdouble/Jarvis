@@ -7,7 +7,7 @@ These instructions guide agents developing this repository. They are not runtime
 - [PRD and roadmap](docs/prd-and-roadmap.md): scope, F01–F10, N01–N13, POL01–POL07, milestones, and owner decisions.
 - [Technical architecture](docs/technical-architecture.md): module boundaries, contracts, isolation, memory, and deployment.
 - [Issues](https://github.com/grasdouble/Jarvis/issues): task acceptance criteria and native blocking dependencies.
-- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J7 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement); `priority:*` and `area:*` labels carry priority and module ownership. The separate operational Self-improvement milestone/view track actual improvement proposals, not development of the J7 mechanism.
+- [Development project](https://github.com/orgs/grasdouble/projects/1): Delivery board, Backlog table, and Roadmap. Milestones J0–J7 carry delivery phases (J0–J5: MVP, J6: v0.3 autonomous delivery, J7: post-v0.3 self-improvement); `priority:*` and `area:*` labels carry priority and module ownership. Actual product self-improvements use `self-update` promotion PRs and a dedicated project view; they require no operational issue or milestone. J7 issues track building the mechanism.
 
 Read the sections relevant to the task rather than loading both documents in full. Resolve material contradictions before implementing dependent behavior. Clearly distinguish proposed architecture, implemented behavior, and measured acceptance evidence.
 
