@@ -32,6 +32,12 @@ If scope grows, split remaining work before growing the PR. Backlog planning may
 
 An actionable implementation child moves through Ready → In Progress → In Review → Done. A coordination parent may remain In Progress across several child PRs and review cycles. Inspect project automations before setting Done; it can close the issue. Done requires verified acceptance and confirmed delivery, including merge when a PR is used.
 
+## Delegate implementation and preserve context
+
+Use `jarvis-issue-delivery` as a coordinator for a selected issue, with the [delegation procedure](../.agents/skills/jarvis-issue-delivery/references/delegation.md) for substantial bounded jobs. Fresh workers receive only relevant scope/files/constraints and return short reports with durable test evidence. Small changes can stay sequential. At most two implementation workers may run together when their ready tasks, writable files and test resources are independent; shared interfaces/lockfiles serialize. One issue keeps its dedicated branch/worktree/PR, the coordinator alone stages/commits/publishes, and separately reviewable outcomes still need native child issues. Join all writers, inspect the complete integrated diff, run integration checks and obtain a fresh reviewer who authored none of it.
+
+This keeps the coordinator's working context smaller without promising unlimited memory or reduced aggregate cost. A recoverable ledger records ownership, dependencies, revisions, results and limits; a summary cannot replace actual acceptance evidence. This contributor procedure does not enable parallel product sandbox runs.
+
 ## Independent review and autonomous routine delivery
 
 Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended scheduler is installed. Future product runtime delivery is planned separately after v0.1.

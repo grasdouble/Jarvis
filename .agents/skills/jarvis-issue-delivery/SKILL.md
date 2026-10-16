@@ -1,6 +1,6 @@
 ---
 name: jarvis-issue-delivery
-description: Implement a selected JARVIS GitHub issue by checking dependencies and acceptance criteria, making a focused modular change, verifying it, and preparing the authorized pull-request handoff. Use for issue implementation, not backlog-only administration or autonomous maintenance of other repositories.
+description: Coordinate a selected JARVIS GitHub issue through bounded implementation, optional subagent delegation, integration, independent review and authorized delivery. Use for issue implementation, not backlog-only administration or autonomous maintenance of other repositories.
 ---
 
 # JARVIS issue delivery
@@ -30,6 +30,16 @@ On new evidence, check every active cause and the actual prerequisite outcome. P
 Assess whether the issue has one independently reviewable outcome using the [contributor workflow](../../../docs/development-workflow.md). If it is too broad, define coherent slices and use [jarvis-project-management](../jarvis-project-management/SKILL.md) to create or reuse native sub-issues, metadata, and real blocking links within the authorized parent scope. Keep the parent's acceptance intact. A checklist alone does not provide separate PR delivery. Do not split every file into an issue or require arbitrary line-count limits.
 
 Select an actionable child and use one branch/worktree/PR for that child; repeat only within the user's implementation scope. Each PR closes its fully delivered child and references the parent. Do not close the parent until every required outcome and integrated acceptance criterion is verified. If the issue grows during implementation, split remaining work before enlarging the PR.
+
+## Coordinate bounded implementation work
+
+Act as the coordinator for the selected issue: retain scope, acceptance, dependencies, ownership, integration decisions and delivery gates. For substantial work that can be scoped independently, read the [delegation procedure](references/delegation.md) and delegate bounded implementation/research jobs to fresh subagents with only the necessary context. Prefer direct sequential implementation for small changes or when delegation is unavailable. Independent review remains a separate requirement.
+
+Use at most two simultaneous implementation workers, fewer when tool capacity, dependencies or shared resources require it. Record task dependencies, exact baseline, explicit non-overlapping writable files, worker identity and expected evidence before starting. Parallelize only ready independent jobs; shared interfaces, lockfiles, migrations and common test resources need an exclusive owner or serialization. Workers must not recursively delegate or commit/publish; the coordinator alone owns the index, focused commits and GitHub operations. Never enlarge one PR merely because more agents are available: independently reviewable outcomes still become child issues.
+
+Keep the coordinator context compact with short task briefs/results and recoverable evidence/ledger files outside tracked source. Do not forward the entire parent conversation or bulk logs by default. Preserve decisions, revisions, task claims, actual tests and limitations so a continuation can recover state without trusting summaries blindly. Delegation shifts context rather than eliminating it and may increase aggregate token use.
+
+Wait for every writer to finish or confirm it stopped before reassigning files, integrating or taking the review snapshot. Inspect the complete final diff and verify combined acceptance; a worker's success summary is not proof. The final fresh reviewer must have authored none of the candidate, including delegated fixes. If review requests changes, assign a bounded correction, join writers, rerun relevant checks and obtain a new independent review of the integrated revision within the existing review budget.
 
 ## Command reference
 

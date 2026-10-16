@@ -75,6 +75,10 @@ The completion target for authorized issue implementation is a linked PR from th
 
 Keep the worktree available during review and further fixes. Clean up only after confirmed merge or explicit abandonment, preserving needed work; archive managed worktrees through the corresponding tool. Opening a PR alone does not authorize merging or deploying; routine merge scope comes from the owner-selected policy below and the human implementation request. The issue reaches `Done` only after acceptance and confirmed delivery, including merge when a PR is used.
 
+## Coordinate implementation without overflowing context
+
+`jarvis-issue-delivery` coordinates the selected issue and may delegate bounded jobs using its [delegation procedure](.agents/skills/jarvis-issue-delivery/references/delegation.md). Prefer fresh worker contexts and short evidence-backed results; preserve scope, ownership, dependencies, decisions and actual verification in a recoverable task ledger. Keep small changes direct/sequential. Allow at most two simultaneous implementation workers only for independent ready jobs with disjoint writable files and resources in the issue worktree. The coordinator alone owns Git staging/commits, integration and GitHub writes; join or stop all writers before reassignment or review. Shared interfaces/lockfiles/resources serialize, and separate deliverables remain child issues/PRs. Delegation grants no extra scope, credentials or enforced isolation.
+
 ## Independent review and bounded routine merging
 
 Follow the owner-selected [autonomous delivery procedure](docs/autonomous-delivery.md) and [independent review skill](.agents/skills/jarvis-pr-review/SKILL.md). For an authorized issue implementation, delegate review to a separate agent with fresh context and exact base/head commits. The author fixes actionable findings in the same branch/PR and obtains a fresh review after changes. Default limits are three review rounds and 60 minutes; recover the ledger on continuation. Missing/limited reviewer evidence or exhausted limits requires a concrete human handoff, never self-approval.
