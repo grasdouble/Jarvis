@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.11 • October 16, 2026 • Personal self-hosted product
+Document version 1.12 • October 17, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -378,6 +378,26 @@ Maintain separate conversation and repository memory scopes with bounded context
 | D13 | J7 self-improvement objectives, evaluator, scope and rollout | Owner accepts campaign scope/limits, metrics, samples, evaluator, exact-digest human promotion gate and remediation profile in JV-053; separately accepts rollout/recovery profile and authority in JV-055 | Experiment policy before JV-054 trials; rollout policy before activation. Missing decisions defer the corresponding action |
 | D14 | Post-MVP general-assistance profile and capability policy | Owner accepts JV-065/JV-068 profiles, pinned tool transport/runtime, provider and data processing, finite model/tool/time/cost limits, freshness/cache/retention rules and controlled pilot | Before affected live calls, conversation persistence or profile enablement; missing decisions disable that capability, never widen the MVP |
 | D15 | Telegram/Signal accounts, transport and channel policy | Owner accepts JV-076 policy and respective adapter pilots: pairing/recipients/consent, Signal bridge/account feasibility, intake method, disclosure/retention/expiry, finite limits, unknown-delivery/catch-up policy and per-capability enablement | Before corresponding account provisioning, data persistence or live sends/intake; conversation also retains D14/J8. No chat-based sensitive approval or public administration is selected |
+
+### J0 decision status for JV-001
+
+The owner [recorded partial inputs on October 16, 2026](https://github.com/grasdouble/Jarvis/issues/1#issuecomment-6215355248). The test repository is `grasdouble/Jarvis-Test`; `grasdouble/Jarvis-Demo` is available for optional demonstrations. Neither is an automatically selected production pilot or automerge target. The preferred primary provider group is GitHub Copilot and ChatGPT/Codex, with OpenCode Zen and Claude secondary. Existing Copilot and ChatGPT subscriptions are preferred where compatible. This is a group preference, not an exact model, account profile, routing order, qualified subscription transport, or fallback authorization. The development App could not independently read either named repository on October 17; their settings and effective App access remain unverified.
+
+| Decision | Current disposition and owner | Required evidence or next gate |
+| --- | --- | --- |
+| D01 | Proposed controller design; owner acceptance remains open. | At J1, select the controller approach and verify that only the trusted controller can access the Engine socket. |
+| D02 | Partial owner input: primary and secondary groups above. | At J0, select exact provider/model/account profiles and processing destinations for private code; record confidentiality terms, compatible headless subscription access, finite usage and authorized fallback. Until then, send no private code. |
+| D03 | Partial owner input: disposable test repository and optional demo above. | At J0, select the real pilot repository, target branch, eligible dependencies/paths and required CI workflows/check identities; verify repository settings and effective App access. Until then, use observation only and do not enable automerge. |
+| D04 | Proposed webhook-only HTTPS relay; owner selection remains open. | At J2, select and qualify ingress; use reconciliation only until then. |
+| D05 | No owner-selected currency or initial limits. | At J0, record billing currency and finite per-review, daily and monthly spending/request/token limits, including subscription quota and overage treatment. Suspend billable tasks until configured. |
+| D06 | No owner-selected Colima version or CPU/RAM/disk allocation. | At J1, measure the host and accept pinned versions and effective VM allocation before runtime qualification; the sizing values in §2.2 remain proposals. |
+| D07 | Squash is proposed, subject to repository permissions. | At J4, owner selects the merge method and effective repository settings are verified; no merge while undefined. |
+| D08 | Reports inside JARVIS are proposed initially. | At J4, owner confirms publication scope; no PR write permission without need. |
+| D09 | Retention and backup durations are proposed. | At J5, owner confirms retention, encrypted export location and restore evidence before operation. |
+| D10 | Developer owns the proposed single-account authentication design. | At J2, qualify strong password/session behavior; administration remains inaccessible without authentication. |
+| D11 | Knowledge lifetimes and context limits are proposed. | At J3/J5, owner confirms limits and verifies expiry, forgetting and backup behavior before enabling retained knowledge. |
+
+These rows record decision ownership and gates, not implemented behavior or acceptance evidence. Unresolved choices disable only their dependent actions; issue [JV-001](https://github.com/grasdouble/Jarvis/issues/1) remains open until its J0 criteria are recorded and verified.
 
 ## 13 Release criteria
 
