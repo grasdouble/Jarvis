@@ -15,6 +15,7 @@ The repository is maintained in English.
 - [Bounded self-improvement campaigns and conflict remediation](docs/self-improvement-campaigns.md)
 - [Shared OpenCode runtime and controlled capabilities](docs/common-agent-runtime.md)
 - [Token consumption, usage attribution and budget accounting](docs/token-consumption.md)
+- [Telegram/Signal notifications and conversation channels](docs/messaging-channels.md)
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
@@ -24,6 +25,10 @@ The product roadmap also plans [evidence-driven self-improvement after v0.3](doc
 ## Shared agent runtime
 
 OpenCode is the planned common engine for conversation, code review/development and self-improvement through separate trusted profiles. JARVIS owns permissions, memory, budgets, scheduling and external effects. The MVP admits static review only; [J8 general-purpose assistance](https://github.com/grasdouble/Jarvis/issues/64) plans authenticated conversation and approved read-only tools, with weather as the first qualification example. No chat/tool broker/connector is enabled and Herdr is not a dependency. See the [runtime design](docs/common-agent-runtime.md).
+
+## Messaging channels
+
+J9 separately plans opted-in Telegram/Signal notifications after the MVP, then authenticated text conversation reusing qualified J8 services. [JV-075](https://github.com/grasdouble/Jarvis/issues/75) tracks the work; neither channel is enabled and Signal bridge feasibility remains to be qualified. See the [messaging contract](docs/messaging-channels.md). Channel messages grant no additional GitHub, approval or deployment authority.
 
 ## Self-update pull requests
 

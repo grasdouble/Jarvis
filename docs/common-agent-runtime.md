@@ -8,6 +8,8 @@ OpenCode is the shared headless agent engine for understanding a request, intera
 
 The first future conversational slice supports ordinary questions and approved read-only capabilities. Weather in Nantes, France, is the qualification example. Neither model knowledge nor an unavailable tool is evidence of current weather. Arbitrary browsing/shell, mutating personal integrations, email/calendar actions, external notifications, unattended personal monitoring and an open-ended planner remain outside this slice.
 
+[J9 messaging channels](messaging-channels.md) separately plan Telegram/Signal notifications and later owner-paired text entry points into this service. J9 conversation waits for verified JV-068 and D14 plus its D15 adapter/identity/privacy gates; notification-only delivery does not require J8. This leaves the first slice's tools and existing action/approval boundaries unchanged. Channel credentials stay outside OpenCode, and incoming messages cannot create a broader profile or native human approval.
+
 | Trusted JARVIS profile | Intended use and allowed context/tools | Gate |
 | --- | --- | --- |
 | `review-static-v1` | MVP code review; sanitized read-only repository snapshot, bounded LLM transport, structured report; no capability broker or repository execution | Existing J1/J3 qualification |
