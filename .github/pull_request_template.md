@@ -10,6 +10,10 @@
 <!-- Product self-update promotions require no issue: identify proposal/campaign, apply self-update, and follow skills/jarvis-self-improvement/references/proposal.md. Ordinary contributor delivery still requires its issue. -->
 <!-- For a child issue, close the child and reference its parent; do not close the parent from a partial slice. -->
 
+## Specification and decision impact
+
+<!-- Follow docs/project-governance.md. Identify trusted source/base, requirement/decision IDs or sections, disposition (aligned/authorized_evolution/needs_decision/insufficient_evidence), affected docs/backlog, actual authority/evidence and next action. A justified no-impact explanation is valid; bare N/A is not. Distinguish proposed/accepted design, implemented behavior and measured results. -->
+
 ## Verification
 
 <!-- State the checks actually run and their results, including evidence for the issue's acceptance criteria. -->

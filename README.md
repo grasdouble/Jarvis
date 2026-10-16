@@ -9,6 +9,8 @@ The repository is maintained in English.
 - [JARVIS v0.1 PRD and roadmap](docs/prd-and-roadmap.md)
 - [JARVIS v0.1 Technical Architecture](docs/technical-architecture.md)
 - [Contributor workflow, TDD, task slicing, and planned versioning](docs/development-workflow.md)
+- [Project governance and specification alignment](docs/project-governance.md)
+- [Architecture decision index and lifecycle](docs/adr/index.md)
 - [Independent review, repair loops and autonomous routine delivery](docs/autonomous-delivery.md)
 - [Bounded self-improvement campaigns and conflict remediation](docs/self-improvement-campaigns.md)
 - [Shared OpenCode runtime and controlled capabilities](docs/common-agent-runtime.md)

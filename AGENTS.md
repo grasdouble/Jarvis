@@ -11,6 +11,10 @@ These instructions guide agents developing this repository. They are not runtime
 
 Read the sections relevant to the task rather than loading both documents in full. Resolve material contradictions before implementing dependent behavior. Clearly distinguish proposed architecture, implemented behavior, and measured acceptance evidence.
 
+## Specification and decision impact
+
+Apply [project governance](docs/project-governance.md) before implementation and against the final integrated diff. Use [jarvis-project-governance](.agents/skills/jarvis-project-governance/SKILL.md) to record relevant requirements/decisions, trusted source/base, disposition, document/backlog impact and actual evidence in the PR. A justified no-impact result is valid. Update affected files within the authorized issue delivery; do not silently redefine acceptance to fit the implementation. Material unresolved choices stop dependent work and need the applicable owner decision; already authorized evolution and routine within-scope maintenance do not need repeated permission. Preserve current review/native gates and use the [ADR index](docs/adr/index.md) for significant choices. This is contributor governance, not runtime authority or semantic CI proof.
+
 ## Repository conventions
 
 - Keep code, identifiers, comments, documentation, commits, issues, and pull requests in English. Match the user's language in conversation.
@@ -107,6 +111,8 @@ Changes to isolation, permissions, policy, memory scope, or recovery need the co
 Keep issue criteria, implementation, and relevant documentation consistent. Report the outcome, verification, and remaining limitations. `In Review` means ready for review; `Done` requires completed acceptance and delivery, including confirmed merge when a PR is used.
 
 ## Reusable workflows
+
+- [jarvis-project-governance](.agents/skills/jarvis-project-governance/SKILL.md): assess specification/decision impact and prepare coherent document updates within authorized contributor work.
 
 - [jarvis-pr-review](.agents/skills/jarvis-pr-review/SKILL.md): independently assess an exact change revision; never author fixes or grant merge authority.
 - [jarvis-project-management](.agents/skills/jarvis-project-management/SKILL.md): maintain issues, dependencies, milestones, labels, and project views within the user's authorized scope.
