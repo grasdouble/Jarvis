@@ -32,6 +32,35 @@ If scope grows, split remaining work before growing the PR. Backlog planning may
 
 An actionable implementation child moves through Ready → In Progress → In Review → Done. A coordination parent may remain In Progress across several child PRs and review cycles. Inspect project automations before setting Done; it can close the issue. Done requires verified acceptance and confirmed delivery, including merge when a PR is used.
 
+## Select and refresh the next issue
+
+[Next up](https://github.com/orgs/grasdouble/projects/1/views/5) is the execution-order view. The project is the live source of work; this document defines the rule rather than copying a numbered backlog into Git. The table filters `is:issue is:open has:execution-order`, sorts Execution order ascending, and displays title, status, labels, milestone, and rank. Delivery/Backlog/Roadmap retain their existing purposes.
+
+Ranks are derived from native blocking links plus parent/child structure. Treat open children as prerequisites of their coordination parent for ordering; give only open implementation issues ranks. Coordination parents and closed issues have their old rank cleared. Topologically order dependencies first; among the currently dependency-available nodes, choose milestone J0–J5, priority P0–P2, creation time, then GitHub issue number. Missing milestones/priorities sort last. JV identifiers remain stable references, not priority. This forecasts future execution as prerequisites finish; it does not claim they have already finished.
+
+Run from a reviewed checkout with the configured development App:
+
+```bash
+# Read-only preview, including unmet prerequisite numbers and Ready candidates.
+node scripts/github/sync-project-queue.mjs
+# Authorized project maintenance: write changed ranks and reread them.
+node scripts/github/sync-project-queue.mjs --write
+```
+
+The tool reads project 1 and the complete Jarvis issue inventory, paginates outer connections, and fails without writes if nested connections are truncated, dependencies/children are unavailable, a cycle exists, or an open repository issue lacks project membership. It rereads before mutation and verifies the resulting ranks. API writes are not atomic across batches: after a partial failure, inspect current state and rerun from fresh inputs. It uses the existing reviewed App helper without new scopes, personal-login fallback, or runtime sandbox access. Review tooling changes before using them with credentials.
+
+An agent asked to handle the next subject must:
+
+1. Honor an explicit issue or module scope in the human request.
+2. Refresh the queue; find the lowest-rank Ready implementation issue in that scope. Skip In Progress, In Review, Blocked, Done, and work owned by another active agent. The preview's candidate flag checks status and GitHub completion metadata only.
+3. Recheck actual prerequisite outcomes and acceptance evidence, outstanding owner decisions, issue discussion/assignees, linked open PRs, and existing branch/worktree. Closed-as-not-planned does not satisfy a prerequisite. A rank or Completed metadata is not itself acceptance evidence.
+4. Announce the chosen issue and reason, then move it to In Progress and follow the issue delivery workflow. Recheck immediately before claiming; the project field is not an atomic lock. Resolve any collision before duplicate implementation.
+5. If no Ready issue qualifies, inspect the earliest dependency-available Backlog item through project management. Promote only when scope/decisions/evidence are satisfied; otherwise report what is missing and continue only independent authorized preparation. Never select a blocked lower number or invent owner decisions to avoid asking.
+
+Refresh after creating/splitting/reopening issues, changing native dependencies/priorities/milestones, starting/reviewing work, and confirming a delivery. New closed/status-filtered rows disappear through GitHub's view filter; ranks are recalculated by the contributor command. This is agent-maintained on those operations, not a continuously running scheduler: changes made outside these workflows require a refresh before the next selection. Do not maintain a conflicting hand-edited rank list or assume visual/manual board order is authoritative. Explicit owner reprioritization still respects real dependencies.
+
+A coordination parent whose children are complete may still need integrated acceptance; inspect it separately before closing it. One next-subject request is not standing authorization to process the whole backlog.
+
 ## Planned package versioning
 
 **Status: planned, not installed.** The repository currently has no PNPM workspace manifests or Changesets tooling. [#32](https://github.com/grasdouble/Jarvis/issues/32) coordinates three separate deliveries after the PNPM scaffold in [#3](https://github.com/grasdouble/Jarvis/issues/3):

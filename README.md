@@ -13,6 +13,10 @@ The repository is maintained in English.
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
 
+## Next development subject
+
+Use [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) for the dependency-aware execution order. Agents refresh it before selecting the first eligible Ready issue and after delivery or planning changes. The [selection and refresh procedure](docs/development-workflow.md#select-and-refresh-the-next-issue) explains readiness, ownership, and maintenance. JV numbers identify issues; they do not define execution order.
+
 ## GitHub CLI setup for development
 
 For routine issue delivery and backlog management, use the [dedicated development App](docs/development-github-app.md). Its helper defaults to read-only tokens and supports explicit authorized writes and App-authenticated branch pushes. Keep its PEM in `$HOME/Library/Application Support/Jarvis Development/credentials` with directory/file permissions `700`/`600`.

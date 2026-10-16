@@ -132,6 +132,10 @@ gh project item-edit --project-id "$task_project_id" --id "$task_item_id" \
 
 For API operations beyond CLI coverage, use `gh api graphql` with variables or `gh api --input` with a prepared JSON payload. Keep GraphQL queries literal (single-quoted or in a file) so shell expansion cannot corrupt `$variables`. Discover IDs and available mutations from the current API; do not guess field-edit commands.
 
+## Execution order refresh
+
+From a reviewed Jarvis checkout, use `node scripts/github/sync-project-queue.mjs` for preview and add `--write` for authorized rank synchronization. It uses the dedicated App helper internally; do not wrap it in another `gh` invocation. Follow [the selection procedure](../../../../docs/development-workflow.md#select-and-refresh-the-next-issue), not a numeric issue sort. Restore missing membership or inspect incomplete/dependency data before rerunning a failed refresh. Preserve the Next up saved filter/sort and existing other views.
+
 ## Views and built-in automations
 
 Preserve existing Delivery, Backlog, and Roadmap views. Creating a missing organization project view is supported by REST; this is not a general update-view command. Only create one after verifying that it is absent and the configuration change is authorized. The prepared JSON payload must contain `name` and `layout` (`table`, `board`, or `roadmap`), with optional filters/grouping using IDs accepted by this endpoint. Resolve REST field IDs rather than substituting GraphQL node IDs.

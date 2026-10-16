@@ -34,8 +34,8 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
-      - name: Test development App authentication without real credentials
-        run: node --test scripts/github/gh-app.test.mjs
+      - name: Test contributor GitHub tooling without real credentials
+        run: node --test scripts/github/*.test.mjs
 
   pr-title:
     name: Conventional PR title

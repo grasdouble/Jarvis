@@ -30,6 +30,12 @@ Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog 
 - Verify each dependency is real and belongs to the intended work. Add native blocking relationships, avoid cycles, and include readable issue links in the body. Existing planned dependencies alone do not require moving every future item to `Blocked`.
 - Use structured mutation arguments or a UTF-8 body file with `--body-file`. After a timeout or ambiguous response, reread GitHub before retrying to avoid duplicates. Preserve existing issue content outside the authorized edit.
 
+## Maintain the execution queue
+
+Use the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue) and [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) when the user requests the next subject or changes delivery order. Preview `node scripts/github/sync-project-queue.mjs`; apply `--write` within authorized project maintenance. The script writes only derived Execution order ranks through the reviewed App, not statuses or acceptance. After changing delivery, dependencies, priorities, milestones, or issue slicing/reopening, refresh again and verify the result.
+
+Native dependencies precede milestone/priority/age tie-breakers; coordination parents remain tracked outside the implementation queue. Ready requires verified scope, decisions, and prerequisite outcomes. If no Ready candidate remains, inspect the earliest unblocked Backlog work and promote it only after verifying those conditions; otherwise report the exact missing decision or evidence. Do not invent dependencies just to force a preferred order. Explicit owner reprioritization must be reflected in the legitimate planning inputs and described before recalculation.
+
 ## Decompose broad issues
 
 Use the [contributor workflow](../../../docs/development-workflow.md) when an issue contains independently reviewable deliverables or delivery requests slicing. Reuse existing children before creating new ones. Preserve the parent's scope and acceptance; give each child its own `JV-*` key, bounded outcome, verification, labels, milestone, and project membership. Add native parent/child links and only the genuine blocking dependencies; parenthood is not itself a dependency.
