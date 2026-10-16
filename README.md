@@ -14,6 +14,7 @@ The repository is maintained in English.
 - [Independent review, repair loops and autonomous routine delivery](docs/autonomous-delivery.md)
 - [Bounded self-improvement campaigns and conflict remediation](docs/self-improvement-campaigns.md)
 - [Shared OpenCode runtime and controlled capabilities](docs/common-agent-runtime.md)
+- [Token consumption, usage attribution and budget accounting](docs/token-consumption.md)
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
