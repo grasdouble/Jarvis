@@ -47,6 +47,12 @@ fix(github): reconcile uncertain merge outcomes
 
 As a repository convention, apply the same format to PR titles so they can become valid squash-commit subjects. When preparing an authorized squash merge, verify the final commit message, including any breaking-change details, rather than assuming GitHub's generated message is compliant.
 
+## Select and maintain the next issue
+
+When the user asks for the next subject, use the [Next up queue](https://github.com/orgs/grasdouble/projects/1/views/5) and the [queue procedure](docs/development-workflow.md#select-and-refresh-the-next-issue). Respect an explicitly selected issue/scope first. Refresh the dependency-aware ranks, then choose the first Ready implementation issue after checking current prerequisite delivery, open PRs, and ownership. Announce the choice and rationale; do not use JV numbers or visual row positions as execution order.
+
+Refresh ranks after issue delivery, new/split issues, reopened work, or dependency/priority/milestone changes. Queue refresh is part of authorized delivery/backlog management, not authority to implement other issues or merge PRs. It never promotes Backlog work, resolves owner decisions, closes issues, or overrides protections.
+
 ## Size work before implementation
 
 Apply the [contributor workflow](docs/development-workflow.md) before coding. Keep a small issue as one deliverable; split an issue with independently reviewable outcomes into native GitHub sub-issues before implementation. `jarvis-issue-delivery` detects the need and defines slices; `jarvis-project-management` creates/reuses children, parent links, native blocking dependencies, and project metadata within the authorized parent scope. Do not expand requirements or implement unrelated prerequisites.

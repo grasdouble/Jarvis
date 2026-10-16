@@ -1,0 +1,32 @@
+/** Rank a complete issue snapshot. Ranks forecast delivery; Ready is a separate gate. */
+export function planQueue(issues) {
+  const byId = new Map(issues.map(issue => [issue.id, issue]));
+  if (byId.size !== issues.length) throw new Error('Duplicate issue IDs.');
+  const dependencies = new Map();
+  for (const issue of issues) {
+    const ids = [...new Set([...issue.blockers, ...issue.children])];
+    for (const id of ids) if (!byId.has(id)) throw new Error(`Missing dependency data for #${issue.number}.`);
+    dependencies.set(issue.id, ids);
+  }
+  const milestone = issue => Number(/^J([0-5])(?:\b|\s)/.exec(issue.milestone ?? '')?.[1] ?? 99);
+  const priority = issue => Math.min(99, ...issue.labels.filter(x => /^priority:P[0-2]$/.test(x)).map(x => Number(x.at(-1))));
+  const compare = (a, b) => milestone(a) - milestone(b) || priority(a) - priority(b) || a.createdAt.localeCompare(b.createdAt) || a.number - b.number;
+  const pending = new Map(issues.filter(x => x.state === 'OPEN').map(x => [x.id, x]));
+  const visited = new Set(issues.filter(x => x.state !== 'OPEN').map(x => x.id));
+  const result = [];
+  while (pending.size) {
+    const available = [...pending.values()].filter(x => dependencies.get(x.id).every(id => visited.has(id))).sort(compare);
+    if (!available.length) throw new Error('Dependency/parent cycle: queue not updated.');
+    const issue = available[0];
+    pending.delete(issue.id);
+    visited.add(issue.id);
+    if (issue.children.length) continue;
+    const unmet = issue.blockers.filter(id => {
+      const blocker = byId.get(id);
+      return blocker.state !== 'CLOSED' || blocker.stateReason !== 'COMPLETED';
+    }).map(id => byId.get(id).number).sort((a,b) => a-b);
+    result.push({ number: issue.number, title: issue.title, url: issue.url, rank: result.length + 1,
+      status: issue.status, unmet, candidate: issue.status === 'Ready' && unmet.length === 0 });
+  }
+  return result;
+}

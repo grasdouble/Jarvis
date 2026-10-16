@@ -5,6 +5,12 @@ description: Implement a selected JARVIS GitHub issue by checking dependencies a
 
 # JARVIS issue delivery
 
+## Select a subject when none is specified
+
+For "the next subject", follow the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue). Refresh [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) using the reviewed contributor tooling and select the first eligible Ready implementation issue. Recheck its discussion, actual prerequisite delivery, assignee/active ownership, linked PRs, and existing branch/worktree before claiming it. An explicit user-selected issue takes precedence but still needs its prerequisites. A numeric rank is a forecast, not proof of readiness or a lock against another agent. Announce the issue and why it is next.
+
+If no Ready work qualifies, use project management to inspect the earliest available Backlog issue; do not silently manufacture owner decisions or implement its unmet prerequisites. A request for one next issue authorizes one implementation issue (or its necessary coherent slices), not an endless backlog loop.
+
 ## Understand the issue
 
 Read [AGENTS.md](../../../AGENTS.md), the selected issue and relevant discussion, its native blocking dependencies, and the referenced [PRD](../../../docs/prd-and-roadmap.md) or [architecture](../../../docs/technical-architecture.md) sections. Confirm `grasdouble/Jarvis` and the intended issue number from current GitHub state rather than relying on a cached title.
@@ -58,6 +64,8 @@ Finish authorized implementation by committing the focused changes, pushing the 
 Keep a draft PR's issue `In Progress` or `Blocked` as appropriate. Move work to `In Review` only when the deliverable is ready for review. If publication is not authorized or access is missing, leave a concrete local diff and verification summary; state the handoff still required. A local implementation is not a merged delivery.
 
 Merge only when the user has authorized it and current repository protections/checks permit it. Verify the actual remote merge before recording `Done`; for a deliverable without a PR, confirm its acceptance outcome directly. Inspect project automations so moving an item does not prematurely close its issue. Reconcile ambiguous responses before repeating a write.
+
+Refresh the execution queue after authorized status/dependency/slicing changes and again after confirmed delivery, using the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue). Keep unrelated work and statuses intact.
 
 Retain the branch and worktree for review fixes. After a confirmed merge or explicit abandonment, preserve needed local work before cleanup; use the archive tool for managed worktrees. Do not remove the worktree merely because the PR has been opened.
 
