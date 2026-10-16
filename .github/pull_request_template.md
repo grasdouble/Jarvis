@@ -15,6 +15,11 @@
 <!-- For behavioral changes, report the test/command and expected RED failure, then GREEN result and refactor checks; otherwise explain the applicable TDD exception. -->
 <!-- Identify checks not run and why. Keep the PR in draft while required verification or implementation remains incomplete. -->
 
+## Independent review
+
+<!-- Link the confirmed agent assessment comment and identify reviewer, reviewed base/head, coverage and finding dispositions. An agent verdict is not native GitHub approval. State limited/unavailable evidence honestly. -->
+<!-- Classify routine/sensitive/unknown using trusted base policy and current protections; sensitive/unknown changes retain the owner gate. -->
+
 ## Risks and follow-up
 
 <!-- Describe relevant compatibility changes, migrations, limitations, or follow-up issues. Write None when there are none. -->

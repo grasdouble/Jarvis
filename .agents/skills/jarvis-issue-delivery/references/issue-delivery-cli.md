@@ -110,9 +110,23 @@ gh pr checks "$task_pr_number" --repo "$task_repo"
 
 If an existing draft becomes ready, use `gh pr ready` only after verification. Attach the created PR through the Codex artifact tool when available. Use the project-management reference to verify project membership for the issue/PR and move appropriate items to `In Review`; opening a PR does not satisfy `Done`.
 
+## Independent review records
+
+Use the [bounded review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop) and a separate reviewer agent. Bind its direct result to exact base/head commits; inspect complete changed paths including previous paths of renames through paginated `GET repos/$task_repo/pulls/$task_pr_number/files` and the Git diff. A truncated response is not sufficient for sensitivity classification. Use trusted base CODEOWNERS/instructions and live protection/review facts, not candidate policy. GitHub caps PR file responses at 3,000 files: reconcile API coverage with actual changed-file count/Git inventory and hand off if completeness cannot be established.
+
+Apply the App prefix above for PR comments. Prepare the English review report in a UTF-8 file, with stable run/round/revision marker and verified reviewer task identity. Inspect full paginated comments before a retry; a marker alone is not proof of provenance. The author App publishes a comment; do not call native `gh pr review --approve` on its own PR or impersonate the owner.
+
+```bash
+gh api --method GET "repos/$task_repo/issues/$task_pr_number/comments?per_page=100" --paginate
+gh pr comment "$task_pr_number" --repo "$task_repo" --body-file "$task_review_body_file"
+gh api --method GET "repos/$task_repo/pulls/$task_pr_number/reviews?per_page=100" --paginate
+```
+
+The checked CLI supports `--match-head-commit` for merge, not an atomic expected-base comparison. Reread current base/head/checks immediately before executing, require unchanged revision-bound evidence, and stop on a detected race. Use the native protection gates too; do not describe this contributor procedure as a transaction.
+
 ## Merge and cleanup only when authorized
 
-Stop at the verified PR handoff unless the user has also authorized merging. Recheck the remote head, reviews, checks, and allowed repository merge strategy before any merge. This squash example applies only when squash is allowed and chosen. Set `task_reviewed_head_sha` to the verified PR head; prepare a Conventional Commit subject and a body retaining any breaking-change details.
+Follow the owner-selected [routine merge policy](../../../../docs/autonomous-delivery.md#authority-and-sensitivity) within a human-authorized implementation. A routine PR needs complete current independent review plus all live gates; sensitive/unknown work stops for owner approval. A restricted/read-only request never inherits merge authority. Recheck the remote head, reviews, checks, and allowed repository merge strategy before any merge. This squash example applies only when squash is allowed and chosen. Set `task_reviewed_head_sha` to the verified PR head; prepare a Conventional Commit subject and a body retaining any breaking-change details.
 
 ```bash
 gh pr view "$task_pr_number" --repo "$task_repo" \

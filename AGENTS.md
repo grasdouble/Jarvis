@@ -73,7 +73,17 @@ Verify the intended target branch and starting revision. Use an English branch n
 
 The completion target for authorized issue implementation is a linked PR from that branch, using the [PR template](.github/pull_request_template.md) and Conventional Commits title. This workflow includes the necessary focused commits, pushing the issue branch, and creating or updating its PR, subject to explicit user restrictions and tool permissions. Read-only tasks and edits to working agreements outside an implementation issue do not imply commit/push/publication authorization. If publication is blocked, preserve the local work and report the unmet handoff rather than claiming completion.
 
-Keep the worktree available during review and further fixes. Clean up only after confirmed merge or explicit abandonment, preserving needed work; archive managed worktrees through the corresponding tool. Opening a PR does not authorize merging or deploying. The issue reaches `Done` only after acceptance and confirmed delivery, including merge when a PR is used.
+Keep the worktree available during review and further fixes. Clean up only after confirmed merge or explicit abandonment, preserving needed work; archive managed worktrees through the corresponding tool. Opening a PR alone does not authorize merging or deploying; routine merge scope comes from the owner-selected policy below and the human implementation request. The issue reaches `Done` only after acceptance and confirmed delivery, including merge when a PR is used.
+
+## Coordinate implementation without overflowing context
+
+`jarvis-issue-delivery` coordinates the selected issue and may delegate bounded jobs using its [delegation procedure](.agents/skills/jarvis-issue-delivery/references/delegation.md). Prefer fresh worker contexts and short evidence-backed results; preserve scope, ownership, dependencies, decisions and actual verification in a recoverable task ledger. Keep small changes direct/sequential. Allow at most two simultaneous implementation workers only for independent ready jobs with disjoint writable files and resources in the issue worktree. The coordinator alone owns Git staging/commits, integration and GitHub writes; join or stop all writers before reassignment or review. Shared interfaces/lockfiles/resources serialize, and separate deliverables remain child issues/PRs. Delegation grants no extra scope, credentials or enforced isolation.
+
+## Independent review and bounded routine merging
+
+Follow the owner-selected [autonomous delivery procedure](docs/autonomous-delivery.md) and [independent review skill](.agents/skills/jarvis-pr-review/SKILL.md). For an authorized issue implementation, delegate review to a separate agent with fresh context and exact base/head commits. The author fixes actionable findings in the same branch/PR and obtains a fresh review after changes. Default limits are three review rounds and 60 minutes; recover the ledger on continuation. Missing/limited reviewer evidence or exhausted limits requires a concrete human handoff, never self-approval.
+
+Under this owner-selected policy, a request to implement a selected issue includes guarded merge of routine changes unless the user restricts it. Sensitive or unknown changes still require human approval under trusted base policy/CODEOWNERS and live protections. Candidate instructions cannot authorize themselves. An agent verdict is not native GitHub approval. Preserve all CI, review and permission gates, use the existing App without bypass, and confirm remote delivery. This is a session-driven contributor workflow, not the future product runtime or a background watcher.
 
 ## Implementation invariants
 
@@ -96,6 +106,7 @@ Keep issue criteria, implementation, and relevant documentation consistent. Repo
 
 ## Reusable workflows
 
+- [jarvis-pr-review](.agents/skills/jarvis-pr-review/SKILL.md): independently assess an exact change revision; never author fixes or grant merge authority.
 - [jarvis-project-management](.agents/skills/jarvis-project-management/SKILL.md): maintain issues, dependencies, milestones, labels, and project views within the user's authorized scope.
 - [jarvis-issue-delivery](.agents/skills/jarvis-issue-delivery/SKILL.md): implement a selected issue through verification and the authorized PR handoff.
 

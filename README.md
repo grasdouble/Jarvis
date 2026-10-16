@@ -9,6 +9,7 @@ The repository is maintained in English.
 - [JARVIS v0.1 PRD and roadmap](docs/prd-and-roadmap.md)
 - [JARVIS v0.1 Technical Architecture](docs/technical-architecture.md)
 - [Contributor workflow, TDD, task slicing, and planned versioning](docs/development-workflow.md)
+- [Independent review, repair loops and autonomous routine delivery](docs/autonomous-delivery.md)
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)
