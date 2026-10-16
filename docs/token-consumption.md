@@ -10,6 +10,8 @@ Reuse `packages/llm` for normalization, pricing and accounting ports, domain/con
 
 JARVIS tracks its own controlled traffic. It cannot infer token use by unrelated local OpenCode sessions, this contributor chat or outside account users. The UI states that coverage; shared-account invoices can differ from JARVIS totals.
 
+[J10 duration forecasting](duration-forecasting.md) may reuse these timestamps and qualified model/profile/effort observations after MVP delivery. Forecasts are separate derived advisory records, never authoritative spending, reservations, deadlines or provider choices. Existing MVP accounting does not require prediction accuracy; future measurement/calibration work cannot retroactively turn estimated or unknown usage into reported data.
+
 ## Per-request record and token semantics
 
 Persist a request intent before dispatch. A logical operation has one `operationId`; every separately dispatched transport attempt that may be billed has a new durable `requestId`, including retries. Bind observations to that identity, authorized provider/model/profile, attempt and gateway allocation. A provider request identifier is optional evidence, not a sufficient cross-account/global deduplication key. Unknown dispatch outcomes reconcile before repeating an effect; local accounting cannot guarantee provider exactly-once billing.

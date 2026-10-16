@@ -16,6 +16,7 @@ The repository is maintained in English.
 - [Shared OpenCode runtime and controlled capabilities](docs/common-agent-runtime.md)
 - [Token consumption, usage attribution and budget accounting](docs/token-consumption.md)
 - [Telegram/Signal notifications and conversation channels](docs/messaging-channels.md)
+- [Task duration estimates, timing and calibration](docs/duration-forecasting.md)
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [Security reporting](SECURITY.md)

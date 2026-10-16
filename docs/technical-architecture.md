@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.10 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.11 • October 16, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -287,6 +287,7 @@ interface SandboxManager {
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
 | GET /api/v1/usage | Consumption summary and groupings | Authenticated scope, bounded period/groups, IANA zone, currencies and completeness |
 | GET /api/v1/usage/requests | Request usage, attribution and provenance | Authenticated filters, cursor pagination, at most 100 rows, no raw model content |
+| GET /api/v1/tasks/:id/estimates | Proposed J10 current/historical duration snapshots | Scoped authentication, bounded filters/pagination, target/coverage/calibration, explicit unknown values; no dispatch authority |
 | GET /api/v1/repositories/:id/memories | Scoped knowledge and provenance | Authenticated, status filters, cursor pagination |
 | POST /api/v1/repositories/:id/memories | Create an observation or owner-authored note | Closed schema, bounded text, Idempotency-Key, CSRF, no policy fields |
 | POST /api/v1/memories/:id/revisions | Correct, validate, or invalidate knowledge | Owner session, expected version, source and applicability required, audited |
@@ -659,6 +660,14 @@ The reservation is calculated before starting from the maximum authorized reques
 The interface distinguishes per-PR cost, abandoned-attempt cost, currency, and price version. Prices are entered or explicitly updated, without relying on constants assumed to remain current. Local costs are measured through CPU time, memory, and storage; a local model adds consumption and RAM constraints rather than having zero cost.
 
 Input/output totals and cache/reasoning subsets use qualified provider-specific mappings; overlapping categories are never charged twice. Gateway and OpenCode events for the same actual request update one canonical record, not separate expenses. Every retry, format repair, digest and later agent call is attributable, including failed/unknown outcomes. Runtime-reported cost is evidence to cross-check, not authority to release funds or an invoice guarantee. Unknown prices/subscription valuation and different currencies remain explicit. D02/D05/D09/D11 retain provider, configured token/currency limits and retention choices. JV-015/JV-017/JV-022/JV-024 own MVP implementation and acceptance; this detailed specification enables no runtime behavior.
+
+### 17.3 Proposed task duration forecasting
+
+J10/P15 ([JV-084](https://github.com/grasdouble/Jarvis/issues/84), children JV-085–JV-088) adds a bounded statistical component in existing llm/domain/contracts/persistence/observability modules, after verified MVP delivery. The [duration contract](duration-forecasting.md) defines preflight/post-plan estimates, conditional remaining-time updates and actual comparison. Reuse task/attempt/request timestamps and qualified effective model/effort metadata; distinguish provider/version/profile, safe workload features, unknown settings and observed environment. No second runtime, forecasting service or model-training/inference call is required.
+
+Proposed `execution_timings`, `duration_forecasts` and `forecast_calibrations` bind canonical interval/feature observations, immutable issued predictions and chronological evaluation evidence to scope, task/profile/estimator versions and completeness. Separate queue/CI/human/suspension/unknown intervals from execution elapsed; use monotonic local timing with explicit restart/clock/sleep gaps and end-to-end critical paths for parallel work. Do not sum overlapping spans, infer completion from a timeout, or add marginal percentiles as a workflow guarantee. Retain failed/censored cases and calibration limitations.
+
+Scoped empirical cohorts return central/range/optional percentile with sample count, as-of/freshness, method/calibration version and abstention/stale states. No universal effort-speed factor, guessed current model throughput or unsupported accuracy label. Remaining time conditions on observed stage/elapsed survival; otherwise it remains unknown. Bound queries/updates and enforce deletion/restore on derived data. The existing authenticated task/queue view and future qualified J8/J9 surfaces can display results, while unavailable estimates leave dispatch policy, ranking, limits, selected profile and approval gates unchanged. JV-088 validates chronological holdout and actual runtime evidence before production forecasting; no estimator or accuracy evidence is installed here.
 
 ## 18 Local deployment and development
 
