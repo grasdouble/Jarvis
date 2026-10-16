@@ -1,0 +1,90 @@
+# Bounded self-improvement campaigns
+
+Design status: owner-selected post-v0.3 product behavior, specified by [JV-059](https://github.com/grasdouble/Jarvis/issues/59) and implemented later through [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and its children. This document installs no runtime, branches, GitHub rules, credentials or deployment service. D13 still requires accepted experiment and rollout profiles before those actions.
+
+The stable released JARVIS coordinates one bounded improvement hypothesis on a temporary candidate branch. It can integrate eligible task PRs there through the trusted controller, but **every promotion of self-improvement into main requires current human approval**, including routine code changes. Activation requires separate explicit authorization. This product mode does not replace the ordinary contributor workflow or general v0.3 routine-merge policy; JV-051–JV-055 implement its machinery using the contributor workflow.
+
+## Campaign scope and ownership
+
+A campaign has a stable identifier, one hypothesis, measurable gain and quality/security guardrails, one parent issue, permitted task slices, and owner-authorized limits on scope, cumulative attempts, elapsed time, spending/resources and change size. Values must be accepted in D13 rather than invented by an agent. Missing limits prevent execution. Rejected, abandoned and inconclusive campaigns retain dispositions and consumed budgets; starting another child, repair branch, worker or process cannot reset them.
+
+Use a temporary branch such as `improvement/<campaign-id>` created from a recorded target-main revision. Do not use an indefinitely growing branch per JARVIS instance. Each implementation child has its own task branch, qualified sandbox/workspace, acceptance, native milestone and PR targeting the campaign branch. A worktree organizes Git state and is not a security boundary: task execution still uses the qualified Colima isolation profile, without Mac mounts, Engine socket or publication credentials.
+
+The durable core claims the campaign, branch and child tasks with exclusive ownership and fenced leases. Serialize writes to a campaign branch; the remote head precondition and a current fencing check reject stale dispatches. Already accepted remote operations cannot be recalled reliably and must be reconciled before ownership is released. Concurrent campaigns require an explicitly qualified overlap/resource policy; otherwise a conflicting claim waits or hands off. Quotas include retained candidate resources so review waiting cannot accumulate unbounded sandboxes. No candidate service runs with production authority merely because code reached the campaign branch.
+
+## Trust and promotion gates
+
+| Role or target | Allowed scope |
+| --- | --- |
+| Stable controller | Select only authorized proposals; retain trusted policy, ledger, credentials and remote-effect intents outside candidate write scope |
+| Candidate author | Produce a scoped patch in its own task sandbox; no GitHub/deployment credentials or writes to the running controller/evaluator |
+| Independent reviewer | Read the exact snapshot and sanitized criteria/evidence; author none of the candidate or conflict fixes; cannot publish or approve itself |
+| Trusted evaluator/executor | Pin the protocol, holdouts, environment and comparable workload outside candidate control; execute only qualified credential-free tests |
+| Campaign integration | Controller merges a child only with authorized scope, current CI and independent review; sensitive/unknown child changes retain the existing human gate |
+| Promotion to main | Full campaign evaluation, full diff review, current CI/native protections and explicit human approval of this promotion are all required |
+| Activation | Separate immutable artifact/config/environment authorization and qualified rollout/recovery profile; merging source never hot-reloads JARVIS |
+
+Candidate changes to CI, skills, prompts, policy or tests cannot redefine the trusted gate used for that campaign. Human approval of a sensitive proposal does not cause its candidate policy to become the live controller policy. Any eventual trusted-policy replacement has its own approved activation path. Tests and branch workflows must not expose production secrets or execute candidate code with a privileged event/token. GitHub protections must cover main and campaign targets appropriately without an App bypass. Branch-specific CODEOWNERS are evaluated on the PR's base branch; the controller additionally classifies changes under trusted released policy, so an editable campaign copy cannot silently remove a gate. These are qualification requirements, not claims that rules are configured today.
+
+## Lifecycle and issue accounting
+
+1. Deduplicate an evidence-backed proposal, obtain scope/limits, claim the campaign and pin its inputs. Record target main `B` separately from the stable deployed incumbent `S`; main may contain changes that have not been activated.
+2. Define bounded task slices with measurable acceptance and native dependencies. Publish each child PR against the campaign branch after its actual verification and independent review.
+3. Reconcile and confirm child merges through the controller. Maintain a manifest mapping child issues/PRs to their original and integrated revisions, with finding dispositions and evidence digests. A squash merge must not erase this traceability from the ledger.
+4. Freeze admission when the hypothesis is implemented or a campaign limit is reached. Do not append unrelated improvements while waiting for a human. A failed limit stops/hands off rather than forcing promotion.
+5. Compare the exact assembled candidate `H` with deployed incumbent `S` under the fixed protocol and run compatibility/regression checks for target `B`. Include all failed attempts/costs; inconclusive or rejected evidence cannot become promotion eligibility.
+6. Maintain one active promotion PR from the frozen candidate branch to main; retain linked superseded PRs as history when remediation needs a new head branch. Present the complete diff, child manifest, baseline/candidate measurements, uncertainty, independent assessment, current target revision, migration/recovery implications and separate activation status.
+7. Obtain authenticated human approval bound to the promotion digest: repository/target, `B`, `H`, policy/protocol/evidence versions and manifest. Preserve all native required approvals and checks; a model verdict or copied comment cannot supply human authority. Any relevant change invalidates internal eligibility even if GitHub retains an approval. Never infer promotion permission from a previous child's approval.
+8. Recheck revisions, current authority/stop state, native protections, checks and reviews immediately before the expected-head merge request. A changed or unknown target stops dispatch and triggers reconciliation/revalidation; the head precondition alone does not atomically freeze main. The qualified native up-to-date/check controls remain necessary. Confirm the remote merge before recording source delivery; record pending activation separately.
+
+A task merged only into the campaign is `integrated_candidate`, not delivered or Done. Keep its project issue open/In Review with an explicit campaign-stage record; the qualified project automation must not infer issue Done from a candidate-only PR merge. No new project field or automation is installed here. If dependency planning supports candidate-local progress, it uses verified manifest prerequisites within the same claimed campaign, never a fabricated global completion. Promotion reconciles only children fully represented in the accepted result. Issue closure/Done follows confirmed main integration and the issue's acceptance, including activation if that issue requires it. Use explicit ledger links: PR-body closing keywords targeting a non-default branch do not create normal closing links. A promotion PR may close only fully delivered issues; a squash body/commit must preserve intended closing references or the controller must reconcile closure explicitly.
+
+After confirmed promotion, retire the campaign branch and temporary resources once no review/recovery use remains; preserve evidence and needed work. A subsequent campaign starts from the new main with its own authorization, not by continuing a previously squashed branch. Abandonment preserves the disposition and current main, releases claims and cleans temporary resources; it does not mark undelivered issues Done.
+
+## Conflict and drift remediation
+
+Remediation is part of the same campaign and cumulative budget, whether Git reports a textual conflict or semantic integration checks fail without one.
+
+1. Freeze child admission and promotion; invalidate promotion eligibility. Record the original candidate `H0`, prior target, latest verified main `B1`, stable incumbent `S`, manifest and existing approvals/evidence. Preserve the PR and record a linked repair episode.
+2. Acquire an exclusive, fenced remediation claim. Select the accepted Git strategy below and create a separate repair branch/workspace without resetting main, force-pushing the shared candidate, or rewriting published history. Do not resolve directly in the running service. If the native merge strategy cannot preserve this qualified process, hand off rather than silently change strategy.
+3. Resolve using both sides' intent, issue acceptance and trusted policy. Never blanket-select ours/theirs, silently drop a child, weaken the oracle or broaden scope to make checks pass. Ambiguous functional/security intent, incompatible migrations or an out-of-scope change requires a documented human decision; continue only independent authorized preparation.
+4. Run regression/integration checks on the full main-to-repaired-candidate diff, refresh the child manifest and compare the resulting candidate with the pinned incumbent under the accepted protocol. If the deployed incumbent or relevant environment/protocol changed, invalidate the comparison and establish a newly accepted comparable evaluation. New measurements and review are required for changed inputs, not relabeled old results.
+5. A fresh independent reviewer who authored none of the repairs reviews the complete result and the resolution of both sides' acceptance. Sensitive repair changes require the applicable human gate before branch integration. Publish the repair through its reviewed PR and guarded controller, either integrating it with preserved ancestry or making it the replacement promotion candidate under the strategy below; never inject a direct unreviewed repair commit into the shared candidate. Refresh evidence again for the resulting integrated SHA, especially after squash; a repaired branch's SHA is not the integrated candidate's SHA.
+6. Update the existing promotion PR when its head branch can be retained; otherwise link and supersede it with one replacement promotion PR, keeping the same campaign, manifest and consumed budgets. Invalidate prior internal approval and obtain current human approval of the new promotion digest. Native approval retention alone cannot authorize a changed digest. If main or another relevant input moves again, repeat within the same finite limits.
+7. Stop on exhausted limits, cancellation/revocation, unresolved intent or unknown remote outcomes. Persist Blocked/needs_human with cause, relevant revisions, next owner/action and exact resumption condition. Reconcile accepted remote effects before retrying. After resolution, record separate linked Unblocked evidence and restore only the verified lifecycle stage; never promote automatically from the comment itself.
+
+### Preserve main ancestry under the permitted merge method
+
+D13 must qualify a concrete strategy against the repository's actual allowed methods; branch update and promotion are not interchangeable operations.
+
+- When merge commits into the campaign are permitted, branch the repair from `H0`, merge `B1` there, and integrate the reviewed repair PR with a method that preserves `B1` as an ancestor. Rebind evidence to the exact resulting candidate.
+- For a squash-only repository, start a fresh repair/promotion branch from `B1`, reapply the campaign's manifest-backed changes with explicit conflict resolutions, and review its complete `B1`-to-candidate diff. Keep the original campaign branch immutable for traceability. The new branch becomes the campaign's promotion candidate; create one linked replacement promotion PR if the original head branch cannot be reused without rewriting history. Human approval and all current checks/evaluation apply to the replacement. Do not squash a repair back into the old campaign and assume this preserves main ancestry: it does not. Future child work stays frozen; any follow-up uses the explicitly rebound candidate and serialized claim.
+
+Verify the selected current-main revision is an ancestor of the resulting promotion candidate, as well as checking its semantic contents and native up-to-date rules. Preserve original-to-reapplied mappings, removed/changed children and review evidence; a changed acceptance set requires authorization rather than silently dropping work. Every supersession/replay still consumes the original campaign's limits. Missing qualified strategy or ambiguous replay requires handoff, never enabling another merge method/bypass automatically.
+
+## Durable records and recovery
+
+Extend proposed delivery/experiment records with a campaign manifest: campaign/proposal/parent IDs; child issue/PR and commit mappings; target repository/branch and `B`; incumbent artifact/source/config/schema `S`; assembled candidate `H`; protocol/policy/environment/evidence digests; current claim/fence; cumulative limits/consumption; stop epoch; promotion PR and human approval digest; remote merge result; separate activation intent/result. Persist repair episodes with `H0/B1`, findings, decisions, repaired/integrated SHAs, attempts and dispositions.
+
+Record lifecycle stages such as authorized → assembling → evaluating → awaiting_human_promotion → promoting → integrated_main/pending_activation; synchronization may enter remediating, and limited/blocked/exhausted/cancelled/unknown outcomes stay explicit. Native GitHub state is an external projection, not the authoritative campaign stage. Unique effect keys bind the target/action/revision digest; inbox/outbox, fenced leases and remote rereads handle duplicates, crashes and ambiguous PR/merge/closure results. A success response for one child or queued merge is not proof that the whole campaign reached main. Restart restores budgets/stop/claims and reconciles before any new effect.
+
+## Qualification and implementation slices
+
+These are future acceptance scenarios, not tests executed by this specification. D13 owns exact thresholds, limits, promotion identity/check profile and permitted remediation strategies before implementation is enabled.
+
+| Slice | Required scenario evidence |
+| --- | --- |
+| JV-052 proposals | One hypothesis and bounded proposed campaign; duplicate/rejected signals do not create extra campaigns or authority |
+| JV-053 evaluation/policy | Separate `S/B/H`, protected oracle, human promotion for routine and sensitive changes; incomplete/stale/missing evidence and stale human digests deny promotion |
+| JV-054 orchestration | Per-child branches/sandboxes/PRs; serialized claims; no Done at candidate integration; conflicting claims, textual and semantic conflicts, ambiguous effects, restart, exhaustion and stop |
+| JV-055 qualification/activation | Full campaign main promotion with current human approval; repeat main drift; repair re-review; squash-only repair preserving main ancestry and linked promotion supersession; abandoned branches and squash traceability; accepted/rejected/inconclusive campaigns; main merge without activation; separate rollout/rollback |
+
+## Verified references
+
+Official references checked October 16, 2026:
+
+- [Git worktrees](https://git-scm.com/docs/git-worktree): multiple working trees share repository state; task sandbox isolation is a separate architecture requirement.
+- [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners): ownership comes from the PR base branch.
+- [GitHub rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets): required reviews, stale approvals, up-to-date checks and bypass settings. The campaign's exact-digest human gate is an additional product policy.
+- [GitHub merge strategies](https://docs.github.com/en/pull-requests/reference/pull-request-merges): squash and the risks of repeatedly reusing a long-running branch.
+- [GitHub issue links](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue): PR-body closing keywords are interpreted for the default branch; non-default-target integration needs explicit tracking.
