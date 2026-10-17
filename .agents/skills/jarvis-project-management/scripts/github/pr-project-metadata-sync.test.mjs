@@ -1,3 +1,4 @@
+import { appNetworkError } from './gh-app.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
@@ -73,4 +74,20 @@ test('unreadable recovery state stops further writes',async()=>{
 test('ambiguous native relationships remain visible with no guessed metadata effects',async()=>{
   const h=harness();h.state.pullRequests[0].issues.push({...h.state.pullRequests[0].issues[0],number:93,url:'https://github.com/grasdouble/Jarvis/issues/93'});
   const r=await synchronizeMetadata({...h,write:true});assert.ok(r.diagnostics.some(d=>d.code==='ambiguous_issues'));assert.equal(h.effects.length,0);
+});
+
+for (const applied of [false,true]) test(`network metadata failure retains recovery after reread, applied=${applied}`,async()=>{
+ const h=harness();let reads=0,writes=0;
+ const failure=appNetworkError({status:75,stderr:'JARVIS_GITHUB_NETWORK: ENOTFOUND private-cause'});
+ await assert.rejects(synchronizeMetadata({...h,write:true,
+  load:async()=>{reads++;return h.load();},
+  apply:async effect=>{writes++;if(applied)await h.apply(effect);throw failure;},
+ }),error=>{
+  assert.equal(error.networkFailure,true);assert.equal(error.exitCode,75);
+  assert.match(error.message,/JARVIS_GITHUB_NETWORK:/);assert.doesNotMatch(error.message,/private-cause/);
+  return true;
+ });
+ assert.equal(reads,3,'remote state must be reread before surfacing failure');
+ assert.equal(writes,1,'never replay network-interrupted writes automatically');
+ assert.equal(h.effects.length,applied?1:0);
 });

@@ -1,3 +1,4 @@
+import { appNetworkError } from './gh-app.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { synchronizeQueue, queueRequestError } from './project-queue-sync.mjs';
@@ -199,4 +200,31 @@ test('a missing milestone aborts before any rank write, including for a coordina
   f.state.issues[0].children=['2'];
   await assert.rejects(synchronizeQueue({...f,write:true}),/milestone/i);
   assert.deepEqual(f.writes,[]);
+});
+
+
+test('App network failures retain safe recovery guidance without automatic retries', () => {
+  const result = queueRequestError({status:75, stderr:'JARVIS_GITHUB_NETWORK: EAI_AGAIN synthetic-secret'});
+  assert.equal(result.networkFailure, true);
+  assert.equal(result.retryable, false);
+  assert.match(result.message, /JARVIS_GITHUB_NETWORK:/);
+  assert.match(result.message, /--check-network/);
+  assert.ok(!result.message.includes('synthetic-secret'));
+  assert.notEqual(queueRequestError({status:1, stderr:'HTTP 403 JARVIS_GITHUB_NETWORK:'}).networkFailure, true);
+});
+
+for (const applied of [0, 1, 3]) test(`network queue failure retains recovery after rereading ${applied} applied ranks`, async () => {
+  const f=fixture(3); let reads=0;
+  const failure=appNetworkError({status:75,stderr:'JARVIS_GITHUB_NETWORK: EAI_AGAIN private-cause'});
+  await assert.rejects(synchronizeQueue({...f,write:true,
+    load:async()=>{reads++;return f.load();},
+    writeBatch:async(_,batch)=>{f.writes.push(batch);f.apply(batch.slice(0,applied));throw failure;},
+  }),error=>{
+    assert.equal(error.networkFailure,true);assert.equal(error.exitCode,75);
+    assert.match(error.message,/JARVIS_GITHUB_NETWORK:/);assert.doesNotMatch(error.message,/private-cause/);
+    return true;
+  });
+  assert.equal(reads,3,'remote state must be reread before surfacing failure');
+  assert.equal(f.writes.length,1,'never replay network-interrupted writes automatically');
+  assert.equal(f.state.items.filter(i=>i.fieldValues.nodes.length).length,applied);
 });

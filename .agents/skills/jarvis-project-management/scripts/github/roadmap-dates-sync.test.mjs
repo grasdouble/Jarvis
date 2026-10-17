@@ -1,3 +1,4 @@
+import { appNetworkError } from './gh-app.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRoadmapApi,synchronizeDates} from './roadmap-dates-sync.mjs';
@@ -52,4 +53,20 @@ test('API traverses native history pages and binds scoped reads to discovered me
 
 test('changed native membership fails before a date mutation',async()=>{
  const h=apiHarness({changedMembership:true});await h.load();await assert.rejects(h.load(93),/membership changed/);assert.equal(h.calls.filter(r=>r.write).length,0);
+});
+
+for (const applied of [false,true]) test(`network roadmap failure retains recovery after reread, applied=${applied}`,async()=>{
+ const h=harness();let reads=0,writes=0;
+ const failure=appNetworkError({status:75,stderr:'JARVIS_GITHUB_NETWORK: ENOTFOUND private-cause'});
+ await assert.rejects(synchronizeDates({...h,write:true,
+  load:async()=>{reads++;return h.load();},
+  apply:async effect=>{writes++;if(applied)await h.apply(effect);throw failure;},
+ }),error=>{
+  assert.equal(error.networkFailure,true);assert.equal(error.exitCode,75);
+  assert.match(error.message,/JARVIS_GITHUB_NETWORK:/);assert.doesNotMatch(error.message,/private-cause/);
+  return true;
+ });
+ assert.equal(reads,3,'remote state must be reread before surfacing failure');
+ assert.equal(writes,1,'never replay network-interrupted writes automatically');
+ assert.equal(h.effects.length,applied?1:0);
 });

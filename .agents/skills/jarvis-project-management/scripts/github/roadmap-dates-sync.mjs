@@ -75,7 +75,7 @@ export async function synchronizeDates({load,apply,write=false,pause=ms=>new Pro
   let update=await current(),failures=0,attempts=0;
   while(update){if(++attempts>8)throw new Error('Roadmap mutation limit exhausted.');let failure;result.attemptedWrites++;
    try{await apply(update);}catch(e){failure=e;}update=await current();
-   if(failure){if(failure.retryable!==true)throw new Error(`Roadmap write failed for issue #${original.number}.`);if(++failures>=3)throw new Error('Roadmap retry limit exhausted.');if(update)await pause(250*failures);}
+   if(failure){if(failure.networkFailure)throw failure;if(failure.retryable!==true)throw new Error(`Roadmap write failed for issue #${original.number}.`);if(++failures>=3)throw new Error('Roadmap retry limit exhausted.');if(update)await pause(250*failures);}
   }result.verifiedIssues++;
  }
  const final=planDates(await load());result.pending=final.updates.length;result.diagnostics=final.diagnostics;
