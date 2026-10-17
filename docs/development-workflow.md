@@ -25,6 +25,12 @@ Pure questions, advice and read-only audits remain read-only. Backlog-only admin
 
 These are contributor routing expectations for review and skill evaluation, not an installed technical enforcement mechanism.
 
+## Wait for command completion
+
+Execution tools may return control while a command continues in a session. When a result includes a session identifier or indicates that execution is still running, retain that identifier and resume or poll the same session until it returns a terminal result. If the orchestration call itself yields a running cell identifier, wait for that cell too, then inspect its final result and any underlying command session. Capture the final output and exit status; an intermediate output chunk or missing exit status does not establish completion or success.
+
+Do not start a dependent read, write, retry, preview, or verification while the earlier command is still running. In particular, wait for a project mutation to finish before previewing or rereading its result. If a wrapper or orchestration layer is used, preserve and return the session identifier instead of dropping it. After a terminal failure or an ambiguous mutation, inspect the result and current state before deciding whether to retry. If the session can no longer be resumed, report the operation as incomplete and reconcile its state before restarting it. This is a contributor instruction, not technical enforcement by the repository.
+
 ## Keep specifications and decisions coherent
 
 Use [project governance](project-governance.md) before implementation and again for the final diff. Delivery prepares the compact PR impact record and affected document/ADR updates; project management maintains live planning records; independent review checks the sources, authority and evidence. Routine work within accepted scope remains autonomous under current gates. Preserve actual owner authorization already given, stop only dependent unresolved work, and never change the specification solely to hide a defect. The [ADR index/template](adr/index.md) preserve significant decisions and supersession; current CI does not establish semantic alignment.
