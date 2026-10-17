@@ -20,6 +20,7 @@ The repository is maintained in English.
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
 - [PR Issue/Milestone synchronization and CI activation](docs/pr-project-metadata.md)
+- [Observed Roadmap dates and historical backfill](docs/roadmap-actual-dates.md)
 - [Security reporting](SECURITY.md)
 
 The product roadmap also plans [evidence-driven self-improvement after autonomous delivery](docs/prd-and-roadmap.md#111-post-mvp-evolution), tracked by [JV-051](https://github.com/grasdouble/Jarvis/issues/51). It is future work with fixed evaluation, human-sensitive gates and separately authorized rollout; no runtime optimizer is installed.

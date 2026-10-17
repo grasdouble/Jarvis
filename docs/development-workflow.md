@@ -32,7 +32,7 @@ If scope grows, split remaining work before growing the PR. Backlog planning may
 
 ## Project views
 
-[Delivery](https://github.com/orgs/grasdouble/projects/1/views/1) shows issues only (`is:issue`), including coordination parents and implementation children. [Pull requests](https://github.com/orgs/grasdouble/projects/1/views/4) shows PR items only (`is:pr`). Keep PR membership and issue links, including linked PR badges. Backlog and Roadmap retain their milestone grouping; dates require an agreed schedule.
+[Delivery](https://github.com/orgs/grasdouble/projects/1/views/1) shows issues only (`is:issue`), including coordination parents and implementation children. [Pull requests](https://github.com/orgs/grasdouble/projects/1/views/4) shows PR items only (`is:pr`). Keep PR membership and issue links, including linked PR badges. Backlog and Roadmap retain their milestone grouping; planned dates require an agreed schedule. The [actual-date contract](roadmap-actual-dates.md) separately derives observed realization from native project/closure history and defines backfill, reopen handling and automatic maintenance.
 
 The Pull requests table displays native Milestone and a reserved derived **Issue** text column with the implementation issue's JV key and clickable URL. Follow [PR metadata synchronization](pr-project-metadata.md) at publication and after authorized link/milestone changes. Its reviewed command uses native closing-issue relationships, copies the issue milestone and never guesses a source or changes Status. The opt-in main-only workflow provides later reconciliation after secure credential/environment activation; it is separate from the session-driven delivery/review loop and the future runtime.
 

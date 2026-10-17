@@ -49,6 +49,7 @@ jobs:
           permission-issues: read
           permission-metadata: read
       - name: Verify the installation identity
+        id: identity
         env:
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
           INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
@@ -59,3 +60,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: node scripts/github/sync-pr-project-metadata.mjs --ci --write
+      - name: Reconcile actual Roadmap dates
+        if: ${{ !cancelled() && steps.app.outcome == 'success' && steps.identity.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: node scripts/github/sync-pr-project-metadata.mjs --roadmap --ci --write

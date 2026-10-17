@@ -14,8 +14,8 @@ def validate(data):
     assert "github.ref == 'refs/heads/main'" in job['if']
     assert "vars.JARVIS_PROJECT_SYNC_ENABLED == 'true'" in job['if']
     steps = job['steps']
-    assert len(steps) == 5
-    checkout, node, token, identity, reconcile = steps
+    assert len(steps) == 6
+    checkout, node, token, identity, reconcile, roadmap = steps
     assert checkout['with'] == {'repository': 'grasdouble/Jarvis', 'ref': 'refs/heads/main', 'persist-credentials': False}
     assert token['uses'].startswith('actions/create-github-app-token@')
     assert token['with'] == {
@@ -27,6 +27,10 @@ def validate(data):
     }
     assert reconcile['run'] == 'node scripts/github/sync-pr-project-metadata.mjs --ci --write'
     assert reconcile['env'] == {'GH_TOKEN': '${{ steps.app.outputs.token }}'}
+    assert identity['id'] == 'identity'
+    assert roadmap['run'] == 'node scripts/github/sync-pr-project-metadata.mjs --roadmap --ci --write'
+    assert roadmap['env'] == {'GH_TOKEN': '${{ steps.app.outputs.token }}'}
+    assert roadmap['if'] == "${{ !cancelled() && steps.app.outcome == 'success' && steps.identity.outcome == 'success' }}"
     assert not any('cache' in step.get('with', {}) for step in steps)
 
 

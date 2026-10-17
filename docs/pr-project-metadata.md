@@ -18,7 +18,7 @@ The only source is GitHub's native `closingIssuesReferences` relationship, not a
 
 Scope is fixed in reviewed code to `grasdouble/Jarvis`, organization Project 1, its expected project ID and the existing Issue TEXT field ID. Missing/renamed/recreated fields, malformed data, duplicate memberships and incomplete pagination fail closed. Open, merged and closed repository PRs are included; other repositories' project items and issue items remain untouched. Connection pagination has explicit limits of 100 pages and 10,000 nodes per connection; reaching either fails rather than silently omitting items.
 
-Writes are restricted to project membership, this one text field, and native PR milestones. No Status, issue state, labels, links, reviews, source changes or protection updates are issued. Existing GitHub project automations can still react to membership changes; the tool does not override their status decisions. View layout, permissions, other fields and the execution queue remain separate.
+In ordinary PR-metadata mode, writes are restricted to project membership, this one text field, and native PR milestones. No Status, issue state, labels, links, reviews, source changes or protection updates are issued. Existing GitHub project automations can still react to membership changes; the tool does not override their status decisions. View layout, permissions, other fields and the execution queue remain separate.
 
 ## Local publication and reconciliation
 
@@ -58,6 +58,8 @@ The workflow is **off by default** until repository Actions variable `JARVIS_PRO
 Each privileged run checks out explicit reviewed `refs/heads/main`, without persisted Git credentials. It runs no PR checkout, cache, artifact, dependency installation, repository hook or candidate script. GitHub-owned actions are pinned to full SHAs. The default `GITHUB_TOKEN` has Contents read; the separately minted token is revoked by the action after the job and otherwise expires within one hour. A 15-minute job limit bounds execution. Candidate refs are rejected both by the job/CLI and by the environment's server-side main-only rule. No ordinary contributor credential or Mac PEM is a CI fallback.
 
 The workflow creates a GitHub environment deployment record for this metadata job; it does not deploy JARVIS. Missing credential/environment/plan support is an explicit activation prerequisite, not evidence that CI is already operational. Local synchronization remains usable before CI activation. No checks, code-owner requirements or human approval gates are weakened.
+
+The same protected workflow also runs the separate [Roadmap actual-date mode](roadmap-actual-dates.md). That mode only derives the two reserved issue DATE fields; it does not expand ordinary PR-mode writes or add credential permissions. Native project-only status edits use skill hooks plus eventual scheduled catch-up.
 
 ## Verification and references
 

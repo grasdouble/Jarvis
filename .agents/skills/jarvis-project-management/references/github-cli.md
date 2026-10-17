@@ -193,3 +193,14 @@ node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
 ```
 
 Read diagnostics, verify the native relationship and resolve ambiguity instead of choosing a primary issue from prose. The command derives the reserved Issue field and native PR milestone only, preserving the self-update exception. It never changes Status or creates issue links. Workflow activation and secure CI credential provisioning follow the linked procedure.
+
+## Synchronize observed Roadmap dates
+
+Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
+
+```bash
+node scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+```
+
+Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.
