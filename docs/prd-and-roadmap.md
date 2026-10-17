@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.11 • October 16, 2026 • Personal self-hosted product
+Document version 1.12 • October 18, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -301,7 +301,7 @@ Post-MVP tracking uses separate, undated native GitHub milestones. This mapping 
 | J9 — Messaging channels | Telegram/Signal notifications after the MVP, then each channel's authenticated conversation after J8; no cross-channel or J6/J7 prerequisite solely by phase number | Parent [JV-075](https://github.com/grasdouble/Jarvis/issues/75), children JV-076–JV-081 |
 | J10 — Duration forecasting | Measured task/stage history, model/effort estimates, conditional remaining-time display and calibration after the MVP; advisory only, with no committed date/version | Parent [JV-084](https://github.com/grasdouble/Jarvis/issues/84), children JV-085–JV-088 |
 
-Every repository issue must carry the appropriate native milestone under the [contributor policy](development-workflow.md#required-issue-milestones); body references alone do not assign it.
+Every repository issue must carry the appropriate native milestone under the [contributor policy](development-workflow.md#required-issue-milestones); body references alone do not assign it. Apply the shared [selection and creation rules](development-workflow.md#milestone-selection-and-creation): J0 covers initial MVP scoping, while feature-specific specifications remain with their product phase even when delivered early. Contributor-only repository tooling and governance use bounded DEV outcomes such as [DEV — Contributor foundation](https://github.com/grasdouble/Jarvis/milestone/13), separate from J0–J10. DEV adds no product phase, MVP gate or calendar commitment; completed design issues do not prove runtime qualification.
 
 A failed security gate delays automerge. The system can remain useful in observation or assisted review mode; that mode is not a complete v0.1 until the requested safe merge capability has been validated.
 
