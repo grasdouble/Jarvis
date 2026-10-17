@@ -41,6 +41,19 @@ For bug fixes, the RED test reproduces the defect. Test observable contracts rat
 
 Documentation-only changes use links, consistency, and diff checks. Pure configuration/scaffolding work uses relevant validators and build/smoke evidence; behavioral scripts still warrant behavioral tests. Behavior-preserving refactors may begin with passing characterization tests. Explain the applicable exception and limitations. Unit tests alone do not establish real Colima isolation, remote permissions, or race/recovery acceptance.
 
+## Run repository checks locally
+
+The repository configuration validator and its Python unit checks require the pinned PyYAML dependency. Create an isolated environment with CPython 3.9–3.14, install the hash-verified validation requirements, and run the same checks used by CI:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-ci.txt
+.venv/bin/python scripts/ci/check_repository.py
+.venv/bin/python -m unittest discover -s scripts/ci -p 'test_*.py'
+```
+
+The requirements file retains the Ubuntu CI wheel hash and includes verified macOS ARM64 and x86_64 wheels for CPython 3.9–3.14. The `.venv/` directory is ignored by Git. Do not install the validator dependency into the system Python.
+
 ## Slice issues into reviewable deliveries
 
 A parent issue describes the complete outcome. Create native GitHub sub-issues when it contains several independently reviewable outcomes, crosses unrelated concerns, or requires a PR that cannot be understood and verified as one coherent change. Keep a small issue intact; no fixed line-count threshold substitutes for judgment.
