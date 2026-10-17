@@ -17,6 +17,8 @@ Determine which repository, issues, and project changes the human user authorize
 
 Prefer dedicated `gh` commands, then `gh api` for REST or GraphQL operations; use an available connector or authenticated browser when needed. Check the remote and current read access before writing. Distinguish a restricted network from failed credentials; never print tokens. Repository access does not imply Projects access. If `gh project` lacks the Projects scope, an already authenticated browser is a valid alternative. Do not silently broaden token scopes or alter organization access. Complete unaffected work and report a specific blocker when neither route is available.
 
+Apply the [network recovery contract](../../../docs/development-github-app.md#network-access-and-recovery) before authentication and after transport errors: check the current context, request approved access when restricted, probe without credentials, and reconcile remote effects before retrying any write. Preserve its distinct error classification and stop with a concrete blocker if access is denied; do not assume another agent’s access or change identities.
+
 ## Command reference
 
 Read [GitHub CLI operations](references/github-cli.md) for the relevant backlog or project operation. It covers discovery, issue bodies and metadata, native dependencies, milestone APIs, project membership and status, ID lookup, and view/automation limits. Check installed command help before using version-dependent flags. Authentication setup is maintained in the [README](../../../README.md#github-cli-setup-for-development); do not run an authorization flow merely because a command example exists.

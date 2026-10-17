@@ -3,6 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { synchronizeQueue, queueRequestError } from './project-queue-sync.mjs';
+import { NETWORK_EXIT_CODE } from './gh-app.mjs';
 
 const args = process.argv.slice(2);
 if (args.some(x => x !== '--write')) throw new Error('Usage: node scripts/github/sync-project-queue.mjs [--write]');
@@ -79,5 +80,5 @@ try {
   console.log(JSON.stringify(await synchronizeQueue({load,writeBatch,write}),null,2));
 } catch (error) {
   console.error(error.message);
-  process.exitCode=1;
+  process.exitCode=error.networkFailure?NETWORK_EXIT_CODE:1;
 }

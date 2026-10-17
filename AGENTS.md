@@ -37,6 +37,8 @@ Every issue must have a native GitHub milestone, including coordination parents,
 
 When creating issues through a CLI or connector, populate equivalent body sections explicitly; do not assume GitHub's web-form requirements are enforced by the API. Issue intake does not grant implementation or publication authority beyond the user's request.
 
+Follow the [network recovery procedure](docs/development-github-app.md#network-access-and-recovery) before authenticated GitHub operations and after transport failures. Check the current execution context, obtain permitted network access when needed, and use the credential-free probe. Do not treat a previous command/agent grant as current access, stop at a generic `fetch failed`, or replay a write before remote-state reconciliation.
+
 ## Commit messages and PR titles
 
 Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) for authored commit messages. Use a type, optional parenthesized scope, optional breaking-change marker, and a short description: `type(scope)!: description`. Scope and `!` are omitted when unnecessary.

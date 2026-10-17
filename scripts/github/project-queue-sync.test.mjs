@@ -200,3 +200,14 @@ test('a missing milestone aborts before any rank write, including for a coordina
   await assert.rejects(synchronizeQueue({...f,write:true}),/milestone/i);
   assert.deepEqual(f.writes,[]);
 });
+
+
+test('App network failures retain safe recovery guidance without automatic retries', () => {
+  const result = queueRequestError({status:75, stderr:'JARVIS_GITHUB_NETWORK: EAI_AGAIN synthetic-secret'});
+  assert.equal(result.networkFailure, true);
+  assert.equal(result.retryable, false);
+  assert.match(result.message, /JARVIS_GITHUB_NETWORK:/);
+  assert.match(result.message, /--check-network/);
+  assert.ok(!result.message.includes('synthetic-secret'));
+  assert.notEqual(queueRequestError({status:1, stderr:'HTTP 403 JARVIS_GITHUB_NETWORK:'}).networkFailure, true);
+});

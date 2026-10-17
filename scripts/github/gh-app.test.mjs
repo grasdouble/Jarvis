@@ -1,5 +1,7 @@
 import { generateKeyPairSync, createVerify } from 'node:crypto';
-import { mkdtemp, writeFile, chmod, symlink, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mkdtemp, readFile, writeFile, chmod, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -85,4 +87,106 @@ test('key loading rejects shared permissions and symlink files', async () => {
   } finally {
     await rm(directory, {recursive: true, force: true});
   }
+});
+
+// Full CLI fixtures intercept every request and use a synthetic key only.
+async function fixtureCommand(t, args, behavior, {key = true, ghExit} = {}) {
+  const folder = await mkdtemp(path.join(tmpdir(), 'jarvis-network-test-'));
+  t.after(() => rm(folder, {recursive: true, force: true}));
+  const keyPath = path.join(folder, 'fixture.pem');
+  if (key) {
+    const {privateKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
+    await writeFile(keyPath, privateKey.export({type: 'pkcs8', format: 'pem'}), {mode: 0o600});
+  }
+  const calls = path.join(folder, 'calls.jsonl');
+  const preload = path.join(folder, 'fetch-fixture.mjs');
+  await writeFile(preload, `import {appendFileSync} from 'node:fs';
+    globalThis.fetch = async (url, options = {}) => {
+      appendFileSync(${JSON.stringify(calls)}, JSON.stringify({url, method: options.method ?? 'GET'}) + '\\n');
+      ${behavior}
+    };`);
+  if (ghExit !== undefined) await writeFile(path.join(folder, 'gh'), `#!/bin/sh\nexit ${ghExit}\n`, {mode: 0o700});
+  const result = spawnSync(process.execPath,
+    ['--import', preload, fileURLToPath(new URL('./gh-app.mjs', import.meta.url)), ...args], {
+      encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+      env: {PATH: `${folder}:${process.env.PATH}`, HOME: folder, TMPDIR: folder,
+        JARVIS_GITHUB_APP_KEY_FILE: keyPath},
+    });
+  assert.equal(result.error, undefined);
+  let requests = [];
+  try { requests = (await readFile(calls, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  return {...result, requests};
+}
+
+test('network probe needs no key and sends no credentials, body or write request', async t => {
+  const r = await fixtureCommand(t, ['--check-network'], `
+    if (url !== 'https://api.github.com/' || options.method !== 'HEAD' || options.body ||
+        Object.keys(options.headers ?? {}).some(name => name.toLowerCase() === 'authorization'))
+      throw new Error('Unexpected credential or request');
+    return new Response(null, {status: 200});`, {key: false});
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), {host: 'api.github.com', network: 'reachable', httpStatus: 200, authenticated: false});
+  assert.equal(r.requests.length, 1);
+});
+
+test('public probe reports HTTP reachability without claiming App authentication', async t => {
+  const r = await fixtureCommand(t, ['--check-network'], 'return new Response(null, {status: 403});', {key: false});
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).httpStatus, 403);
+  assert.equal(JSON.parse(r.stdout).authenticated, false);
+});
+
+test('transport failures have a stable recovery exit and never expose raw causes', async t => {
+  for (const code of ['EPERM', 'ENOTFOUND', 'CERT_HAS_EXPIRED', 'UND_ERR_CONNECT_TIMEOUT', 'synthetic-secret']) {
+    const r = await fixtureCommand(t, ['--verify'], `throw new TypeError('fetch failed', {
+      cause: Object.assign(new Error('synthetic-secret headers/key/token'), {code: ${JSON.stringify(code)}})});`);
+    assert.equal(r.status, 75, r.stderr);
+    assert.match(r.stderr, /JARVIS_GITHUB_NETWORK:/);
+    assert.match(r.stderr, /--check-network/);
+    assert.match(r.stderr, /approved network/i);
+    assert.doesNotMatch(r.stderr, /synthetic-secret|headers\/key\/token/);
+    assert.equal(r.requests.length, 1, 'no blind transport retry');
+  }
+});
+
+test('network probe timeout is bounded and classified without using App credentials', async t => {
+  const r = await fixtureCommand(t, ['--check-network'], `
+    if (!options.signal || options.signal.aborted) throw new Error('Missing live deadline');
+    throw new DOMException('synthetic-secret timeout details', 'TimeoutError');`, {key: false});
+  assert.equal(r.status, 75, r.stderr);
+  assert.match(r.stderr, /JARVIS_GITHUB_NETWORK:/);
+  assert.doesNotMatch(r.stderr, /synthetic-secret/);
+});
+
+test('HTTP auth errors and malformed JSON are not network-permission diagnoses', async t => {
+  for (const status of [401, 403]) {
+    const auth = await fixtureCommand(t, ['--verify'], `return new Response('synthetic-secret', {status: ${status}});`);
+    assert.equal(auth.status, 1);
+    assert.match(auth.stderr, new RegExp(`HTTP ${status}`));
+    assert.doesNotMatch(auth.stderr, /JARVIS_GITHUB_NETWORK:|synthetic-secret/);
+  }
+  const invalid = await fixtureCommand(t, ['--verify'], "return new Response('synthetic-secret', {status: 200});");
+  assert.equal(invalid.status, 1);
+  assert.doesNotMatch(invalid.stderr, /JARVIS_GITHUB_NETWORK:|synthetic-secret/);
+});
+
+test('lost token-grant response stops without replaying POST or dispatching a write', async t => {
+  const r = await fixtureCommand(t, ['--write', '--', 'issue', 'create'], `
+    if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+    throw new TypeError('fetch failed', {cause: {code: 'ECONNRESET'}});`);
+  assert.equal(r.status, 75, r.stderr);
+  assert.deepEqual(r.requests.map(x => x.method), ['GET', 'POST']);
+  assert.match(r.stderr, /reconcile/i);
+});
+
+test('downstream pending-check exit is preserved and the grant is revoked once', async t => {
+  const data = JSON.stringify(grant());
+  const r = await fixtureCommand(t, ['--', 'pr', 'checks', '1'], `
+    if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+    if (options.method === 'DELETE') return new Response(null, {status: 204});
+    return Response.json(${data});`, {ghExit: 8});
+  assert.equal(r.status, 8, r.stderr);
+  assert.doesNotMatch(r.stderr, /JARVIS_GITHUB_NETWORK:/);
+  assert.deepEqual(r.requests.map(x => x.method), ['GET', 'POST', 'DELETE']);
 });

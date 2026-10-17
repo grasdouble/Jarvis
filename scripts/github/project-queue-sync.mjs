@@ -1,5 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import { planQueue } from './project-queue.mjs';
+import { appNetworkError } from './gh-app.mjs';
 
 export function queueUpdates(snapshot) {
   const plan = planQueue(snapshot.issues);
@@ -36,6 +37,8 @@ function reconcile(initial, current, attempted) {
 
 // Fail closed on unknown, permission, validation and rate-limit errors. No raw diagnostics in errors.
 export function queueRequestError(error) {
+  const network = appNetworkError(error);
+  if (network) return network;
   let errors;
   try { errors = JSON.parse(String(error.stdout ?? '')).errors; } catch { /* Non-JSON transport failure. */ }
   const transient = text => !/\bHTTP (?:400|401|403|404|409|422|429)\b|rate.?limit|forbidden|bad credentials|validation failed/i.test(text) && /\bHTTP (?:500|502|503|504)\b|\b(?:ETIMEDOUT|ECONNRESET|EAI_AGAIN)\b|TLS handshake timeout|context deadline exceeded|couldn't respond to your request in time|request timed out/i.test(text);

@@ -15,6 +15,45 @@ export const APP = Object.freeze({
   repository: 'grasdouble/Jarvis',
 });
 
+export const NETWORK_EXIT_CODE = 75;
+export const NETWORK_RECOVERY = 'JARVIS_GITHUB_NETWORK: GitHub transport failed (possible restricted network, DNS, proxy, TLS or timeout). '
+  + 'Check the current execution context and request approved network access to api.github.com when required, '
+  + 'then run the reviewed helper with --check-network. Do not change identities or rotate keys based on this error. '
+  + 'Do not blindly repeat a write; reconcile remote state before resuming missing authorized effects.';
+const transportCodes = new Set(['EPERM', 'EACCES', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH',
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID']);
+function transportCode(error) {
+  for (let item = error, depth = 0; item && depth < 4; item = item.cause, depth++) {
+    if (transportCodes.has(item.code)) return item.code;
+    if (item.name === 'TimeoutError' || item.name === 'AbortError') return 'ETIMEDOUT';
+  }
+  return null;
+}
+function transportError(error) {
+  const code = transportCode(error);
+  // Never retain/print the original cause, headers, body, URL or credential.
+  return Object.assign(new Error(NETWORK_RECOVERY + (code ? ` Transport code: ${code}.` : '')),
+    {networkFailure: true, exitCode: NETWORK_EXIT_CODE});
+}
+async function githubFetch(url, options) {
+  try { return await fetch(url, options); }
+  catch (error) { throw transportError(error); }
+}
+// Only the reviewed helper's distinct exit and fixed marker trigger recovery.
+export function appNetworkError(error) {
+  if (error.status !== NETWORK_EXIT_CODE || !/(?:^|\n)JARVIS_GITHUB_NETWORK:/.test(String(error.stderr ?? ''))) return null;
+  return Object.assign(new Error(NETWORK_RECOVERY), {networkFailure: true, retryable: false, exitCode: NETWORK_EXIT_CODE});
+}
+async function checkNetwork() {
+  const response = await githubFetch('https://api.github.com/', {method: 'HEAD', redirect: 'error',
+    signal: AbortSignal.timeout(5000), headers: {'User-Agent': APP.slug}});
+  // Even an HTTP denial proves transport reachability, never App authorization.
+  console.log(JSON.stringify({host: 'api.github.com', network: 'reachable', httpStatus: response.status, authenticated: false}));
+  return 0;
+}
+
 export function permissions(write = false) {
   return {
     actions: 'read', checks: 'read', metadata: 'read',
@@ -53,7 +92,7 @@ export async function loadKey(explicitPath = process.env.JARVIS_GITHUB_APP_KEY_F
 }
 
 async function api(resource, token, method = 'GET', body) {
-  const response = await fetch(`https://api.github.com${resource}`, {
+  const response = await githubFetch(`https://api.github.com${resource}`, {
     method, redirect: 'error', signal: AbortSignal.timeout(20000),
     headers: {
       Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
@@ -68,7 +107,12 @@ async function api(resource, token, method = 'GET', body) {
     error.status = response.status;
     throw error;
   }
-  return response.status === 204 ? null : response.json();
+  if (response.status === 204) return null;
+  try { return await response.json(); }
+  catch (error) {
+    if (transportCode(error)) throw transportError(error);
+    throw new Error('GitHub returned an invalid JSON response.');
+  }
 }
 
 export function assertGrant(grant, expected) {
@@ -101,10 +145,11 @@ export function parseArguments(input) {
   const args = [...input];
   const write = args[0] === '--write';
   if (write) args.shift();
+  if (!write && args.length === 1 && args[0] === '--check-network') return {write: false, mode: 'network'};
   if (args.length === 1 && args[0] === '--verify') return {write, mode: 'verify'};
   if (args.length === 1 && args[0] === '--git-push' && write) return {write, mode: 'push'};
   if (args.shift() !== '--' || !['api', 'issue', 'label', 'pr', 'project', 'repo', 'run', 'workflow'].includes(args[0])) {
-    throw new Error('Usage: node scripts/github/gh-app.mjs [--write] -- <gh arguments>; --verify; or --write --git-push. Authentication/config/extension commands are not exposed.');
+    throw new Error('Usage: node scripts/github/gh-app.mjs [--write] -- <gh arguments>; --verify; or --write --git-push; --check-network. Authentication/config/extension commands are not exposed.');
   }
   return {write, mode: 'gh', args};
 }
@@ -116,6 +161,7 @@ function git(args, options = {}) {
 }
 
 async function run(options) {
+  if (options.mode === 'network') return checkNetwork();
   const signed = jwt(await loadKey());
   const identity = await api('/app', signed);
   if (identity.id !== APP.id || identity.slug !== APP.slug) throw new Error('Private key belongs to another GitHub App.');
@@ -170,5 +216,5 @@ async function run(options) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try { process.exitCode = await run(parseArguments(process.argv.slice(2))); }
-  catch (error) { console.error(error.message); process.exitCode = 1; }
+  catch (error) { console.error(error.message); process.exitCode = error.networkFailure ? NETWORK_EXIT_CODE : 1; }
 }
