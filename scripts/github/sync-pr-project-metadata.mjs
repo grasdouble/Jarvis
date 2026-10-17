@@ -9,6 +9,7 @@ import { createMetadataApi } from './pr-project-metadata-api.mjs';
 import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
 import { CONFIG } from './pr-project-metadata.mjs';
 import { createRoadmapApi, synchronizeDates } from './roadmap-dates-sync.mjs';
+import { appNetworkError, NETWORK_EXIT_CODE } from './gh-app.mjs';
 
 export function parseOptions(args) {
   const options={write:false,ci:false};const seen=new Set();
@@ -34,6 +35,8 @@ export function assertCiContext(env) {
     throw new Error('CI authentication requires the trusted main workflow and an explicit installation token.');
 }
 export function requestError(error) {
+  const network = appNetworkError(error);
+  if (network) return network;
   // Inspect error classification internally; never emit raw stderr, headers, tokens or response bodies.
   const diagnostic=String(error.stderr??'');
   const retryable=error.code==='ETIMEDOUT'||/HTTP (429|502|503|504)|API rate limit exceeded|resource limit/i.test(diagnostic);
@@ -69,5 +72,5 @@ export async function main(args=process.argv.slice(2),env=process.env) {
   } finally {if(temporary)rmSync(temporary,{recursive:true,force:true});}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href) {
-  try {process.exitCode=await main();}catch(error){console.error(error.message);process.exitCode=1;}
+  try {process.exitCode=await main();}catch(error){console.error(error.message);process.exitCode=error.networkFailure?NETWORK_EXIT_CODE:1;}
 }

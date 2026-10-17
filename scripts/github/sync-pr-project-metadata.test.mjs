@@ -19,3 +19,14 @@ test('roadmap mode scopes issue dates without allowing PR-mode confusion',()=>{
  assert.deepEqual(parseOptions(['--roadmap','--issue','93','--write']),{write:true,ci:false,roadmap:true,number:93});
  for(const args of [['--roadmap','--pr','93'],['--issue','93'],['--roadmap','--issue','93','--pr','92']])assert.throws(()=>parseOptions(args));
 });
+
+
+test('App network failures retain safe recovery guidance without automatic retries', () => {
+  const result = requestError({status:75, stderr:'JARVIS_GITHUB_NETWORK: EAI_AGAIN synthetic-secret'});
+  assert.equal(result.networkFailure, true);
+  assert.equal(result.retryable, false);
+  assert.match(result.message, /JARVIS_GITHUB_NETWORK:/);
+  assert.match(result.message, /--check-network/);
+  assert.ok(!result.message.includes('synthetic-secret'));
+  assert.notEqual(requestError({status:1, stderr:'HTTP 403 JARVIS_GITHUB_NETWORK:'}).networkFailure, true);
+});

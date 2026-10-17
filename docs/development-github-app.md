@@ -94,6 +94,31 @@ node scripts/github/gh-app.mjs --write -- pr create --repo grasdouble/Jarvis \
 
 Reuse an existing PR. The App is its author, leaving human code-owner review possible for sensitive files. Never use the owner's token to manufacture that review or bypass a rule. Merging still requires authorization and current successful checks.
 
+## Network access and recovery
+
+A network grant belongs to the current execution context. A successful command in another chat, agent, terminal or earlier tool call does not prove that this context can reach GitHub. Codex's workspace-write sandbox normally restricts network access; the client/OS and its approved permission mechanisms control that access. Repository scripts cannot grant it. See the [official Codex approval and security guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
+
+Before the first authenticated GitHub command, inspect the current environment's network restrictions. If access is restricted, request the required approved network access using the available tool/permission mechanism. For helper authentication and API operations the destination is `api.github.com`; a later Git push also needs its inspected GitHub HTTPS destination. Do not change global Codex settings, disable sandbox protection, switch to the owner's identity, or assume a grant persists across contexts.
+
+Use the **reviewed** helper's public probe to check transport without reading a PEM, signing a JWT, minting/revoking a token, or running `gh`. Set `task_reviewed_app_helper` to the absolute path of the reviewed `gh-app.mjs` in the trusted checkout (use its current location if contributor scripts have moved):
+
+```bash
+node "$task_reviewed_app_helper" --check-network
+```
+
+The probe makes one credential-free `HEAD https://api.github.com/` request with a five-second timeout and refuses redirects. A received HTTP response produces JSON such as `{"host":"api.github.com","network":"reachable","httpStatus":200,"authenticated":false}` and exit zero. Even HTTP 403 demonstrates HTTP reachability only; it does not establish App authentication, sufficient permissions or a successful write. Run `--verify` or the intended authorized read separately when authentication must be checked. Plain `gh … --help` is offline command discovery; wrapping it in the App helper authenticates first and is unnecessary for help.
+
+Transport failure produces exit **75** and the fixed marker **`JARVIS_GITHUB_NETWORK:`**, with a safe allowlisted cause code when available. The cause can be restricted network, DNS, proxy, TLS, connection failure or timeout; the message does not prove which one. Do not rotate a key based on `fetch failed`. HTTP 401/403 from authenticated API calls remain HTTP errors; invalid JSON remains a response error. Downstream `gh` exit codes retain their meaning. The project synchronizers preserve the helper's network classification without automatically retrying it. Token revocation remains best-effort; a failure to revoke a token never proves that a prior write failed.
+
+On a transport failure:
+
+1. Stop the failed batch. Inspect the current tool's network policy and the sanitized classification. If restricted, request access through its approved mechanism; if already permitted, investigate the reported DNS/proxy/TLS/connection condition without weakening certificate verification or exposing credentials.
+2. Run one probe after the relevant access/environment correction. Do not repeat an unchanged failing command in a loop. If access is denied or remains unavailable, preserve work and report the exact missing capability and resumption condition through the [blocker lifecycle](blocker-lifecycle.md). A denied permission is not authorization to try a different identity or bypass.
+3. Before repeating **any write**, reread remote state through the reviewed helper: the issue/PR and exact SHA, comment inventory, project membership/fields, or published branch as applicable. A lost response can mean the effect already happened. Reuse a confirmed result and execute only missing, still-authorized effects; never replay the whole batch blindly. Preserve existing bounded reconciliation and stop on planning/revision drift or unresolved ambiguity.
+4. Resume the same issue delivery and confirm the saved result. A public probe or restored network alone does not complete delivery or grant merge permission.
+
+When modifying authentication code, continue using a previously reviewed helper for real credentials. Candidate tests use synthetic keys and mocked transport; a candidate's public probe can run with a deliberately nonexistent key path. This procedure adds no runtime isolation or product sandbox capability.
+
 ## Token lifetime and limitations
 
 The helper signs an RS256 JWT in memory, verifies the App identity, and requests an installation token for Jarvis only. The read profile requests read rights and omits Workflows; the write profile requests the approved App rights. Neither requests Administration. The returned grant is checked before use. Token scope is not a policy engine determining which task the human authorized.
