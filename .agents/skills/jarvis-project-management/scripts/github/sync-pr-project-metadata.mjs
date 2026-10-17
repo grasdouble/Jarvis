@@ -23,7 +23,7 @@ export function parseOptions(args) {
       const raw=args[++index];
       if(!/^[1-9]\d*$/.test(raw??'')||!Number.isSafeInteger(Number(raw)))throw new Error('Invalid issue/PR number.');
       options.number=Number(raw);
-    } else throw new Error('Usage: node scripts/github/sync-pr-project-metadata.mjs [--pr NUMBER | --roadmap [--issue NUMBER]] [--write] [--ci]');
+    } else throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs [--pr NUMBER | --roadmap [--issue NUMBER]] [--write] [--ci]');
   }
   if((seen.has('--pr')&&options.roadmap)||(seen.has('--issue')&&!options.roadmap)||(seen.has('--pr')&&seen.has('--issue')))throw new Error('Use --pr for PR metadata or --roadmap with optional --issue.');
   return options;

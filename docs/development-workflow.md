@@ -116,9 +116,9 @@ Run from a reviewed checkout with the configured development App:
 
 ```bash
 # Read-only preview, including unmet prerequisite numbers and Ready candidates.
-node scripts/github/sync-project-queue.mjs
+node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs
 # Authorized project maintenance: write changed ranks and reread them.
-node scripts/github/sync-project-queue.mjs --write
+node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs --write
 ```
 
 The tool reads project 1 and the complete Jarvis issue inventory, paginates outer connections, and fails without writes if nested connections are truncated, dependencies/children are unavailable, a cycle exists, or an open repository issue lacks project membership. It rereads before mutation and verifies the resulting ranks. API writes are not atomic across batches. Writes use sequential batches of at most five field changes, with at least one second between mutative requests. After a recognized transient transport/HTTP 500/502/503/504 or GraphQL timeout, the tool waits, rereads the complete snapshot, and retries only missing intended changes with smaller batches (five, two, then one). It permits at most three recovery rounds, with exponential waits starting at one second; successful responses also require a final reread and use the same bounded recovery budget if ranks are missing. A lost response after complete success needs no further mutation.
