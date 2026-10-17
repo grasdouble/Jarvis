@@ -54,6 +54,7 @@ Wait for every writer to finish or confirm it stopped before reassigning files, 
 ## Command reference
 
 Read [issue delivery commands](references/issue-delivery-cli.md) for issue inspection, branch/worktree preparation, focused commits, PR publication, checks, and conditional merge/cleanup. For dependency or project-status commands, use the linked project-management reference rather than inventing another board workflow. Verify command support and actual PNPM scripts before running them. Examples do not expand the authorized task.
+For every command that yields a session identifier or reports that it is still running, retain and poll that same session through its terminal result before starting a dependent command or claiming success. If the orchestration call itself yields a running cell identifier, wait for that cell too; see the [command completion rule](../../../docs/development-workflow.md#wait-for-command-completion).
 
 ## Prepare a focused change
 
