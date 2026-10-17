@@ -36,6 +36,7 @@ export async function synchronizeMetadata({load,apply,write=false,pause=ms=>new 
       // A failed response can still mean the mutation was committed by GitHub.
       update=await current();
       if (failure) {
+        if (failure.networkFailure) throw failure;
         if (failure.retryable!==true) throw new Error(`Metadata write failed for PR #${original.number}.`);
         if (++failures>=3) throw new Error('Retry limit exhausted; inspect confirmed partial progress.');
         if (update) await pause(250*failures);

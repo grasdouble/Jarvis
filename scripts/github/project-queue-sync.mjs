@@ -74,6 +74,7 @@ export async function synchronizeQueue({ load, writeBatch, write = false, wait =
       // An ambiguous response can hide partial or complete success. Never replay the batch blindly.
       if (failure?.retryable) await wait(1000 * 2 ** recoveries);
       const remaining = reconcile(initial,await load(),attempted);
+      if (failure?.networkFailure) throw failure;
       if (failure && !failure.retryable)
         throw new Error('Non-retryable queue write failure; state reread, partial progress retained. Inspect before retrying.');
       if (!remaining.changes.length)

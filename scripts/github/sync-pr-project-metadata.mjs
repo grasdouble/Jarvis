@@ -9,7 +9,7 @@ import { createMetadataApi } from './pr-project-metadata-api.mjs';
 import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
 import { CONFIG } from './pr-project-metadata.mjs';
 import { createRoadmapApi, synchronizeDates } from './roadmap-dates-sync.mjs';
-import { appNetworkError, NETWORK_EXIT_CODE, NETWORK_RECOVERY } from './gh-app.mjs';
+import { appNetworkError, NETWORK_EXIT_CODE } from './gh-app.mjs';
 
 export function parseOptions(args) {
   const options={write:false,ci:false};const seen=new Set();
@@ -48,7 +48,6 @@ export async function main(args=process.argv.slice(2),env=process.env) {
   else if(env.GITHUB_ACTIONS==='true')throw new Error('Use --ci in Actions; local Mac credentials are not a CI fallback.');
   const temporary=options.ci?mkdtempSync(path.join(tmpdir(),'jarvis-project-sync-')):null;
   const helper=fileURLToPath(new URL('./gh-app.mjs',import.meta.url));
-  let networkFailure = false;
   try {
     const childEnv={...env};
     for(const name of Object.keys(childEnv))if(name.startsWith('GIT_CONFIG_')||
@@ -62,20 +61,14 @@ export async function main(args=process.argv.slice(2),env=process.env) {
           [helper,...(request.write?['--write']:[]),'--',...ghArgs],
           {input:JSON.stringify(request.body),encoding:'utf8',stdio:['pipe','pipe','pipe'],env:childEnv,timeout:45000,maxBuffer:16*1024*1024});
         return JSON.parse(output);
-      } catch(error){
-        const normalized=requestError(error);
-        if(normalized.networkFailure)networkFailure=true;
-        throw normalized;
-      }
+      } catch(error){throw requestError(error);}
     };
     const adapter=options.roadmap?createRoadmapApi({api}):createMetadataApi({api});
     const load=number=>adapter.load(options.number??number);
     const synchronize=options.roadmap?synchronizeDates:synchronizeMetadata;
     const result=await synchronize({load,apply:adapter.apply,write:options.write});
     console.log(JSON.stringify(result,null,2));
-    const failed=result.diagnostics.some(d=>d.severity==='error');
-    if(failed&&networkFailure){console.error(NETWORK_RECOVERY);return NETWORK_EXIT_CODE;}
-    return failed?1:0;
+    return result.diagnostics.some(d=>d.severity==='error')?1:0;
   } finally {if(temporary)rmSync(temporary,{recursive:true,force:true});}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href) {
