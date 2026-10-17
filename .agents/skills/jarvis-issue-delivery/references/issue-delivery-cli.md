@@ -4,7 +4,7 @@ These recipes support the authorized issue workflow, not a batch to run automati
 
 ## App authentication for these recipes
 
-Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
 
 ## Inspect the issue and existing work
 
@@ -115,8 +115,8 @@ If an existing draft becomes ready, use `gh pr ready` only after verification. A
 Follow the [metadata contract](../../../../docs/pr-project-metadata.md) using a reviewed checkout. Replace NUMBER with the actual selected PR number. The command uses the App helper itself; do not prepend `gh` or pass owner credentials.
 
 ```bash
-node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
-node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
 ```
 
 Verify the native implementation issue and its milestone first. Inspect diagnostics and the saved Issue column/native PR milestone. No guessed links, automatic status update or CI credential activation is included. If publication is part of reviewing this tool's own implementation, inspect and independently review the exact source before using it with real credentials.
@@ -166,8 +166,8 @@ References: [linked issue branches/worktrees](https://cli.github.com/manual/gh_i
 Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
 
 ```bash
-node scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
-node scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
 ```
 
 Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.

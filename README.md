@@ -48,8 +48,8 @@ Every issue must have an appropriate native GitHub milestone, including coordina
 For routine issue delivery and backlog management, use the [dedicated development App](docs/development-github-app.md). Its helper defaults to read-only tokens and supports explicit authorized writes and App-authenticated branch pushes. Keep its PEM in `$HOME/Library/Application Support/Jarvis Development/credentials` with directory/file permissions `700`/`600`.
 
 ```bash
-node scripts/github/gh-app.mjs --verify
-node scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --verify
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
 ```
 
 The OAuth setup below is for the human owner's personal CLI and authorized administration; it is separate from the development App identity.

@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: '24'
       - name: Test contributor GitHub tooling without real credentials
-        run: node --test scripts/github/*.test.mjs
+        run: node --test .agents/skills/jarvis-project-management/scripts/github/*.test.mjs
 
   pr-title:
     name: Conventional PR title

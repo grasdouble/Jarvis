@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { synchronizeQueue, queueRequestError } from './project-queue-sync.mjs';
 
 const args = process.argv.slice(2);
-if (args.some(x => x !== '--write')) throw new Error('Usage: node scripts/github/sync-project-queue.mjs [--write]');
+if (args.some(x => x !== '--write')) throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs [--write]');
 const write = args.includes('--write');
 const helper = fileURLToPath(new URL('./gh-app.mjs', import.meta.url));
 function gh(values, mutate = false) {
