@@ -26,7 +26,8 @@ Before reviewer execution, join/stop all authors and capture exact target base B
 
 Each author/reviewer uses its own declared output directories, virtualenv/build/cache/test data and run identifier. Serialize shared databases, ports, caches and other test resources; separate files alone do not establish independent execution. A validation copy is disposable test storage, not a second implementation branch/PR or a security boundary. Prepare it through the coordinator's existing authorized tools; the reviewer does not create/switch the delivery worktree or stage changes.
 
-Use actual existing repository commands discovered from reviewed scripts/manifests; do not invent PNPM/build/Changesets commands before their scaffold exists. For this documentation-stage repository, see [local Python checks](../../../../docs/development-workflow.md#run-repository-checks-locally). Node contributor tests are available from their owning skill bundles when relevant. The PR-review workspace helper tests run with python3 .agents/skills/jarvis-pr-review/scripts/test_prepare_validation_workspace.py. Treat these as examples to inspect, not an allowlist for automatically executing future altered files.
+Use actual existing repository commands discovered from reviewed scripts/manifests; do not invent PNPM/build/Changesets commands before their scaffold exists. For this documentation-stage repository, see [local Python checks](../../../../docs/development-workflow.md#run-repository-checks-locally). Node contributor tests are available from their owning skill bundles when relevant. Treat these as examples to inspect, not an allowlist for automatically executing future altered files.
+The PR-review workspace helper tests run with python3 .agents/skills/jarvis-pr-review/scripts/test_prepare_validation_workspace.py.
 
 ## Execute, observe and stop
 
