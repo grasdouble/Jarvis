@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createMetadataApi } from './pr-project-metadata-api.mjs';
 import { CONFIG } from './pr-project-metadata.mjs';
 const page=(nodes,next=false,cursor=null)=>({nodes,pageInfo:{hasNextPage:next,endCursor:cursor}});
-const pr=()=>({id:'PR_test',number:92,repository:{nameWithOwner:CONFIG.repository},milestone:null,labels:page([]),closingIssuesReferences:page([{number:91,url:`https://github.com/${CONFIG.repository}/issues/91`,repository:{nameWithOwner:CONFIG.repository},milestone:{id:'M_test',number:1,title:'J0'}}])});
+const pr=()=>({id:'PR_test',number:92,repository:{nameWithOwner:CONFIG.repository},milestone:null,labels:page([]),closingIssuesReferences:page([{number:91,url:`https://github.com/${CONFIG.repository}/issues/91`,repository:{nameWithOwner:CONFIG.repository},milestone:{id:'M_test',number:1,title:'J00'}}])});
 function harness({repeatedCursor=false,wrongField=false}={}) {
   const requests=[];
   const api=async request=>{
@@ -63,7 +63,7 @@ test('adapter and synchronizer converge through only membership, milestone and I
   const adapter=createMetadataApi({api:async request=>{
     if(request.method==='PATCH'){
       mutations.push(request);assert.deepEqual(Object.keys(request.body),['milestone']);
-      m={id:'M_test',number:request.body.milestone,title:'J0'};return {};
+      m={id:'M_test',number:request.body.milestone,title:'J00'};return {};
     }
     const {query,variables:v}=request.body;
     if(query.includes('query ProjectFields'))return {data:{organization:{projectV2:{id:CONFIG.projectId,fields:page([{id:CONFIG.fieldId,name:'Issue',dataType:'TEXT'}])}}}};

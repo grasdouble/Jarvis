@@ -1,6 +1,6 @@
 # Task duration forecasting
 
-**Status: post-MVP design, not implemented or calibrated.** [JV-083](https://github.com/grasdouble/Jarvis/issues/83) specifies P15; undated J10 parent [JV-084](https://github.com/grasdouble/Jarvis/issues/84) coordinates measurements (JV-085), estimates/API (JV-086), presentation (JV-087) and validation/operations (JV-088). The MVP already plans request timestamps and operational durations; this elaboration adds no new MVP exit criterion. J10 follows verified JV-025 but has no automatic dependency on J6/J8/J9 solely by phase number.
+**Status: post-MVP design, not implemented or calibrated.** [JV-083](https://github.com/grasdouble/Jarvis/issues/83) specifies P15; undated J10 parent [JV-084](https://github.com/grasdouble/Jarvis/issues/84) coordinates measurements (JV-085), estimates/API (JV-086), presentation (JV-087) and validation/operations (JV-088). The MVP already plans request timestamps and operational durations; this elaboration adds no new MVP exit criterion. J10 follows verified JV-025 but has no automatic dependency on J06/J08/J09 solely by phase number.
 
 ## Position in the workflow
 
@@ -12,7 +12,7 @@ Authorized request -> classify/prepare -> advisory preflight estimate
 
 The trusted core may refine an estimate after a normal authorized plan becomes available, without running an extra model call solely to predict duration. No forecast is required to admit a task: cold starts/unavailable estimates leave current policy, quotas, deadlines and queue order unchanged. Existing task planning/model calls remain accounted for normally. The estimator is a bounded statistical component using existing llm/domain/contracts/persistence/observability modules, not another service, agent loop or training job.
 
-Show preflight, current state/elapsed time and completion comparison in the task and queue views. Future J8/J9 responses may reuse the same scoped service once those capabilities exist, without making messaging a prerequisite. An estimate is a range for a defined outcome, not a promise or a measured percentage complete. Never silently select a model, reduce effort, reorder tasks, extend a timeout/budget or substitute an approval because a configuration looks faster. Alternative comparisons include only already admitted profiles, clearly distinct from the selected execution configuration and its measured quality.
+Show preflight, current state/elapsed time and completion comparison in the task and queue views. Future J08/J09 responses may reuse the same scoped service once those capabilities exist, without making messaging a prerequisite. An estimate is a range for a defined outcome, not a promise or a measured percentage complete. Never silently select a model, reduce effort, reorder tasks, extend a timeout/budget or substitute an approval because a configuration looks faster. Alternative comparisons include only already admitted profiles, clearly distinct from the selected execution configuration and its measured quality.
 
 ## Measurement and attribution
 

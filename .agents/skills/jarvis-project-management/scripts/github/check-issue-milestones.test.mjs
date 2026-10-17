@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { findIssuesWithoutMilestones } from './check-issue-milestones.mjs';
 
-const milestone = (extra = {}) => ({ number: 7, state: 'open', title: 'J6 — Improvements', ...extra });
+const milestone = (extra = {}) => ({ number: 7, state: 'open', title: 'J06 — Improvements', ...extra });
 const issue = (number, extra = {}) => ({ number, state: 'open', milestone: milestone(), ...extra });
 const cli = fileURLToPath(new URL('./check-issue-milestones.mjs', import.meta.url));
 const runCli = (text, args) => {
@@ -62,7 +62,7 @@ test('invalid or duplicate pages and issue identities fail closed', () => {
 });
 
 test('malformed native milestone and PR metadata fail closed', () => {
-  for (const value of [false, 7, [], {}, 'J6', { title: 'J6' },
+  for (const value of [false, 7, [], {}, 'J06', { title: 'J06' },
     milestone({ number: '7' }), milestone({ number: 0 }),
     milestone({ state: 'OPEN' }), milestone({ title: null }),
   ]) assert.throws(() => findIssuesWithoutMilestones([[issue(1, { milestone: value })]]), /Invalid issue inventory/);
