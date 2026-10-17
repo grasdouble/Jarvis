@@ -81,7 +81,7 @@ Exit 0 means every supplied issue has a milestone, 1 lists omissions, and 2 mean
 
 ## Milestones and native dependencies
 
-Milestones use REST. Find an existing milestone by its current title and number before creating one. Update only supplied fields; leave dates unset unless agreed.
+Milestones use REST. Apply [selection and creation rules](../../../../docs/development-workflow.md#milestone-selection-and-creation) before these commands. Inspect open and closed milestones by title, identity, scope and exit gate. Reuse a suitable open outcome; a new authorized outcome needs an English title and a description containing scope, measurable exit gate and non-overlap rationale. Use `Jn` for accepted product phases and bounded `DEV` outcomes for contributor work; neither J0 nor DEV is a fallback. Update only supplied fields; leave dates unset unless agreed. Reread after creation/assignment, synchronize linked PR metadata and refresh the queue.
 
 ```bash
 gh api --method POST "repos/$task_repo/milestones" \
