@@ -47,6 +47,8 @@ Use at most two simultaneous implementation workers, fewer when tool capacity, d
 
 Keep the coordinator context compact with short task briefs/results and recoverable evidence/ledger files outside tracked source. Do not forward the entire parent conversation or bulk logs by default. Preserve decisions, revisions, task claims, actual tests and limitations so a continuation can recover state without trusting summaries blindly. Delegation shifts context rather than eliminating it and may increase aggregate token use.
 
+Authors use their own validation tools and return actual check evidence before handoff; the coordinator inspects the patch and performs integration checks. The independent reviewer then selects and directly runs its own permitted checks under the [direct validation contract](../jarvis-pr-review/references/direct-validation.md), returning its verdict/evidence to the coordinator. The coordinator owns correction routing, GitHub writes and delivery.
+
 Wait for every writer to finish or confirm it stopped before reassigning files, integrating or taking the review snapshot. Inspect the complete final diff and verify combined acceptance; a worker's success summary is not proof. The final fresh reviewer must have authored none of the candidate, including delegated fixes. If review requests changes, assign a bounded correction, join writers, rerun relevant checks and obtain a new independent review of the integrated revision within the existing review budget.
 
 ## Command reference
@@ -85,7 +87,7 @@ Review the final diff for scope, accidental secrets, generated clutter, and docu
 
 ## Obtain independent review and correct findings
 
-Apply the [contributor review loop](../../../docs/autonomous-delivery.md#contributor-review-loop). Delegate to a fresh reviewer agent using [jarvis-pr-review](../jarvis-pr-review/SKILL.md), with exact base/head commits, complete diff, trusted base policy and issue acceptance. Do not pass author reasoning as reviewer authority or substitute self-review. Check the direct result's provenance, coverage and revisions; publish a clearly identified agent review comment through the App within publication scope, not a native self-approval.
+Apply the [contributor review loop](../../../docs/autonomous-delivery.md#contributor-review-loop). Delegate to a fresh reviewer agent using [jarvis-pr-review](../jarvis-pr-review/SKILL.md), with exact base/head commits, complete diff, trusted base policy and issue acceptance. Do not pass author reasoning as reviewer authority or substitute self-review. Supply a separate validation workspace and available execution scope when checks need outputs, so the reviewer can execute them directly rather than ask the author to report success. Identify current tool limits and do not claim sandbox isolation from a worktree or subagent. Check the direct result's provenance, coverage and revisions; publish a clearly identified agent review comment through the App within publication scope, not a native self-approval.
 
 Fix justified blocking findings in the same branch/worktree/PR, run required checks, and obtain a new independent review of the complete updated revision and previous findings. Preserve round/revision/finding evidence in a recoverable task ledger. The default is three review rounds and 60 minutes for the loop; new turns do not reset it. Missing delegation, limited evidence, exhausted limits or unresolved ambiguity requires an explicit handoff and the applicable blocker transition. Routine owner-review waiting stays In Review.
 

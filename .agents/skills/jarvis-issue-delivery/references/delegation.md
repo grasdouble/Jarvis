@@ -59,6 +59,8 @@ Use a fresh worker context without full parent history or huge logs. Include:
 - Expected behavior tests, available commands and required actual RED/GREEN
   evidence. Apply the documented exceptions for documentation/configuration or
   behavior-preserving refactors; environment failures do not establish RED.
+- Author tools: run appropriate tests/lint/types/build within the job's authorized
+  environment before returning; no GitHub credentials or external side effects.
 - Output contract: changed files, concise result, actual test commands/outcomes,
   limitations, unresolved acceptance and durable evidence paths outside source.
 - Stopping/escalation conditions: overlap, unexpected concurrent edits, missing
@@ -81,7 +83,11 @@ continue modifying the candidate. The coordinator then prepares exact integrated
 commits and delegates to a fresh independent reviewer who authored none of the
 candidate, using [jarvis-pr-review](../../jarvis-pr-review/SKILL.md) and the
 [shared review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop).
-Supply exact base/head revisions and complete scope/evidence; a later change
+Supply exact base/head revisions, complete scope/evidence and a separate validation
+workspace/execution scope under the [direct validation contract](../../jarvis-pr-review/references/direct-validation.md).
+The reviewer executes its own permitted checks and returns its verdict to the
+coordinator, which assigns fixes to the author and owns integration/delivery.
+Another validation LLM is not required. A later change
 requires final checks and a new revision-bound review under that procedure.
 
 Implementation delegation being unavailable permits sequential coordinator
