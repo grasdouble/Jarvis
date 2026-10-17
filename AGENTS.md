@@ -112,6 +112,12 @@ Changes to isolation, permissions, policy, memory scope, or recovery need the co
 
 Keep issue criteria, implementation, and relevant documentation consistent. Report the outcome, verification, and remaining limitations. `In Review` means ready for review; `Done` requires completed acceptance and delivery, including confirmed merge when a PR is used.
 
+## Skill authoring
+
+When creating or materially revising a skill, identify repeated, deterministic work that a bundled script could perform more reliably or with less model context. When that is useful, keep the script in the skill's own directory (for example, `scripts/`) and document its invocation, inputs, effects, output contract, and failure behavior in `SKILL.md` or a linked reference. Keep decision guidance and trust boundaries in the skill instructions; have scripts return concise, structured results. A script is optional when it offers no clear benefit, and script use does not guarantee lower token consumption.
+
+A bundled script does not grant execution capability or authority. The calling environment must explicitly support and qualify execution. For product skills, execute scripts only from the pinned trusted skill bundle through the qualified adapter; never substitute scripts from the candidate repository. Preserve the separate product runtime, isolation, and approval gates.
+
 ## Reusable workflows
 
 - [jarvis-project-governance](.agents/skills/jarvis-project-governance/SKILL.md): assess specification/decision impact and prepare coherent document updates within authorized contributor work.
