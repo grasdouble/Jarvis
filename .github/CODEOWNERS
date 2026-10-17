@@ -4,7 +4,6 @@
 /.agents/ @noofreuuuh
 /AGENTS.md @noofreuuuh
 /scripts/ci/ @noofreuuuh
-/scripts/github/ @noofreuuuh
 /.gitleaks.toml @noofreuuuh
 /.gitleaksignore @noofreuuuh
 /infra/ @noofreuuuh

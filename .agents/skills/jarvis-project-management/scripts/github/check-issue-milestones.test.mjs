@@ -98,7 +98,7 @@ test('CLI rejects invalid JSON, shape, unreadable files and argument errors safe
     const result = runCli(text, args);
     assert.equal(result.status, 2);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /^(Invalid issue inventory\.|Usage: node scripts\/github\/check-issue-milestones\.mjs <inventory\.json>)\n$/);
+    assert.match(result.stderr, /^(Invalid issue inventory\.|Usage: node \.agents\/skills\/jarvis-project-management\/scripts\/github\/check-issue-milestones\.mjs <inventory\.json>)\n$/);
     assert.doesNotMatch(result.stderr, /::error|injected|missing-file/);
   }
 });

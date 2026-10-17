@@ -25,10 +25,10 @@ def validate(data):
         'permission-organization-projects': 'write', 'permission-pull-requests': 'write',
         'permission-issues': 'read', 'permission-metadata': 'read',
     }
-    assert reconcile['run'] == 'node scripts/github/sync-pr-project-metadata.mjs --ci --write'
+    assert reconcile['run'] == 'node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --ci --write'
     assert reconcile['env'] == {'GH_TOKEN': '${{ steps.app.outputs.token }}'}
     assert identity['id'] == 'identity'
-    assert roadmap['run'] == 'node scripts/github/sync-pr-project-metadata.mjs --roadmap --ci --write'
+    assert roadmap['run'] == 'node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --ci --write'
     assert roadmap['env'] == {'GH_TOKEN': '${{ steps.app.outputs.token }}'}
     assert roadmap['if'] == "${{ !cancelled() && steps.app.outcome == 'success' && steps.identity.outcome == 'success' }}"
     assert not any('cache' in step.get('with', {}) for step in steps)

@@ -48,7 +48,7 @@ Never paste the local key into chat, issues, PRs, tracked environment files, or 
 
 ```bash
 JARVIS_GITHUB_APP_KEY_FILE="/absolute/private/path/to/key.pem" \
-  node scripts/github/gh-app.mjs --verify
+  node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --verify
 ```
 
 The explicit file still needs a private parent directory and owner-only file permissions. Missing or ambiguous credentials fail; they do not fall back to the owner's login.
@@ -60,27 +60,27 @@ The helper requires Node.js 24 or newer, Git, and GitHub CLI; it uses only Node 
 Verify the App, Jarvis-only access, and a refused repository Administration read:
 
 ```bash
-node scripts/github/gh-app.mjs --verify
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --verify
 ```
 
 Read-only tokens are the default. Pass ordinary `gh` arguments after `--`:
 
 ```bash
-node scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
-node scripts/github/gh-app.mjs -- project view 1 --owner grasdouble
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs -- project view 1 --owner grasdouble
 ```
 
 Use `--write` only for user-authorized mutations. These variables must describe the selected issue and an already prepared English artifact:
 
 ```bash
-node scripts/github/gh-app.mjs --write -- issue edit "$task_issue_number" \
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write -- issue edit "$task_issue_number" \
   --repo grasdouble/Jarvis --body-file "$task_issue_body_file"
 ```
 
 An ordinary SSH `git push` can still use the owner's personal identity. Publish the **current issue branch** through the App's HTTPS token instead:
 
 ```bash
-node scripts/github/gh-app.mjs --write --git-push
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write --git-push
 ```
 
 This rejects detached/default-branch pushes, adds no force flags, resets credential helpers, isolates global credential lookup, and refuses a local configuration that rewrites the HTTPS destination. It preserves origin, branch tracking, global configuration, and the owner's `gh` login. Commit authorship stays as configured locally; the authenticated push actor is the App.
@@ -88,7 +88,7 @@ This rejects detached/default-branch pushes, adds no force flags, resets credent
 After publishing, create a PR with explicit base/head to avoid an implicit personal Git push or fork:
 
 ```bash
-node scripts/github/gh-app.mjs --write -- pr create --repo grasdouble/Jarvis \
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write -- pr create --repo grasdouble/Jarvis \
   --base main --head "$task_branch" --title "$task_pr_title" --body-file "$task_pr_body_file"
 ```
 
@@ -135,6 +135,6 @@ Generate a new key as owner, place it with mode `600`, select it with `JARVIS_GI
 
 For missing/ambiguous keys, inspect file count without printing contents. For permission errors, check ownership and modes. For HTTP 401, check the App/key identity and the Mac clock. For HTTP 403/404, check token profile, installation selection, App suspension, and API permissions. Projects requires the explicit organization owner; the installation is not a human `/user` identity. Repository Administration is intentionally denied. Only use the owner's ordinary login for an explicitly authorized administrative task.
 
-Run offline checks with `node --test scripts/github/gh-app.test.mjs`. Fixtures use synthetic keys/data; repository CI never receives the real development key.
+Run offline checks with `node --test .agents/skills/jarvis-project-management/scripts/github/gh-app.test.mjs`. Fixtures use synthetic keys/data; repository CI never receives the real development key.
 
 References: [JWT claims](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app), [installation-token scope and expiry](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app), and [CLI environment](https://cli.github.com/manual/gh_help_environment).

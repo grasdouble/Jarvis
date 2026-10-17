@@ -41,4 +41,4 @@ jobs:
             'repos/grasdouble/Jarvis/issues?state=all&per_page=100' \
             > "${RUNNER_TEMP}/issue-inventory.json"
       - name: Audit native milestones
-        run: node scripts/github/check-issue-milestones.mjs "${RUNNER_TEMP}/issue-inventory.json"
+        run: node .agents/skills/jarvis-project-management/scripts/github/check-issue-milestones.mjs "${RUNNER_TEMP}/issue-inventory.json"
