@@ -100,10 +100,10 @@ A network grant belongs to the current execution context. A successful command i
 
 Before the first authenticated GitHub command, inspect the current environment's network restrictions. If access is restricted, request the required approved network access using the available tool/permission mechanism. For helper authentication and API operations the destination is `api.github.com`; a later Git push also needs its inspected GitHub HTTPS destination. Do not change global Codex settings, disable sandbox protection, switch to the owner's identity, or assume a grant persists across contexts.
 
-Use the **reviewed** helper's public probe to check transport without reading a PEM, signing a JWT, minting/revoking a token, or running `gh`:
+Use the **reviewed** helper's public probe to check transport without reading a PEM, signing a JWT, minting/revoking a token, or running `gh`. Set `task_reviewed_app_helper` to the absolute path of the reviewed `gh-app.mjs` in the trusted checkout (use its current location if contributor scripts have moved):
 
 ```bash
-node scripts/github/gh-app.mjs --check-network
+node "$task_reviewed_app_helper" --check-network
 ```
 
 The probe makes one credential-free `HEAD https://api.github.com/` request with a five-second timeout and refuses redirects. A received HTTP response produces JSON such as `{"host":"api.github.com","network":"reachable","httpStatus":200,"authenticated":false}` and exit zero. Even HTTP 403 demonstrates HTTP reachability only; it does not establish App authentication, sufficient permissions or a successful write. Run `--verify` or the intended authorized read separately when authentication must be checked. Plain `gh … --help` is offline command discovery; wrapping it in the App helper authenticates first and is unnecessary for help.

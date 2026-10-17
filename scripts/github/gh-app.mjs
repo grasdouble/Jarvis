@@ -149,7 +149,7 @@ export function parseArguments(input) {
   if (args.length === 1 && args[0] === '--verify') return {write, mode: 'verify'};
   if (args.length === 1 && args[0] === '--git-push' && write) return {write, mode: 'push'};
   if (args.shift() !== '--' || !['api', 'issue', 'label', 'pr', 'project', 'repo', 'run', 'workflow'].includes(args[0])) {
-    throw new Error('Usage: node scripts/github/gh-app.mjs [--write] -- <gh arguments>; --verify; or --write --git-push; --check-network. Authentication/config/extension commands are not exposed.');
+    throw new Error('Usage: node scripts/github/gh-app.mjs [--write] -- <gh arguments>; --verify; or --write --git-push. Authentication/config/extension commands are not exposed.');
   }
   return {write, mode: 'gh', args};
 }
