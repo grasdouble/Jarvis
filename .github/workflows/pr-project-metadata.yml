@@ -1,0 +1,61 @@
+name: PR project metadata
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, ready_for_review, closed, labeled, unlabeled]
+  issues:
+    types: [opened, edited, reopened, closed, milestoned, demilestoned]
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-pr-project-metadata
+  cancel-in-progress: false
+
+jobs:
+  synchronize:
+    if: >-
+      github.repository == 'grasdouble/Jarvis' &&
+      github.ref == 'refs/heads/main' &&
+      vars.JARVIS_PROJECT_SYNC_ENABLED == 'true'
+    environment: jarvis-project-sync
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Only reviewed main source runs with credentials. Never use PR refs, caches or artifacts.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: grasdouble/Jarvis
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Create a narrowly scoped installation token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: Iv23lizUGCTbekJqlXGm
+          private-key: ${{ secrets.PROJECT_SYNC_APP_PRIVATE_KEY }}
+          owner: grasdouble
+          repositories: Jarvis
+          permission-organization-projects: write
+          permission-pull-requests: write
+          permission-issues: read
+          permission-metadata: read
+      - name: Verify the installation identity
+        env:
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
+        run: |
+          test "$APP_SLUG" = 'jarvis-development-grasdouble'
+          test "$INSTALLATION_ID" = '171906128'
+      - name: Reconcile derived metadata
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: node scripts/github/sync-pr-project-metadata.mjs --ci --write

@@ -72,6 +72,10 @@ Inspect current project workflows before changing statuses: an automatic workflo
 
 Maintain Delivery as an issues-only status board (`is:issue`), Backlog as a milestone-grouped table, and Roadmap as a milestone-grouped timeline. Preserve the separate Pull requests table (`is:pr`) and the linked PR badges on issue cards; filtering a view does not remove PRs from the project. Leave dates unset unless supported by an agreed schedule. Prefer labels over duplicated priority/area fields. Preserve project visibility, access, and unrelated items. Auto-add rules must remain scoped to the intended repository.
 
+## Synchronize visible PR metadata
+
+Use the [PR metadata contract](../../../docs/pr-project-metadata.md) during authorized PR publication or issue-link/milestone maintenance. Preview `node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER`, then apply `--write` for the selected PR; project-wide catch-up needs corresponding project-maintenance scope. Use reviewed tooling and the development App, never owner-token fallback. Verify the native implementation relationship and source milestone first. Resolve multiple/foreign links or missing milestones rather than guessing a primary issue. The reserved Issue field and PR milestone are derived from that source; statuses, labels and links remain separate. Preserve the PR-only self-update exception. The workflow is opt-in and requires its documented environment/credential activation; do not claim background synchronization before it is qualified.
+
 ## Verify and report
 
 Reread created or updated issues, metadata, native dependencies, project membership, and changed field values. Count only confirmed results. Report links, substantive changes, and any incomplete operation; do not claim the board is synchronized based solely on a successful issue creation.

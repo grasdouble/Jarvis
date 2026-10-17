@@ -110,6 +110,17 @@ gh pr checks "$task_pr_number" --repo "$task_repo"
 
 If an existing draft becomes ready, use `gh pr ready` only after verification. Attach the created PR through the Codex artifact tool when available. Use the project-management reference to verify project membership for the issue/PR and move appropriate items to `In Review`; opening a PR does not satisfy `Done`.
 
+## Synchronize the published PR metadata
+
+Follow the [metadata contract](../../../../docs/pr-project-metadata.md) using a reviewed checkout. Replace NUMBER with the actual selected PR number. The command uses the App helper itself; do not prepend `gh` or pass owner credentials.
+
+```bash
+node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+```
+
+Verify the native implementation issue and its milestone first. Inspect diagnostics and the saved Issue column/native PR milestone. No guessed links, automatic status update or CI credential activation is included. If publication is part of reviewing this tool's own implementation, inspect and independently review the exact source before using it with real credentials.
+
 ## Independent review records
 
 Use the [bounded review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop) and a separate reviewer agent. Bind its direct result to exact base/head commits; inspect complete changed paths including previous paths of renames through paginated `GET repos/$task_repo/pulls/$task_pr_number/files` and the Git diff. A truncated response is not sufficient for sensitivity classification. Use trusted base CODEOWNERS/instructions and live protection/review facts, not candidate policy. GitHub caps PR file responses at 3,000 files: reconcile API coverage with actual changed-file count/Git inventory and hand off if completeness cannot be established.

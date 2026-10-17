@@ -34,6 +34,8 @@ If scope grows, split remaining work before growing the PR. Backlog planning may
 
 [Delivery](https://github.com/orgs/grasdouble/projects/1/views/1) shows issues only (`is:issue`), including coordination parents and implementation children. [Pull requests](https://github.com/orgs/grasdouble/projects/1/views/4) shows PR items only (`is:pr`). Keep PR membership and issue links, including linked PR badges. Backlog and Roadmap retain their milestone grouping; dates require an agreed schedule.
 
+The Pull requests table displays native Milestone and a reserved derived **Issue** text column with the implementation issue's JV key and clickable URL. Follow [PR metadata synchronization](pr-project-metadata.md) at publication and after authorized link/milestone changes. Its reviewed command uses native closing-issue relationships, copies the issue milestone and never guesses a source or changes Status. The opt-in main-only workflow provides later reconciliation after secure credential/environment activation; it is separate from the session-driven delivery/review loop and the future runtime.
+
 An actionable implementation child moves through Ready → In Progress → In Review → Done. A coordination parent may remain In Progress across several child PRs and review cycles. Inspect project automations before setting Done; it can close the issue. Done requires verified acceptance and confirmed delivery, including merge when a PR is used.
 
 ## Delegate implementation and preserve context
@@ -44,7 +46,7 @@ This keeps the coordinator's working context smaller without promising unlimited
 
 ## Independent review and autonomous routine delivery
 
-Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended scheduler is installed. Future product runtime delivery is planned separately after v0.1.
+Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended delivery/review scheduler is installed. Future product runtime delivery is planned separately after v0.1.
 
 ## Blocking and resuming work
 
