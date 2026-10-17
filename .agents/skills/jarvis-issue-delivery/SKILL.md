@@ -1,11 +1,15 @@
 ---
 name: jarvis-issue-delivery
-description: Coordinate a selected JARVIS GitHub issue through bounded implementation, optional subagent delegation, integration, independent review and authorized delivery. Use for issue implementation, not backlog-only administration or autonomous maintenance of other repositories.
+description: Deliver human-requested or accepted JARVIS repository changes through issue intake, bounded implementation, optional subagent delegation, independent review and a linked PR. Use even without an issue number, including documentation and contributor skill changes; not for read-only advice, backlog-only administration or runtime maintenance of other repositories.
 ---
 
 # JARVIS issue delivery
 
-## Select a subject when none is specified
+## Route an accepted change without an issue
+
+Follow [change intake](../../../docs/development-workflow.md#route-requests-before-editing) when the human requests or accepts a concrete repository change without selecting an issue. Use [project management](../jarvis-project-management/SKILL.md) to find/reuse or create the bounded issue, verify its native milestone/project metadata and establish ownership before editing. Include small documentation, `AGENTS.md`, working-agreement and skill changes. The request includes the normal focused commit/push/PR workflow unless explicitly restricted; do not wait for the human to supply an issue number or ask for a PR. Read-only advice/audits remain read-only. There is no local-only delivery route; unresolved access or publication limits require an incomplete handoff under the shared procedure.
+
+## Select the next subject when requested
 
 For "the next subject", follow the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue). Refresh [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) using the reviewed contributor tooling and select the first eligible Ready implementation issue. Recheck its discussion, actual prerequisite delivery, assignee/active ownership, linked PRs, and existing branch/worktree before claiming it. An explicit user-selected issue takes precedence but still needs its prerequisites. A numeric rank is a forecast, not proof of readiness or a lock against another agent. Announce the issue and why it is next.
 
@@ -97,9 +101,9 @@ Finish authorized implementation by committing the focused changes, pushing the 
 
 After publication or a native issue/milestone change, follow the [PR metadata contract](../../../docs/pr-project-metadata.md): run the reviewed `node scripts/github/sync-pr-project-metadata.mjs --pr NUMBER` preview, then `--write` within this issue's publication authority, and reread the result. Verify the actual native implementation issue; never infer it from a title/branch or silently choose among multiple links. The command copies its milestone and the visible Issue URL without changing Status or links. Resolve reported ambiguity/missing milestones through project management. Preserve the `self-update` PR-only exception; CI activation is separate from local publication.
 
-Keep a draft PR's issue `In Progress` or `Blocked` as appropriate. Move work to `In Review` only when the deliverable is ready for review. If publication is not authorized or access is missing, leave a concrete local diff and verification summary; state the handoff still required. A local implementation is not a merged delivery.
+Keep a draft PR's issue `In Progress` or `Blocked` as appropriate. Move work to `In Review` only when the deliverable is ready for review. If an explicit human restriction or missing access prevents publication, honor it and report the unmet step, retained progress and exact resumption condition. Diagnose access through approved permission mechanisms. This is an incomplete handoff, never an alternative local-only delivery or permission to skip intake/worktree isolation; if intake itself is unavailable, keep preparation read-only.
 
-Merge only within the human-authorized scope (including adopted routine-merge policy) and when current repository protections/checks and independent-review gates permit it. Hand off sensitive work for owner approval; do not claim to watch it after the session ends. Verify the actual remote merge before recording `Done`; for a deliverable without a PR, confirm its acceptance outcome directly. Inspect project automations so moving an item does not prematurely close its issue. Reconcile ambiguous responses before repeating a write.
+Merge only within the human-authorized scope (including adopted routine-merge policy) and when current repository protections/checks and independent-review gates permit it. Hand off sensitive work for owner approval; do not claim to watch it after the session ends. Verify the actual remote merge and acceptance before recording the implementation issue as `Done`. Inspect project automations so moving an item does not prematurely close its issue. Reconcile ambiguous responses before repeating a write.
 
 Refresh the execution queue after authorized status/dependency/slicing changes and again after confirmed delivery, using the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue). Keep unrelated work and statuses intact.
 

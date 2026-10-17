@@ -2,6 +2,29 @@
 
 This document governs development of JARVIS. It is not an instruction set for the untrusted OpenCode review runtime. Repository changes are maintained in English.
 
+## Route requests before editing
+
+A human request or acceptance of a concrete repository change starts the contributor delivery workflow, even when the human supplies no issue number and does not explicitly say "create a PR". This covers new files intended for version control and edits to code, configuration, documentation, `AGENTS.md` and contributor skills, regardless of size. A follow-up such as "OK, add that" after discussing a change is implementation authorization within that agreed scope; do not ask the human to restate the workflow.
+
+1. Inspect the checkout, existing worktrees/branches/PRs and matching open/closed issues. Use project management to reuse suitable active work or create one bounded English issue with acceptance and verification, the appropriate native milestone, existing labels, stable JV key and project membership. Verify the saved metadata, prerequisite outcomes and ownership before starting; do not reopen delivered work merely to avoid a new issue.
+2. Use issue delivery for governance assessment and sizing, then select/create the issue's dedicated branch in a separate worktree before any repository edits. Preserve unrelated changes in the primary checkout. Continue through focused commits, independent review and a linked PR under current publication and merge gates. Small documentation or working-agreement changes use the same route; they do not need separate issues for each file.
+3. If intake, access, review or publication cannot be completed, diagnose the actual constraint and follow the blocker/handoff procedure. Distinguish network restrictions from authentication failures and use the environment's approved permission mechanisms where available; never silently switch to owner credentials. If no issue can be established, keep preparation read-only and retain the exact resumption condition outside tracked source. Preserve already existing progress in its worktree; do not use a failure to justify edits on the primary checkout.
+
+There is no local-only delivery option. Retained uncommitted or unpublished work is incomplete progress, not a successful substitute for a PR. Explicit human limits (for example, no push or publication) and tool permissions still take precedence: honor them, explain the unmet delivery step, and do not claim completion or bypass the restriction. Routine review waiting remains In Review; an actual access or authorization blocker follows the [blocker lifecycle](blocker-lifecycle.md).
+
+Pure questions, advice and read-only audits remain read-only. Backlog-only administration may maintain GitHub records within its own authorization without starting implementation. Neither path grants permission to edit repository files. Product `self-update` promotions retain their separate [operational intake contract](self-improvement-campaigns.md#operational-tracking-and-proposal-intake); they are not a contributor local-only exception.
+
+| Human request or observed constraint | Required routing |
+| --- | --- |
+| "What do you think of this approach?" | Advice only; no file edits, issue or PR solely for the question |
+| "OK, add that" after a concrete change proposal, without an issue number | Duplicate-aware issue intake with native milestone, then branch/worktree, review and PR |
+| A small `AGENTS.md`, documentation or contributor skill edit | The same issue-to-PR workflow; no working-agreement exemption |
+| GitHub read fails before intake | Diagnose access; if unresolved, read-only preparation and a specific blocked handoff, no primary-checkout edits |
+| Unrelated changes already exist on the primary branch | Preserve them; create the selected issue's isolated worktree and exclude unrelated changes |
+| Human explicitly prohibits publication | Respect the limit; report the incomplete delivery boundary, never publish or label local progress as delivered |
+
+These are contributor routing expectations for review and skill evaluation, not an installed technical enforcement mechanism.
+
 ## Keep specifications and decisions coherent
 
 Use [project governance](project-governance.md) before implementation and again for the final diff. Delivery prepares the compact PR impact record and affected document/ADR updates; project management maintains live planning records; independent review checks the sources, authority and evidence. Routine work within accepted scope remains autonomous under current gates. Preserve actual owner authorization already given, stop only dependent unresolved work, and never change the specification solely to hide a defect. The [ADR index/template](adr/index.md) preserve significant decisions and supersession; current CI does not establish semantic alignment.

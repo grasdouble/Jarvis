@@ -5,7 +5,7 @@ description: Assess a JARVIS development change against accepted requirements an
 
 # JARVIS project governance
 
-Read the [governance procedure](../../../docs/project-governance.md) and the relevant PRD/architecture/decision sections. This is a contributor skill: it grants no implementation, publication, merge or product runtime authority. Use the existing issue/branch/worktree/PR workflow for authorized repository edits; backlog-only metadata updates retain the project-management path. The delivery coordinator owns integration and GitHub writes; a governance assessment does not require another subagent for every change.
+Read the [governance procedure](../../../docs/project-governance.md) and the relevant PRD/architecture/decision sections. This is a contributor skill: it grants no implementation, publication, merge or product runtime authority. Route human-requested or accepted repository edits through [change intake](../../../docs/development-workflow.md#route-requests-before-editing) and issue delivery, including governance documents, working agreements and skills when no issue was supplied. An assessment alone remains read-only; it is not a local-edit alternative. Backlog-only metadata updates retain the project-management path. The delivery coordinator owns integration and GitHub writes; a governance assessment does not require another subagent for every change.
 
 ## Establish the baseline and authority
 

@@ -8,7 +8,7 @@ Use the reviewed [development App helper](../../../../docs/development-github-ap
 
 ## Inspect the issue and existing work
 
-Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-project-management/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.
+When the human has accepted a repository change but supplied no issue, follow [change intake](../../../../docs/development-workflow.md#route-requests-before-editing) and the linked project-management creation/metadata recipes first. An accepted small documentation or skill change is not a local-only exception. Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-project-management/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.
 
 ```bash
 task_repo='grasdouble/Jarvis'

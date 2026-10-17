@@ -2,6 +2,8 @@
 
 This procedure governs development of JARVIS: requirements alignment, coherent document maintenance and technical decision history. It is delivered through [JV-070](https://github.com/grasdouble/Jarvis/issues/70). It is not an installed product capability, automatic semantic compliance service or unattended project manager. Product runtime governance would need its own scope, permissions and qualification. Existing MVP, delivery, self-update and general-assistance gates remain unchanged.
 
+Authorized governance document or skill edits follow [change intake](development-workflow.md#route-requests-before-editing) and issue delivery even without an existing issue. A read-only assessment does not authorize edits; an accepted change does not have a local-only delivery exception. Keep the issue's dedicated worktree and existing review/publication gates.
+
 ## Sources and responsibility
 
 | Source | Purpose and limits |
