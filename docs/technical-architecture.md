@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.11 • October 16, 2026 • Companion to the PRD and roadmap
+Document version 1.12 • October 18, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -8,7 +8,7 @@ JARVIS is a TypeScript and Node.js modular monolith deployed as several Docker p
 
 The proposed profile for the Mac M2 Pro uses a sandbox with `network_mode: none`, no mounted macOS files, no GitHub secret, and no provider key. An LLM gateway dedicated to the attempt is accessible through a Unix socket shared in a Docker volume. A local HTTP relay lets OpenCode use it as a provider endpoint. A trusted controller, the sole holder of the Engine socket, transports session commands through a fixed relay launched by Docker exec. This combination avoids opening an OpenCode server on the Mac or granting a network route to the control plane.
 
-This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J1 prototype must demonstrate feasibility with the selected versions; any failure keeps the product in observation mode. Requirements F01 through F10, N01 through N13, and POL 01 through POL 07 refer to the separate [PRD and roadmap](prd-and-roadmap.md).
+This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J01 prototype must demonstrate feasibility with the selected versions; any failure keeps the product in observation mode. Requirements F01 through F10, N01 through N13, and POL 01 through POL 07 refer to the separate [PRD and roadmap](prd-and-roadmap.md).
 
 ## 2 Architecture decisions
 
@@ -28,7 +28,7 @@ The existing ADR01–ADR11 identities below remain stable. Use [project governan
 | ADR 10 Host runtime | Colima Docker runtime, dedicated `jarvis` profile, native ARM64 | No Docker Desktop dependency; no macOS directory sharing; validate isolation on the pinned platform |
 | ADR 11 Durable memory | Core-owned PostgreSQL history, checkpoints, and scoped knowledge | Bounded context rebuilt per attempt; no persistent agent home or automatic policy learning |
 
-Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image are pinned at J0. The OpenCode runtime retains its own dependencies, with no assumption about its internal JavaScript engine. PNPM uses an explicit workspace and `workspace:` internal dependencies; versions and the lockfile are checked into version control. [T1](https://nodejs.org/en/about/previous-releases), [T2](https://pnpm.io/workspaces)
+Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image are pinned at J00. The OpenCode runtime retains its own dependencies, with no assumption about its internal JavaScript engine. PNPM uses an explicit workspace and `workspace:` internal dependencies; versions and the lockfile are checked into version control. [T1](https://nodejs.org/en/about/previous-releases), [T2](https://pnpm.io/workspaces)
 
 ## 3 Topology and trust boundaries
 
@@ -168,7 +168,7 @@ Application ports bind explicitly to `127.0.0.1`. Verify both the guest bindings
 
 Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before automerge resumes.
 
-Prefer native `linux/arm64` images, including OpenCode and its tools. An initial sizing proposal is 4 VM CPUs, 8 GiB of VM memory if physical RAM permits, one sandbox capped at 2 CPUs and 4 GiB, and at least 40 GiB free for images, the database, logs, and snapshots. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J1 on the actual Mac. These are design targets, not measured results.
+Prefer native `linux/arm64` images, including OpenCode and its tools. An initial sizing proposal is 4 VM CPUs, 8 GiB of VM memory if physical RAM permits, one sandbox capped at 2 CPUs and 4 GiB, and at least 40 GiB free for images, the database, logs, and snapshots. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac. These are design targets, not measured results.
 
 ## 7 Monorepo modules and dependencies
 
@@ -185,9 +185,9 @@ packages/
   policy/              deterministic evaluator and versioned profiles
   github/              Octokit, pagination, provenance, and merge
   runtime/             AgentRuntime and common OpenCode adapter
-  conversation/        proposed J8 owner/session turns and context lifecycle
-  capabilities/        proposed J8 tool registry, broker and provider adapters
-  channels/            proposed J9 identity, notification and messaging adapters
+  conversation/        proposed J08 owner/session turns and context lifecycle
+  capabilities/        proposed J08 tool registry, broker and provider adapters
+  channels/            proposed J09 identity, notification and messaging adapters
   llm/                 profiles, capabilities, estimates, and redaction
   memory/              scoped knowledge lifecycle and bounded context assembly
   persistence/         SQL, migrations, and transactions
@@ -517,7 +517,7 @@ The core enforces owner-configured finite review-round, time, token/currency and
 
 ### 12.9 Proposed self-improvement
 
-Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-052–JV-055 after verified JV-044 delivery. P12/D13 define the J7 gate; the contributor skills and MVP/J6 delivery plans do not implement this capability. Reuse the memory/observability inputs, domain/policy, orchestration, durable queue, qualified runtime/validation ports and GitHub executor in the PNPM modular monolith. The core controls proposal selection, evaluation decisions and remote effects; no new unrestricted planner, model training or live self-edit endpoint is implied.
+Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-052–JV-055 after verified JV-044 delivery. P12/D13 define the J07 gate; the contributor skills and MVP/J06 delivery plans do not implement this capability. Reuse the memory/observability inputs, domain/policy, orchestration, durable queue, qualified runtime/validation ports and GitHub executor in the PNPM modular monolith. The core controls proposal selection, evaluation decisions and remote effects; no new unrestricted planner, model training or live self-edit endpoint is implied.
 
 **Signals and selection.** Ingest only authorized, sanitized operational observations with repository/run/revision/window provenance. Persist deduplicated proposals with hypothesis, expected measurable outcome, risk, uncertainty, source validity and optional canonical promotion PR once real changes exist. Bound ingestion/proposal volume, use cooldowns and retain rejected/deferred dispositions so a recurring metric does not create endless work. Observation text and memory cannot change policy, select an unauthorized repository or promote themselves into validated knowledge. F10 forgetting/retention applies to evidence and derived proposals; unavailable evidence prevents selection/reuse.
 
@@ -525,9 +525,9 @@ Track [JV-051](https://github.com/grasdouble/Jarvis/issues/51) and children JV-0
 
 **Isolated delivery.** Select only a bounded policy-authorized proposal and reuse the qualified author/test/reviewer/publication workflow from section 12.8. Agents receive no GitHub/deployment credentials, protected evaluator write access or writable released core. The independent reviewer authored none of the candidate and examines functional regressions as well as claimed gains. Eligibility binds the complete evidence/protocol/policy digest and current head/base; every relevant change invalidates it. Finite cumulative experiment/time/token/currency/resource budgets, stop epochs and leases persist across crashes and cannot be extended by a candidate. Sensitive or unknown execution/permission/approval changes retain human gates.
 
-**Operational tracking and skill.** Persist repository-scoped unique proposal/campaign identities and at most one active promotion, with native label/project/view IDs. Keep pre-patch or rejected/deferred proposals internal; a real candidate diff permits one draft main-promotion PR labeled `self-update`, added to the dedicated project view and maintained with detailed evidence. No operational issue or milestone is required; J7 issues build the mechanism. The controller validates the same content for browser and programmatic publication and reads back PR/base/head/label/project metadata. A saved filter does not import PRs into the project or grant authority. Reconcile missing/drifted metadata and partial/superseded effects without creating another campaign or budget; the [campaign contract](self-improvement-campaigns.md) specifies uniqueness, draft readiness and audit history.
+**Operational tracking and skill.** Persist repository-scoped unique proposal/campaign identities and at most one active promotion, with native label/project/view IDs. Keep pre-patch or rejected/deferred proposals internal; a real candidate diff permits one draft main-promotion PR labeled `self-update`, added to the dedicated project view and maintained with detailed evidence. No operational issue or milestone is required; J07 issues build the mechanism. The controller validates the same content for browser and programmatic publication and reads back PR/base/head/label/project metadata. A saved filter does not import PRs into the project or grant authority. Reconcile missing/drifted metadata and partial/superseded effects without creating another campaign or budget; the [campaign contract](self-improvement-campaigns.md) specifies uniqueness, draft readiness and audit history.
 
-Use the versioned [product skill source](../skills/jarvis-self-improvement/SKILL.md) only through the future qualified J7 adapter: pin its released bundle/reference digest, include it in the context manifest, supply read-only and exclude candidate/project/global skill substitution. The skill returns structured proposal/patch/result intents; core owns tools, credentials and all publication/promotion/activation gates. No loader/tool handler or OpenCode plugin is installed. Static MVP skill loading remains disabled; schema/profile/loader tests in JV-053/JV-054 precede enablement.
+Use the versioned [product skill source](../skills/jarvis-self-improvement/SKILL.md) only through the future qualified J07 adapter: pin its released bundle/reference digest, include it in the context manifest, supply read-only and exclude candidate/project/global skill substitution. The skill returns structured proposal/patch/result intents; core owns tools, credentials and all publication/promotion/activation gates. No loader/tool handler or OpenCode plugin is installed. Static MVP skill loading remains disabled; schema/profile/loader tests in JV-053/JV-054 precede enablement.
 
 **Campaign promotion and repair.** Implement the [bounded campaign contract](self-improvement-campaigns.md) through the existing orchestration/GitHub ports. The stable controller owns claims, policy and credentials; author/test candidates cannot mutate it or their evaluator. Pin deployed incumbent `S`, target main `B` and assembled candidate `H` separately. One temporary integration branch per hypothesis accepts authorized independently reviewed task PRs, with serialized fenced publication and child-to-integrated revision mappings. Even routine self-improvement needs current human approval of the final main promotion digest; native review/check protections still apply. Preserve the ordinary autonomous-delivery/contributor policy outside this mode.
 
@@ -541,7 +541,7 @@ UI/digest show every proposal and disposition, sources, revisions, fixed protoco
 
 ### 12.10 Proposed shared runtime and general-purpose assistance
 
-[JV-064](https://github.com/grasdouble/Jarvis/issues/64) and children JV-065–JV-068 plan a post-MVP conversational capability in J8, with no committed version/date and no automatic dependency on J6/J7. The [shared runtime/capability contract](common-agent-runtime.md) defines full profiles, contracts, trust boundaries, recovery and qualification. Reuse the PNPM modular monolith and headless OpenCode adapter; JARVIS retains deterministic authorization, persistence/memory, budgets, scheduling, secrets and external-effect ownership. No second agent framework, Herdr service or OpenCode plugin is required.
+[JV-064](https://github.com/grasdouble/Jarvis/issues/64) and children JV-065–JV-068 plan a post-MVP conversational capability in J08, with no committed version/date and no automatic dependency on J06/J07. The [shared runtime/capability contract](common-agent-runtime.md) defines full profiles, contracts, trust boundaries, recovery and qualification. Reuse the PNPM modular monolith and headless OpenCode adapter; JARVIS retains deterministic authorization, persistence/memory, budgets, scheduling, secrets and external-effect ownership. No second agent framework, Herdr service or OpenCode plugin is required.
 
 Keep `AgentRuntime.review` and required revision-bound static-review validation intact. Add a versioned tagged mission/result port for general requests versus exact repository/revision work, bound to authenticated owner/session/turn/attempt, trusted released profile/policy/tool/model digests, context manifest, reservation, deadline, fence and stop epoch. General requests require neither repository nor issue. Model-suggested tools/profile changes are requests for deterministic admission; unsupported or ambiguous requests return limits/clarification, not escalation. Conversation, code author, independent reviewer and self-improvement use distinct attempts and context/tool scopes.
 
@@ -549,17 +549,17 @@ The future `assistant-readonly-v1` profile has no repository/host mount, Engine 
 
 Extend proposed records with owner-scoped conversations/turns and capability invocations/results, using existing persistence, queue, memory, policy and observability ports. Unique message and invocation keys, fenced claims, durable intents and remote rereads reconcile duplicates, reconnect/restart and unknown effects without resetting limits. Conversation context is bounded and separate from repository knowledge; provenance, sensitivity, expiry and forgetting apply to raw/derived data and restored backups. Conversation persistence and reusable knowledge need accepted D14 retention/consent. Record model plus tool costs and partial/cancelled/unknown outcomes without raw private log dumps. A model answer, closed turn or tool result cannot authorize GitHub actions, promotion or activation.
 
-The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; the v0.1 API/sandbox and J6/J7 gates remain unchanged.
+The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; the v0.1 API/sandbox and J06/J07 gates remain unchanged.
 
 ### 12.11 Proposed messaging channels
 
-J9/P14 plans Telegram and Signal as separate trusted transport adapters, with [JV-075](https://github.com/grasdouble/Jarvis/issues/75) and children JV-076–JV-081. The [messaging contract](messaging-channels.md) defines notification-first delivery, later per-channel J8 conversation, owner pairing/consent, closed interfaces, candidate Signal bridge qualification and D15 gates. Reuse the PNPM modular monolith with `packages/channels`, existing API/worker/domain/contracts/persistence/queue, conversation and F09 accounting. No OpenCode plugin or second model loop is required. Notifications depend on MVP delivery; conversation also depends on J8 qualification. Neither adapter requires the other or J6/J7 solely by phase number.
+J09/P14 plans Telegram and Signal as separate trusted transport adapters, with [JV-075](https://github.com/grasdouble/Jarvis/issues/75) and children JV-076–JV-081. The [messaging contract](messaging-channels.md) defines notification-first delivery, later per-channel J08 conversation, owner pairing/consent, closed interfaces, candidate Signal bridge qualification and D15 gates. Reuse the PNPM modular monolith with `packages/channels`, existing API/worker/domain/contracts/persistence/queue, conversation and F09 accounting. No OpenCode plugin or second model loop is required. Notifications depend on MVP delivery; conversation also depends on J08 qualification. Neither adapter requires the other or J06/J07 solely by phase number.
 
 Trusted connectors hold bot/account/device secrets, restrict egress and normalize provider identity; agents retain no network or credential access. A selected Signal bridge runs with restricted VM-local state and narrow authenticated RPC, without personal Mac/profile mounts or raw browser/agent access. Telegram polling is an option without inbound publication; a selected webhook requires HTTPS, configured secret-header validation and a narrowly exposed intake only. Existing administration loopback bindings remain unchanged; a mobile message link does not justify exposing the UI/API.
 
 Proposed PostgreSQL records are `channel_connections`, `channel_bindings`, `channel_inbox`, `channel_deliveries` and `channel_delivery_attempts`, keyed by owner/connection/provider message or logical event/turn and binding. Transactional intake/outbox and fenced claims coalesce repeated observations, retain all attempts and reconcile unknown effects. Do not assume exactly-once external sends, indefinite provider replay or remote deletion. Expiry, budget, consent/revocation and forgetting/restore apply before dispatch/replay. High-cardinality recipient/content facts stay outside telemetry; no raw credential-bearing URLs or chat transcripts in logs by default.
 
-The paired private sender maps to existing owner scope, not a broader approval role. Questions/status use qualified J8 profiles; code requests become separately admitted J6 missions only when available, and self-update retains current human promotion/activation rules. Sensitive approvals remain in authenticated UI/GitHub; text, buttons and reactions cannot approve a revision. D15 leaves actual accounts/bridge/transport, limits, retention/disclosure and pilot/enablement unresolved; no live integration or new permission is installed here. Qualification includes hostile/duplicate/edited/echo inputs, unknown delivery, sleep, rate limits, stop, deletion/restore and actual per-channel transport evidence.
+The paired private sender maps to existing owner scope, not a broader approval role. Questions/status use qualified J08 profiles; code requests become separately admitted J06 missions only when available, and self-update retains current human promotion/activation rules. Sensitive approvals remain in authenticated UI/GitHub; text, buttons and reactions cannot approve a revision. D15 leaves actual accounts/bridge/transport, limits, retention/disclosure and pilot/enablement unresolved; no live integration or new permission is installed here. Qualification includes hostile/duplicate/edited/echo inputs, unknown delivery, sleep, rate limits, stop, deletion/restore and actual per-channel transport evidence.
 
 ## 13 Idempotence and consistency
 
@@ -626,7 +626,7 @@ Test at least: fake Dependabot author, a body requesting a merge, hostile `AGENT
 
 ## 16 Secrets and authentication
 
-Persistent secrets are the GitHub App private key, webhook secret, provider keys, PostgreSQL credentials, and internal certificates. The authoritative copies reside in a protected Mac bootstrap location or an explicitly selected secret manager, never in the repository or images. A trusted bootstrap step transfers only required secrets through authenticated administrative transport into restricted VM-local files; it does not share the Mac directory. Compose assigns these VM-local secret sources per service. Validate daemon-side paths, permissions, rotation, and cleanup at J1; local Compose secrets are not an encrypted vault. VM administrators and the controller remain trusted. [D6](https://docs.docker.com/compose/how-tos/use-secrets/)
+Persistent secrets are the GitHub App private key, webhook secret, provider keys, PostgreSQL credentials, and internal certificates. The authoritative copies reside in a protected Mac bootstrap location or an explicitly selected secret manager, never in the repository or images. A trusted bootstrap step transfers only required secrets through authenticated administrative transport into restricted VM-local files; it does not share the Mac directory. Compose assigns these VM-local secret sources per service. Validate daemon-side paths, permissions, rotation, and cleanup at J01; local Compose secrets are not an encrypted vault. VM administrators and the controller remain trusted. [D6](https://docs.docker.com/compose/how-tos/use-secrets/)
 
 GitHub keys stay in the trusted broker; read or merge tokens are created on demand, retained in memory, and expire or are revoked. Per-attempt LLM capabilities have a scope, limit, and deadline. Gateway keys are injected into temporary storage and disappear when it is destroyed. A control prevents them from being written to events, logs, and artifacts.
 
@@ -673,7 +673,7 @@ J10/P15 ([JV-084](https://github.com/grasdouble/Jarvis/issues/84), children JV-0
 
 Proposed `execution_timings`, `duration_forecasts` and `forecast_calibrations` bind canonical interval/feature observations, immutable issued predictions and chronological evaluation evidence to scope, task/profile/estimator versions and completeness. Separate queue/CI/human/suspension/unknown intervals from execution elapsed; use monotonic local timing with explicit restart/clock/sleep gaps and end-to-end critical paths for parallel work. Do not sum overlapping spans, infer completion from a timeout, or add marginal percentiles as a workflow guarantee. Retain failed/censored cases and calibration limitations.
 
-Scoped empirical cohorts return central/range/optional percentile with sample count, as-of/freshness, method/calibration version and abstention/stale states. No universal effort-speed factor, guessed current model throughput or unsupported accuracy label. Remaining time conditions on observed stage/elapsed survival; otherwise it remains unknown. Bound queries/updates and enforce deletion/restore on derived data. The existing authenticated task/queue view and future qualified J8/J9 surfaces can display results, while unavailable estimates leave dispatch policy, ranking, limits, selected profile and approval gates unchanged. JV-088 validates chronological holdout and actual runtime evidence before production forecasting; no estimator or accuracy evidence is installed here.
+Scoped empirical cohorts return central/range/optional percentile with sample count, as-of/freshness, method/calibration version and abstention/stale states. No universal effort-speed factor, guessed current model throughput or unsupported accuracy label. Remaining time conditions on observed stage/elapsed survival; otherwise it remains unknown. Bound queries/updates and enforce deletion/restore on derived data. The existing authenticated task/queue view and future qualified J08/J09 surfaces can display results, while unavailable estimates leave dispatch policy, ranking, limits, selected profile and approval gates unchanged. JV-088 validates chronological holdout and actual runtime evidence before production forecasting; no estimator or accuracy evidence is installed here.
 
 ## 18 Local deployment and development
 
@@ -719,16 +719,16 @@ Initial retention: snapshots and runtime state are deleted at attempt completion
 
 | Suite | Required scenarios | Gate |
 | --- | --- | --- |
-| Domain and policy | POL matrix, SemVer versions, unknown profiles, missing CI, neutral/skipped checks, stale approval | J3 then J4 |
-| OpenCode contracts | Health, creation, prompt, report, interrupted stream, cancellation, permission denial, incompatible version | J1 and J3 |
-| Provider contracts | Two providers, socket streaming, JSON, limits, interruption, no unauthorized fallback | J3 |
-| Memory | Two-repository leakage, provenance, applicability, expiry, contradiction, context limits, provider switch, restart, poisoned notes, concurrent invalidation, forgetting and pre-deletion backup restore | J3 and J5 |
-| Ingestion and queue | Raw HMAC, Unicode, duplicates, divergent hash, reversed order, pagination, lease expiry, and outbox | J2 |
-| Real isolation | Effective Colima mounts, Mac-file canary, context identity, UID, capabilities, socket, Mac/LAN/core/neighbor access including Lima host aliases, IPv4/IPv6, DNS, forwarded listeners, memory/process limits | J1, then after platform updates |
-| Hostile input | Section 15 corpus, configuration, archives, injections, web rendering, and fake test results | J3 |
-| Merge | Changed H/B, blocking ruleset, degraded CI, delay, lost response, remote pending state, revoked App, no bypass | J4 |
-| Recovery | Crash before/after commit and before/after remote call, duplicated worker, Docker stopped, simulated sleep, dump restore | J2, J4, and J5 |
-| Operations | Persistent stop, janitor, budget, missed digest, daylight saving time, low disk, and purge | J5 |
+| Domain and policy | POL matrix, SemVer versions, unknown profiles, missing CI, neutral/skipped checks, stale approval | J03 then J04 |
+| OpenCode contracts | Health, creation, prompt, report, interrupted stream, cancellation, permission denial, incompatible version | J01 and J03 |
+| Provider contracts | Two providers, socket streaming, JSON, limits, interruption, no unauthorized fallback | J03 |
+| Memory | Two-repository leakage, provenance, applicability, expiry, contradiction, context limits, provider switch, restart, poisoned notes, concurrent invalidation, forgetting and pre-deletion backup restore | J03 and J05 |
+| Ingestion and queue | Raw HMAC, Unicode, duplicates, divergent hash, reversed order, pagination, lease expiry, and outbox | J02 |
+| Real isolation | Effective Colima mounts, Mac-file canary, context identity, UID, capabilities, socket, Mac/LAN/core/neighbor access including Lima host aliases, IPv4/IPv6, DNS, forwarded listeners, memory/process limits | J01, then after platform updates |
+| Hostile input | Section 15 corpus, configuration, archives, injections, web rendering, and fake test results | J03 |
+| Merge | Changed H/B, blocking ruleset, degraded CI, delay, lost response, remote pending state, revoked App, no bypass | J04 |
+| Recovery | Crash before/after commit and before/after remote call, duplicated worker, Docker stopped, simulated sleep, dump restore | J02, J04, and J05 |
+| Operations | Persistent stop, janitor, budget, missed digest, daylight saving time, low disk, and purge | J05 |
 
 Race tests use a test barrier to change the PR or checks between the read and dispatch, then verify the remote precondition and protections. A test does not merely simulate an `allow` value. Effects are verified on a test repository, including the absence of a comment or merge when denied.
 
@@ -736,27 +736,27 @@ Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 
 
 ## 21 Delivery sequence and remaining decisions
 
-**Step 1 corresponding to J0/J1.** Pin profiles and versions, implement the minimal controller, bounded Docker exec transport, and socket gateway. Demonstrate a review without IP networking or real secrets in the agent. Qualify state paths and the absence of repository code loading.
+**Step 1 corresponding to J00/J01.** Pin profiles and versions, implement the minimal controller, bounded Docker exec transport, and socket gateway. Demonstrate a review without IP networking or real secrets in the agent. Qualify state paths and the absence of repository code loading.
 
-**Step 2 corresponding to J2.** Implement the PostgreSQL schema including checkpoints and scoped knowledge versions, inbox/outbox, leases, webhooks, and reconciliation. Provide the observation interface, authentication, and persistent stop. GitHub write actions remain disabled.
+**Step 2 corresponding to J02.** Implement the PostgreSQL schema including checkpoints and scoped knowledge versions, inbox/outbox, leases, webhooks, and reconciliation. Provide the observation interface, authentication, and persistent stop. GitHub write actions remain disabled.
 
-**Step 3 corresponding to J3.** Finalize structured reports, scoped memory retrieval and context manifests, knowledge validation, the dependency-diff parser, pure policy rules, budget, and adversarial corpus. Qualify a second provider and the deterministic digest.
+**Step 3 corresponding to J03.** Finalize structured reports, scoped memory retrieval and context manifests, knowledge validation, the dependency-diff parser, pure policy rules, budget, and adversarial corpus. Qualify a second provider and the deterministic digest.
 
-**Step 4 corresponding to J4.** Connect approvals, durable intents, and the asynchronous merge API. Verify protections and CI provenance on the test repository. Exercise races and lost-response failures before the assisted pilot.
+**Step 4 corresponding to J04.** Connect approvals, durable intents, and the asynchronous merge API. Verify protections and CI provenance on the test repository. Exercise races and lost-response failures before the assisted pilot.
 
-**Step 5 corresponding to J5.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
+**Step 5 corresponding to J05.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
 
-Decisions D01 through D14 in the PRD remain the product decision register; D12 gates J6 writable delivery, D13 gates J7 self-improvement and D14 gates post-MVP general assistance, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D14 in the PRD remain the product decision register; D12 gates J06 writable delivery, D13 gates J07 self-improvement and D14 gates post-MVP general assistance, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
 
 **Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
 
-**Self-improvement (J7).** After verified JV-044 delivery, implement bounded signals/proposals (JV-052), accept D13 experiment policy and qualify fixed evaluation (JV-053), reuse delivery for controlled candidates (JV-054), then accept D13 rollout policy and qualify activation/rollback and operational evidence (JV-055). No deployment authority or background optimizer is enabled by this plan.
+**Self-improvement (J07).** After verified JV-044 delivery, implement bounded signals/proposals (JV-052), accept D13 experiment policy and qualify fixed evaluation (JV-053), reuse delivery for controlled candidates (JV-054), then accept D13 rollout policy and qualify activation/rollback and operational evidence (JV-055). No deployment authority or background optimizer is enabled by this plan.
 
-**Post-MVP general assistance (J8).** After verified JV-025, qualify shared profile/policy contracts (JV-065), the bounded tool broker/adapter (JV-066), authenticated conversation and scoped memory (JV-067), then weather/pilot acceptance (JV-068). D14 must accept the corresponding tool/provider/retention/profile limits before live execution. J6/J7 remain separate capabilities.
+**Post-MVP general assistance (J08).** After verified JV-025, qualify shared profile/policy contracts (JV-065), the bounded tool broker/adapter (JV-066), authenticated conversation and scoped memory (JV-067), then weather/pilot acceptance (JV-068). D14 must accept the corresponding tool/provider/retention/profile limits before live execution. J06/J07 remain separate capabilities.
 
 ## 22 Verified technical references
 
-Official sources consulted on October 15, 2026; Colima/Lima references C1 through C5 and PostgreSQL text-search reference P3 were checked on October 16, 2026. References establish component capabilities, not guarantees of the proposed JARVIS architecture. Pages evolve: image, SDK, engine, and GitHub API versions must be recorded in the repository at J0.
+Official sources consulted on October 15, 2026; Colima/Lima references C1 through C5 and PostgreSQL text-search reference P3 were checked on October 16, 2026. References establish component capabilities, not guarantees of the proposed JARVIS architecture. Pages evolve: image, SDK, engine, and GitHub API versions must be recorded in the repository at J00.
 
 - **O1** [OpenCode Server](https://docs.opencode.ai/docs/server/): headless mode, authentication, health, sessions, and events.
 - **O2** [OpenCode SDK](https://docs.opencode.ai/docs/sdk/): TypeScript client, custom transport, and types.

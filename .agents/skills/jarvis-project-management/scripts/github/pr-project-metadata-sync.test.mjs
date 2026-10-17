@@ -6,7 +6,7 @@ import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
 const projectId = 'PVT_kwDOAvfTzc4BnQz1';
 const fieldId = 'PVTF_lADOAvfTzc4BnQz1zhl_aaw';
 function fixture() {
-  return {projectId, fieldId, pullRequests: [{id:'PR_test',number:92,repository:'grasdouble/Jarvis',projectItemId:null,issueText:null,milestone:null,labels:[],issues:[{number:91,url:'https://github.com/grasdouble/Jarvis/issues/91',repository:'grasdouble/Jarvis',milestone:{id:'M_test',number:1,title:'J0 — Scoping'}}]}]};
+  return {projectId, fieldId, pullRequests: [{id:'PR_test',number:92,repository:'grasdouble/Jarvis',projectItemId:null,issueText:null,milestone:null,labels:[],issues:[{number:91,url:'https://github.com/grasdouble/Jarvis/issues/91',repository:'grasdouble/Jarvis',milestone:{id:'M_test',number:1,title:'J00 — Scoping'}}]}]};
 }
 function harness() {
   const state=fixture(), effects=[];
@@ -15,7 +15,7 @@ function harness() {
     effects.push(effect);
     const pr=state.pullRequests[0];
     if(effect.kind==='add')pr.projectItemId='ITEM_test';
-    else if(effect.kind==='milestone')pr.milestone={id:'M_test',number:effect.milestoneNumber,title:'J0 — Scoping'};
+    else if(effect.kind==='milestone')pr.milestone={id:'M_test',number:effect.milestoneNumber,title:'J00 — Scoping'};
     else if(effect.kind==='issue')pr.issueText=effect.text;
     else throw new Error('Forbidden effect');
   };

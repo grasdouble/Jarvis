@@ -4,7 +4,7 @@ This contributor tool maintains the visible **Issue** column and native **Milest
 
 ## Source and mutation contract
 
-The only source is GitHub's native `closingIssuesReferences` relationship, not an issue-looking title, branch, comment or arbitrary URL in a PR body. For ordinary contributor delivery, use `Closes #N` for the actual implementation issue and verify the resulting native relationship. A `Refs #parent` context reference does not select the parent. The issue's native milestone is authoritative; no fallback to J0 or a phase inferred from the PR text is permitted.
+The only source is GitHub's native `closingIssuesReferences` relationship, not an issue-looking title, branch, comment or arbitrary URL in a PR body. For ordinary contributor delivery, use `Closes #N` for the actual implementation issue and verify the resulting native relationship. A `Refs #parent` context reference does not select the parent. The issue's native milestone is authoritative; no fallback to J00 or a phase inferred from the PR text is permitted.
 
 | Native relationship | Result |
 | --- | --- |

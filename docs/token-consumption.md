@@ -85,7 +85,7 @@ These are targets for the owning implementation issues, not tests already run:
 Official documentation checked October 16, 2026:
 
 - [OpenCode SDK](https://docs.opencode.ai/docs/sdk/): typed client, generated types, session/message reads and events provide integration surfaces. It does not guarantee identical accounting fields or billing semantics for every provider/version.
-- [OpenCode server](https://docs.opencode.ai/docs/server/): server API/OpenAPI discovery supports a pinned adapter contract. The J1/J3 prototype must inspect and test the actual selected schema; polling/events alone do not establish completeness.
+- [OpenCode server](https://docs.opencode.ai/docs/server/): server API/OpenAPI discovery supports a pinned adapter contract. The J01/J03 prototype must inspect and test the actual selected schema; polling/events alone do not establish completeness.
 - [OpenCode provider configuration](https://docs.opencode.ai/docs/providers/): provider choice is separately configured; supported providers are not automatically interchangeable accounting implementations.
 
 JARVIS's ledger, normalization, atomic budgets, routes and acceptance fixtures above are proposed application behavior. No SDK plugin, current provider price, invoice reconciliation service or guarantee of measured financial completeness is assumed. Concrete limits, pricing, provider authorization and retention remain owner decisions at their existing gates.

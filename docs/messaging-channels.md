@@ -1,6 +1,6 @@
 # Telegram and Signal channels
 
-**Status: owner-requested post-MVP design, not implemented or enabled.** [JV-074](https://github.com/grasdouble/Jarvis/issues/74) specifies P14/D15; [JV-075](https://github.com/grasdouble/Jarvis/issues/75) coordinates J9 implementation. Notifications come first per channel; bidirectional text conversation subsequently reuses qualified J8 services. J9 has no committed date/version and adds no v0.1 exit gate. Creating issues does not authorize bot registration, account linking, live messages or network exposure.
+**Status: owner-requested post-MVP design, not implemented or enabled.** [JV-074](https://github.com/grasdouble/Jarvis/issues/74) specifies P14/D15; [JV-075](https://github.com/grasdouble/Jarvis/issues/75) coordinates J09 implementation. Notifications come first per channel; bidirectional text conversation subsequently reuses qualified J08 services. J09 has no committed date/version and adds no v0.1 exit gate. Creating issues does not authorize bot registration, account linking, live messages or network exposure.
 
 ## Delivery slices and boundaries
 
@@ -9,11 +9,11 @@
 | Shared foundation | Owner bindings, consent/settings, typed adapter ports, inbox/outbox and delivery policy | Verified JV-025 MVP, this specification and accepted corresponding D15 choices; [JV-076](https://github.com/grasdouble/Jarvis/issues/76) |
 | Telegram notifications | Opted-in private daily digest, incidents, confirmed outcomes and pending-decision notices | Shared foundation and qualified Telegram transport/pilot; [JV-077](https://github.com/grasdouble/Jarvis/issues/77) |
 | Signal notifications | The same bounded notification contract through a qualified bridge | Shared foundation plus actual bridge/account/ARM64 feasibility and pilot; [JV-078](https://github.com/grasdouble/Jarvis/issues/78) |
-| Telegram conversation | Questions, scoped status and separately admitted task requests | Its notification adapter, verified JV-068/J8 acceptance and D14/D15; [JV-079](https://github.com/grasdouble/Jarvis/issues/79) |
-| Signal conversation | The same owner-scoped text service through Signal | Its qualified bridge/notification adapter, verified JV-068/J8 acceptance and D14/D15; [JV-080](https://github.com/grasdouble/Jarvis/issues/80) |
+| Telegram conversation | Questions, scoped status and separately admitted task requests | Its notification adapter, verified JV-068/J08 acceptance and D14/D15; [JV-079](https://github.com/grasdouble/Jarvis/issues/79) |
+| Signal conversation | The same owner-scoped text service through Signal | Its qualified bridge/notification adapter, verified JV-068/J08 acceptance and D14/D15; [JV-080](https://github.com/grasdouble/Jarvis/issues/80) |
 | Integrated operations | Recovery/privacy/accounting corpus and runbooks for both channels | Both conversation slices; [JV-081](https://github.com/grasdouble/Jarvis/issues/81) verifies combined completion |
 
-Notification-only delivery does not depend on J8 conversation, J6 coding or J7 self-improvement. Neither channel depends on the other. Individual pilots/enablement require their own accepted gates; combined JV-081 closure does not retroactively grant them. A request for code work remains unsupported until its J6/D12 mission is available and authorized; a request involving self-improvement retains J7/D13 and human promotion/separate activation. No second coding runtime, chatbot framework or OpenCode plugin is introduced.
+Notification-only delivery does not depend on J08 conversation, J06 coding or J07 self-improvement. Neither channel depends on the other. Individual pilots/enablement require their own accepted gates; combined JV-081 closure does not retroactively grant them. A request for code work remains unsupported until its J06/D12 mission is available and authorized; a request involving self-improvement retains J07/D13 and human promotion/separate activation. No second coding runtime, chatbot framework or OpenCode plugin is introduced.
 
 The initial integration is one owner, explicitly paired private text chats and bounded templates. Groups, broadcast/multi-user access, attachments/voice, reading arbitrary chat history, contact/address-book import, account administration, arbitrary URL fetching and sensitive approval through chat are excluded. Unsupported payloads are rejected safely; the adapter must not download media or follow links to interpret them.
 
@@ -26,7 +26,7 @@ Confirmed core event -> scoped redacted notification intent -> durable outbox
   -> trusted connector with fixed recipient/endpoint -> Telegram or Signal
 
 Provider update -> authenticated connector -> bounded journal and owner binding
-  -> eligible J8 turn/profile + policy/budget -> isolated OpenCode
+  -> eligible J08 turn/profile + policy/budget -> isolated OpenCode
   -> validated bounded answer -> durable outbox -> same bound private chat
 ```
 
@@ -82,7 +82,7 @@ Implementation targets, not tests run by this document:
 - Receiving the same authenticated message 100 times across reconnect/restart creates one canonical turn and one admitted generation allocation. Reject unbound/revoked/forged/group/forwarded/echo or unsupported payloads before a model/tool call, with zero unauthorized disclosure or action.
 - Concurrent dispatch, credential rotation, stop/revocation, rate exhaustion, expired work, reordered/edited updates and uncertain receive/send states preserve ownership, scope and finite accounting. Modified updates never silently mutate a running mission or its approval.
 - Deletion followed by restore cannot resurrect bindings, retained payloads, context, local message queues or spending capacity; late corrections, timezone changes and sleep recovery show gaps and bounded catch-up without duplicate core tasks.
-- Each adapter has an actual pinned Colima/account pilot proving identity binding, bounded egress/state access, pause/unsubscribe and transport recovery; Signal feasibility is measured separately. Notifications may qualify before J8, but no channel conversation runs before its own J8/D14/D15 evidence and explicit enablement.
+- Each adapter has an actual pinned Colima/account pilot proving identity binding, bounded egress/state access, pause/unsubscribe and transport recovery; Signal feasibility is measured separately. Notifications may qualify before J08, but no channel conversation runs before its own J08/D14/D15 evidence and explicit enablement.
 - JV-081 records at least 30 owner-agreed integrated success/adversarial/recovery cases, SQL/usage agreement, credential-free agents, redacted diagnostics and update/requalification runbooks. Mock fixtures and actual external transport evidence are identified separately.
 
 ## References

@@ -7,7 +7,7 @@ function fixture(count = 12) {
   const state = { projectId:'project', fieldId:'rank', issues:[], items:[] };
   for (let number=1; number<=count; number++) {
     state.issues.push({ id:String(number), number, title:`Issue ${number}`, url:`https://example.test/${number}`,
-      state:'OPEN', stateReason:null, createdAt:'2026-01-01T00:00:00Z', milestone:'J0',
+      state:'OPEN', stateReason:null, createdAt:'2026-01-01T00:00:00Z', milestone:'J00',
       labels:['priority:P1'], blockers:[], children:[], status:'Backlog' });
     state.items.push({ id:`item${number}`, content:{id:String(number)}, fieldValues:{
       pageInfo:{hasNextPage:false}, nodes:[] } });

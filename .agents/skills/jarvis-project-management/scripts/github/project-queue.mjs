@@ -12,7 +12,7 @@ export function planQueue(issues) {
     dependencies.set(issue.id, ids);
   }
   const milestone = issue => {
-    const value = /^J(0|[1-9]\d*)(?:\s|$)/.exec(issue.milestone ?? '')?.[1];
+    const value = /^J(0\d?|[1-9]\d*)(?:\s|$)/.exec(issue.milestone ?? '')?.[1];
     const phase = value === undefined ? Infinity : Number(value);
     return Number.isSafeInteger(phase) ? phase : Infinity;
   };
