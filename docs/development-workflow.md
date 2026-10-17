@@ -82,6 +82,8 @@ This keeps the coordinator's working context smaller without promising unlimited
 
 ## Independent review and autonomous routine delivery
 
+Authors validate their work before returning it; the coordinator integrates and freezes exact revisions; the reviewer independently selects and executes appropriate checks using the existing authorized tools. Follow the [direct validation contract](../.agents/skills/jarvis-pr-review/references/direct-validation.md) for separate scratch outputs, actual execution permissions, bounded runs and provenance. Verdicts return to the coordinator for correction routing or delivery. Small changes may combine coordinator/author, while the reviewer must have authored none of the candidate. No extra validation agent or enforced Mac isolation is installed by this contributor procedure.
+
 Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended delivery/review scheduler is installed. Future product runtime delivery is planned separately after v0.1.
 
 ## Blocking and resuming work
