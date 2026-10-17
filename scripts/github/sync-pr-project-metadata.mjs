@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createMetadataApi } from './pr-project-metadata-api.mjs';
 import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
 import { CONFIG } from './pr-project-metadata.mjs';
+import { createRoadmapApi, synchronizeDates } from './roadmap-dates-sync.mjs';
 
 export function parseOptions(args) {
   const options={write:false,ci:false};const seen=new Set();
@@ -16,12 +17,14 @@ export function parseOptions(args) {
     if(seen.has(arg))throw new Error('Duplicate option.');seen.add(arg);
     if(arg==='--write')options.write=true;
     else if(arg==='--ci')options.ci=true;
-    else if(arg==='--pr'){
+    else if(arg==='--roadmap')options.roadmap=true;
+    else if(arg==='--pr'||arg==='--issue'){
       const raw=args[++index];
-      if(!/^[1-9]\d*$/.test(raw??'')||!Number.isSafeInteger(Number(raw)))throw new Error('Invalid PR number.');
+      if(!/^[1-9]\d*$/.test(raw??'')||!Number.isSafeInteger(Number(raw)))throw new Error('Invalid issue/PR number.');
       options.number=Number(raw);
-    } else throw new Error('Usage: node scripts/github/sync-pr-project-metadata.mjs [--pr NUMBER] [--write] [--ci]');
+    } else throw new Error('Usage: node scripts/github/sync-pr-project-metadata.mjs [--pr NUMBER | --roadmap [--issue NUMBER]] [--write] [--ci]');
   }
+  if((seen.has('--pr')&&options.roadmap)||(seen.has('--issue')&&!options.roadmap)||(seen.has('--pr')&&seen.has('--issue')))throw new Error('Use --pr for PR metadata or --roadmap with optional --issue.');
   return options;
 }
 export function assertCiContext(env) {
@@ -57,9 +60,10 @@ export async function main(args=process.argv.slice(2),env=process.env) {
         return JSON.parse(output);
       } catch(error){throw requestError(error);}
     };
-    const adapter=createMetadataApi({api});
+    const adapter=options.roadmap?createRoadmapApi({api}):createMetadataApi({api});
     const load=number=>adapter.load(options.number??number);
-    const result=await synchronizeMetadata({load,apply:adapter.apply,write:options.write});
+    const synchronize=options.roadmap?synchronizeDates:synchronizeMetadata;
+    const result=await synchronize({load,apply:adapter.apply,write:options.write});
     console.log(JSON.stringify(result,null,2));
     return result.diagnostics.some(d=>d.severity==='error')?1:0;
   } finally {if(temporary)rmSync(temporary,{recursive:true,force:true});}

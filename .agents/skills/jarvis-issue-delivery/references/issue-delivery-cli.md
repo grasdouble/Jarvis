@@ -160,3 +160,14 @@ git worktree remove "$task_worktree_path"
 Do not force removal. Check ignored artifacts separately when relevant; a clean status does not inventory them. Branch deletion is optional cleanup: preserve unmerged commits, especially after squash merges where ancestry alone does not establish equivalence.
 
 References: [linked issue branches/worktrees](https://cli.github.com/manual/gh_issue_develop), [PR creation](https://cli.github.com/manual/gh_pr_create), [PR checks](https://cli.github.com/manual/gh_pr_checks), [PR merge behavior](https://cli.github.com/manual/gh_pr_merge), [issue closing keywords](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue), and [Git worktrees](https://git-scm.com/docs/git-worktree).
+
+## Synchronize observed Roadmap dates
+
+Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
+
+```bash
+node scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+```
+
+Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.

@@ -14,3 +14,8 @@ test('transport diagnostics discard raw secrets and distinguish transient failur
   const e=requestError({stderr:'HTTP 503 synthetic-secret'});assert.equal(e.retryable,true);assert.ok(!e.message.includes('synthetic-secret'));
   assert.equal(requestError({stderr:'HTTP 403 synthetic-secret'}).retryable,false);
 });
+
+test('roadmap mode scopes issue dates without allowing PR-mode confusion',()=>{
+ assert.deepEqual(parseOptions(['--roadmap','--issue','93','--write']),{write:true,ci:false,roadmap:true,number:93});
+ for(const args of [['--roadmap','--pr','93'],['--issue','93'],['--roadmap','--issue','93','--pr','92']])assert.throws(()=>parseOptions(args));
+});
