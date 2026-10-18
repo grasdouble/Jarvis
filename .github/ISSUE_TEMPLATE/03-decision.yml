@@ -5,7 +5,7 @@ labels:
 body:
   - type: markdown
     attributes:
-      value: Write in English. A decision request records an unresolved choice; creating it does not authorize implementing an option. Use the [milestone selection rules](https://github.com/grasdouble/Jarvis/blob/main/docs/development-workflow.md#milestone-selection-and-creation) to distinguish initial MVP scoping, product phases, ongoing thematic DEV tracks and bounded DEV outcomes. Check open and closed milestones; a closed DEV track may be reopened when its ongoing scope matches the issue. Select the appropriate native Milestone in the sidebar before submitting; if unavailable, ask a maintainer to assign it during triage. A milestone written in the body does not assign GitHub metadata.
+      value: Write in English. A decision request records an unresolved choice; creating it does not authorize implementing an option. Use the [milestone selection rules](https://github.com/grasdouble/Jarvis/blob/main/docs/development-workflow.md#milestone-selection-and-creation) to distinguish initial MVP scoping, product phases, ongoing thematic DEV tracks and bounded DEV outcomes. Check open and closed milestones; reuse an existing milestone when its original scope covers the issue, reopening it in place if closed and still applicable. Select the appropriate native Milestone in the sidebar before submitting; if unavailable, ask a maintainer to assign it during triage. A milestone written in the body does not assign GitHub metadata.
   - type: textarea
     id: context
     attributes:
