@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from check_repository import check_markdown, check_workflow, load_yaml
+from check_repository import check_markdown, check_workflow, load_yaml, load_yaml_documents
 
 
 class RepositoryChecksTest(unittest.TestCase):
@@ -29,6 +29,27 @@ jobs:
     def test_duplicate_yaml_key_is_rejected(self):
         with self.assertRaises(ValueError):
             load_yaml('permissions: read\npermissions: write\n')
+
+    def test_yaml_document_stream_is_loaded_with_strict_mappings(self):
+        documents = load_yaml_documents('''
+packageManagerDependencies:
+  pnpm: 12.5.1
+---
+lockfileVersion: '9.0'
+''')
+        self.assertEqual(documents, [
+            {'packageManagerDependencies': {'pnpm': '12.5.1'}},
+            {'lockfileVersion': '9.0'},
+        ])
+
+    def test_duplicate_key_is_rejected_in_yaml_document_stream(self):
+        with self.assertRaises(ValueError):
+            load_yaml_documents('''
+first: document
+---
+key: first
+key: duplicate
+''')
 
     def test_tagged_action_is_rejected(self):
         workflow = self.valid_workflow()

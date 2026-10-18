@@ -38,7 +38,15 @@ StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, uni
 
 
 def load_yaml(text):
-    return yaml.load(text, Loader=StrictLoader)
+    documents = load_yaml_documents(text)
+    if len(documents) != 1:
+        raise ValueError('Expected exactly one YAML document.')
+    return documents[0]
+
+
+def load_yaml_documents(text):
+    """Load a strict YAML stream while retaining duplicate-key checks."""
+    return list(yaml.load_all(text, Loader=StrictLoader))
 
 
 def check_workflow(data):
@@ -86,9 +94,14 @@ def main():
         if not path.is_file():
             continue
         if path.suffix in {'.yml', '.yaml'}:
-            data = load_yaml(path.read_text())
-            if path.parent == root / '.github/workflows':
-                check_workflow(data)
+            if path.name == 'pnpm-lock.yaml':
+                documents = load_yaml_documents(path.read_text())
+                if not documents or any(not isinstance(document, dict) for document in documents):
+                    raise ValueError('PNPM lockfile must contain YAML mapping documents.')
+            else:
+                data = load_yaml(path.read_text())
+                if path.parent == root / '.github/workflows':
+                    check_workflow(data)
             count += 1
         elif path.suffix == '.md':
             check_markdown(path, root)
