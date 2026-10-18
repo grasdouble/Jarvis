@@ -4,11 +4,14 @@ Use the [governance procedure](../project-governance.md) and [template](template
 
 ## Existing identifiers and new records
 
-The [architecture decision table](../technical-architecture.md#2-architecture-decisions) already uses ADR01–ADR11 (displayed as ADR 01–ADR 11). Those identities and rows remain in place; this change neither creates historical acceptance evidence nor bulk-migrates them. PRD [D01–D14](../prd-and-roadmap.md#12-open-decisions-and-fallback-values) are a separate owner-decision register: link a relevant Dxx entry, do not rename it or infer resolution from an ADR title.
+The [architecture decision table](../technical-architecture.md#2-architecture-decisions) already uses ADR01–ADR11 (displayed as ADR 01–ADR 11). Those identities remain stable; a later linked record may partially supersede their scope without rewriting history. PRD Dxx entries are a separate owner-decision register: link a relevant Dxx entry, do not rename it or infer resolution from an ADR title.
 
-Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-title.md`, with heading `ADR-NNNN`; the first unallocated number is currently **0012**. Inspect this index, the target revision and active decision work before assigning a number; coordinate/reconcile collisions before publication. Once published, never renumber or reuse an identity, including a rejected or superseded record. Filename numbers identify decisions, not package/document versions.
+Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-title.md`, with heading `ADR-NNNN`; the next unallocated number is currently **0013**. Inspect this index, the target revision and active decision work before assigning a number; coordinate/reconcile collisions before publication. Once published, never renumber or reuse an identity, including a rejected or superseded record. Filename numbers identify decisions, not package/document versions.
 
-No standalone decision is introduced or newly accepted by this setup. The template is a reusable source, not a decision. Add a real record and an index row when actual significant work needs it; do not create a fictional decision to populate the directory. When an old choice needs extended context, preserve its legacy identifier and link its historical source instead of presenting it as a fresh accepted decision.
+| ID / title | Status | Owner | Scope / related decisions | Record |
+| --- | --- | --- | --- | --- |
+
+ADR-0012 was withdrawn at the owner's direction before adoption; its standalone candidate record was removed in the JV-125 change. The identifier is retired and will not be reused. The accepted product direction is recorded in [PRD D17](../prd-and-roadmap.md#12-decision-register-and-fallback-values) and its owner evidence in JV-124/JV-125.
 
 Each new index row records ID/title, status, owner, relevant requirement/Dxx or legacy ADR references, record link and acceptance/supersession evidence. Keep source and status consistent with the record; do not duplicate its full rationale here.
 

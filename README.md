@@ -1,6 +1,6 @@
 # JARVIS
 
-A self-hosted assistant for managing GitHub development projects, built in-house with TypeScript and Node.js. The v0.1 MVP covers Dependabot monitoring, isolated OpenCode reviews, strict automerge, and a daily digest.
+A self-hosted assistant for owner-directed work on internally authorized software projects, built in-house with TypeScript and Node.js. Version 0.1 supports explicit read-only `plan` and bounded `dev` requests, requested read-only pull-request analysis, validated PR publication without JARVIS merge, and a daily digest.
 
 The repository is maintained in English.
 
@@ -27,7 +27,7 @@ The product roadmap also plans [evidence-driven self-improvement after autonomou
 
 ## Shared agent runtime
 
-OpenCode is the planned common engine for conversation, code review/development and self-improvement through separate trusted profiles. JARVIS owns permissions, memory, budgets, scheduling and external effects. The MVP admits static review only; [J08 general-purpose assistance](https://github.com/grasdouble/Jarvis/issues/64) plans authenticated conversation and approved read-only tools, with weather as the first qualification example. No chat/tool broker/connector is enabled and Herdr is not a dependency. See the [runtime design](docs/common-agent-runtime.md).
+OpenCode is the planned common engine for conversation, code review/development and self-improvement through separate trusted profiles. JARVIS owns permissions, memory, budgets, scheduling and external effects. Version 0.1 supports explicit project-scoped `plan`/`dev` requests, including requested read-only pull-request analysis; repository commands remain disabled absent accepted D16 and qualification. [J08 general-purpose assistance](https://github.com/grasdouble/Jarvis/issues/64) plans authenticated conversation and approved read-only tools, with weather as the first qualification example. No chat/tool broker/connector is enabled and Herdr is not a dependency. See the [runtime design](docs/common-agent-runtime.md).
 
 ## Messaging channels
 

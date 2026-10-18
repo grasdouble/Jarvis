@@ -1,14 +1,14 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.13 • October 18, 2026 • Companion to the PRD and roadmap
+Document version 1.15 • October 18, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
-JARVIS is a TypeScript and Node.js modular monolith deployed as several Docker processes, separated by privilege level. PostgreSQL holds state, the work queue, and audit records. The API serves the React interface; a worker executes the MVP's fixed workflows. An adapter controls headless OpenCode in a new container for every review attempt. The planned common runtime also supports separately qualified conversational and code-work profiles; section 12.10 extends the design without enabling those profiles or changing the MVP. GitHub decisions and actions belong exclusively to the deterministic core.
+JARVIS is a TypeScript and Node.js modular monolith deployed as several Docker processes, separated by privilege level. PostgreSQL holds owner-controlled project/skill configuration, task state, the work queue, and audit records. The API serves the React interface; a worker handles explicit project requests in plan or development mode. An adapter controls headless OpenCode in a new container for every attempt. Plan and writable author profiles are separate and require independent qualification. GitHub reads and effects belong exclusively to the deterministic core; the v0.1 effect ceiling is opening a validated PR, never merging it.
 
 The proposed profile for the Mac M2 Pro uses a sandbox with `network_mode: none`, no mounted macOS files, no GitHub secret, and no provider key. An LLM gateway dedicated to the attempt is accessible through a Unix socket shared in a Docker volume. A local HTTP relay lets OpenCode use it as a provider endpoint. A trusted controller, the sole holder of the Engine socket, transports session commands through a fixed relay launched by Docker exec. This combination avoids opening an OpenCode server on the Mac or granting a network route to the control plane.
 
-This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J01 prototype must demonstrate feasibility with the selected versions; any failure keeps the product in observation mode. Requirements F01 through F10, N01 through N13, and POL 01 through POL 07 refer to the separate [PRD and roadmap](prd-and-roadmap.md).
+This is a proposed architecture to implement. The JARVIS contracts, hardening profiles, and thresholds below are not guaranteed native capabilities of OpenCode or Docker. The J01 prototype must demonstrate feasibility with selected versions; failure blocks the corresponding capability. Requirements and policies refer to the separate [PRD and roadmap](prd-and-roadmap.md); detailed profile, execution, publication and storage decisions remain proposals unless explicitly recorded as owner-selected there.
 
 ## 2 Architecture decisions
 
@@ -18,15 +18,17 @@ The existing ADR01–ADR11 identities below remain stable. Use [project governan
 | --- | --- | --- |
 | ADR 01 Organization | Modular monolith, multiple processes and privilege zones | One repository, one domain model, no requirement for microservices |
 | ADR 02 Persistence | PostgreSQL and a durable SQL queue | No Redis or external bus initially |
-| ADR 03 Runtime | OpenCode through SDK/API, with server and SDK pinned together; a common engine with separately qualified future profiles | No OpenCode plugin or shared personal session; the MVP remains static review |
+| ADR 03 Runtime | OpenCode through SDK/API, with server and SDK pinned together; separate plan and development profiles | No OpenCode plugin or shared personal session; profiles qualify independently |
 | ADR 04 Authority | Policy Engine without an LLM; dedicated GitHub executor | A report cannot trigger a write directly |
 | ADR 05 Sandboxes | One ARM64 container per attempt, without IP networking | Local relay and gateway transport to prototype |
 | ADR 06 Controller | Trusted container with Engine socket and restricted API | Explicit privileged-component risk; no socket in API, worker, or agent |
-| ADR 07 Review | Static repository analysis, no execution | Approved GitHub CI provides test evidence |
-| ADR 08 Merge | Asynchronous GitHub API, expected head, no bypass | Remote confirmation required; queues and stacked PRs excluded |
-| ADR 09 Operations | One task at a time, initial observation mode | Match Mac resources; enable autonomy per repository |
+| ADR 07 Review | Static repository analysis remains available; requested plan/development work has distinct contracts | No repository command execution absent separate D16 acceptance and qualification |
+| ADR 08 Product merge authority | JARVIS does not merge pull requests in v0.1 | Human/GitHub review and merge remain outside JARVIS's authority |
+| ADR 09 Operations | One explicit user-directed task at a time; project allowlist is internal to JARVIS | Match Mac resources; project suspension and global stop remain core-controlled |
 | ADR 10 Host runtime | Colima Docker runtime, dedicated `jarvis` profile, native ARM64 | No Docker Desktop dependency; no macOS directory sharing; validate isolation on the pinned platform |
 | ADR 11 Durable memory | Core-owned PostgreSQL history, checkpoints, and scoped knowledge | Bounded context rebuilt per attempt; no persistent agent home or automatic policy learning |
+
+The owner-selected request modes and project-skill consent model are recorded in [PRD D17](prd-and-roadmap.md#12-decision-register-and-fallback-values). Implementation mechanisms remain proposed and do not grant runtime permissions. The PRD defines the active product requirements and authorization policies.
 
 Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image are pinned at J00. The OpenCode runtime retains its own dependencies, with no assumption about its internal JavaScript engine. PNPM uses an explicit workspace and `workspace:` internal dependencies; versions and the lockfile are checked into version control. [T1](https://nodejs.org/en/about/previous-releases), [T2](https://pnpm.io/workspaces)
 
@@ -37,39 +39,39 @@ Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image ar
 ```text
 Mac M2 Pro
   Browser -> 127.0.0.1:3000 -> API + React interface
-  Optional HTTPS relay -> webhook ingress only
+  `jarvis plan` / `jarvis dev` CLI -> authenticated request API
+  Owner-authenticated request/configuration UI
 
 Colima profile jarvis / Linux VM / Docker Engine
   Private core network
-    ingress -> API -> PostgreSQL
-                    -> worker / scheduler
-                         -> GitHub executor -> GitHub API
-                         -> controller -> Docker Engine
+    API -> PostgreSQL (internal project/skill config, requests, audit)
+        -> worker -> GitHub reader/publisher -> GitHub API
+                 -> controller -> Docker Engine
 
   Ephemeral resources for each attempt
     controller -> fixed Docker exec relay -> OpenCode on loopback
     OpenCode [network none] -> loopback HTTP bridge -> Unix socket
         dedicated transport volume -> LLM gateway -> authorized provider
-    repository snapshot in a dedicated volume, mounted read-only
+    plan snapshot mounted read-only OR dev task workspace mounted writable
     separate OpenCode state and temporary files, destroyed at completion
 ```
 
-The controller shares no network with an agent. The LLM gateway has only an outbound network, with no access to the core network. The transport volume contains only its socket, never a key. The Docker exec channel is a trusted transport initiated by the controller toward an identified container; no Docker API is exposed back into the sandbox.
+The controller shares no network with an agent. The LLM gateway has only an outbound network, with no access to the core network. The transport volume contains only its socket, never a key. The Docker exec channel is a trusted transport initiated by the controller toward an identified container; no Docker API is exposed back into the sandbox. Internal allowlist and skill-consent configuration is read only by trusted core services and is never sourced from a target repository.
 
 ### 3.2 Boundaries and assets
 
 | Boundary | Data crossing the boundary | Controls and residual risk |
 | --- | --- | --- |
-| Internet to ingress | Webhooks untrusted before validation | TLS, size, HMAC, event, and installation; a signature does not make PR text trusted |
-| Browser to API | Session, decisions, and configuration | Authentication, CSRF, Origin checks, expiry, and audit log |
-| Core to GitHub | Reads and write intents | Restricted App, scoped tokens, protections, expected SHA, and verified response |
+| Owner to API | Authenticated requests and configuration changes | Authentication, CSRF, Origin checks, expected versions, and audit log |
+| Browser to API | Session, requests, decisions, and configuration | Authentication, CSRF, Origin checks, expiry, and audit log |
+| Core to GitHub | Reads and task-bound PR publication intents | Restricted App, scoped tokens, expected revision, idempotence, and verified response |
 | Core to controller | Identifiers and bounded profiles | mTLS, mutual authentication, idempotence, closed schema, and quotas |
 | Controller to Engine | Creation, exec, and destruction | Highly privileged access; compromise may affect all containers and shareable files |
-| Repository to runtime | Potentially hostile text and files | Sanitized snapshot, no configuration code loaded, tools denied by default |
+| Repository to runtime | Potentially hostile text, skill instructions, and files | Sanitized snapshot, no automatic config/plugin/skill loading; exact user-approved skill revision only |
 | Runtime to core | Untrusted report and event streams | Schemas, limits, SHA/path cross-checks, and no action authority |
 | Runtime to provider | Code excerpts and prompts | Fixed destination, bounded gateway, budget, and repository authorization; confidentiality also depends on the provider |
 
-GitHub secrets, effective policy configuration, approvals, and the database are control-plane assets. Repository code may be confidential but remains untrusted for execution. The system does not treat a "private" repository or a "Dependabot" PR as a source of trusted instructions.
+GitHub secrets, project allowlist, skill-consent records, effective policy configuration, and database are control-plane assets. Repository code and skill instructions may be confidential but remain untrusted for execution and authority. A repository cannot authorize itself or alter the internal allowlist.
 
 ### 3.3 Covered threats and limitations
 
@@ -112,7 +114,7 @@ This transport requires additional JARVIS code. If streaming proves too complex,
 
 ### 5.1 Static sandbox
 
-The controller applies the profile below to every review attempt. This example represents Engine constraints; it is not a complete Compose file for dynamically creating tasks.
+The controller applies a pinned mode-specific profile to each attempt. The example below is the read-only plan/review baseline; it is not a complete Compose file. A separate development profile must explicitly add only its isolated writable task volume, never a host mount or broader network/credential capability.
 
 ```yaml
 # Profile enforced by the controller
@@ -166,7 +168,7 @@ Keep snapshots, state, transport sockets, and database data in Linux named volum
 
 Application ports bind explicitly to `127.0.0.1`. Verify both the guest bindings and the forwarded Mac listeners, including a negative connection test from another LAN device. Publish neither PostgreSQL, the controller, nor OpenCode. Host networking, devices, host namespaces, and additional sharing features are excluded. Sleep suspends execution: no 24/7 SLA can be promised on a laptop.
 
-Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before automerge resumes.
+Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before affected profiles or publication are re-enabled.
 
 Prefer native `linux/arm64` images, including OpenCode and its tools. An initial sizing proposal is 4 VM CPUs, 8 GiB of VM memory if physical RAM permits, one sandbox capped at 2 CPUs and 4 GiB, and at least 40 GiB free for images, the database, logs, and snapshots. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac. These are design targets, not measured results.
 
@@ -175,6 +177,7 @@ Prefer native `linux/arm64` images, including OpenCode and its tools. An initial
 ```text
 apps/
   api/                 HTTP, sessions, compiled interface
+  cli/                 authenticated `jarvis plan` and `jarvis dev` request client
   worker/              workflows, scheduler, and GitHub executor
   sandbox-manager/     Engine control, no LLM business logic
   llm-gateway/         per-attempt bounded provider transport
@@ -183,7 +186,7 @@ packages/
   domain/              entities, transitions, and pure invariants
   contracts/           types, JSON Schema, errors, and events
   policy/              deterministic evaluator and versioned profiles
-  github/              Octokit, pagination, provenance, and merge
+  github/              Octokit, project reads, and task-bound PR publication
   runtime/             AgentRuntime and common OpenCode adapter
   conversation/        proposed J08 owner/session turns and context lifecycle
   capabilities/        proposed J08 tool registry, broker and provider adapters
@@ -214,11 +217,20 @@ type Revision = {
   repositoryId: string; pullNumber: number;
   headSha: string; baseSha: string; baseRef: string;
 };
-type ReviewRequest = {
-  taskId: string; attemptId: string; revision: Revision;
-  snapshotId: string; profileId: string;
-  policyHash: string; modelProfileId: string;
+type ProjectRequest = {
+  requestId: string; projectId: string; mode: "plan" | "dev";
+  prompt: string; projectConfigVersion: number; policyHash: string;
+  sourceRevision: string; selectedSkillDigests: string[];
   deadline: string; maxCostUnits: number;
+};
+type PlanResult = {
+  summary: string; steps: Array<{ description: string; sources: string[] }>;
+  affectedAreas: string[]; assumptions: string[]; risks: string[];
+  questions: string[]; limitations: string[];
+};
+type PatchResult = {
+  summary: string; artifactId: string; patchDigest: string;
+  changedPaths: string[]; limitations: string[];
 };
 type Finding = {
   severity: "info" | "low" | "medium" | "high" | "critical";
@@ -233,30 +245,32 @@ type ReviewReport = {
   complete: boolean;
 };
 interface AgentRuntime {
-  review(req: ReviewRequest, signal: AbortSignal):
-    Promise<{ report: ReviewReport; artifactDigest: string }>;
+  plan(req: ProjectRequest, signal: AbortSignal):
+    Promise<{ plan: PlanResult; artifactDigest: string }>;
+  develop(req: ProjectRequest, signal: AbortSignal):
+    Promise<{ patch: PatchResult; artifactDigest: string }>;
   cancel(attemptId: string): Promise<void>;
 }
 type Decision = {
   outcome: "allow" | "deny" | "needs_human";
   reasonCodes: string[]; evidenceSnapshotId: string;
-  policyHash: string; actionDigest: string; expiresAt: string;
+  policyHash: string; effectDigest: string; validUntil: string;
 };
 interface PolicyEngine {
   evaluate(input: TrustedPolicyInput): Decision;
 }
 ```
 
-`TrustedPolicyInput` is constructed exclusively by trusted adapters from GitHub snapshots, configuration, and the validated report. It contains revision facts, the classified diff, checks with provenance, reviews, protections, budget, suspension state, and any approval. Model statements cannot populate a "CI passed," "human approval," or "permissions granted" field.
+`TrustedPolicyInput` is constructed exclusively by trusted adapters from the authenticated request, internal project configuration, source revision, and validated plan/patch. It includes explicit mode, project/configuration identity, task path scope, budget and stop state. Model statements cannot populate a "project authorized," "skill approved," "human consent," or "permissions granted" field.
 
-The validator rejects unexpected fields, excessive lengths, non-finite numbers, absolute paths, `..` traversal, and locations absent from the snapshot. `complete: true` is cross-checked against the manifest of files actually provided; the model cannot certify coverage on its own. A narrative summary is never a valid substitute for a `ReviewReport`.
+The validator rejects unexpected fields, excessive lengths, non-finite numbers, absolute paths, `..` traversal, and patch paths absent from the task workspace or allowed scope. The plan/patch schema is mode-specific; plan output can never be interpreted as an edit or PR intent.
 
 ### 8.2 Sandbox contract
 
 ```typescript
 type SandboxSpec = {
   taskId: string; attemptId: string;
-  snapshotId: string; profileId: "review-static-v1";
+  snapshotId: string; profileId: "plan-readonly-v1" | "dev-author-v1";
   modelProfileId: string; deadline: string;
   leaseEpoch: number;
 };
@@ -276,13 +290,15 @@ interface SandboxManager {
 
 | Proposed method and route | Purpose | Constraints |
 | --- | --- | --- |
-| POST /webhooks/github | GitHub reception | Raw body, HMAC, maximum 25 MiB size, no cookie required |
 | POST /api/v1/session | Local login | Rate limiting, hashed password, no secret in the response |
-| GET /api/v1/repositories | Repositories and modes | Authenticated session, cursor pagination |
-| PATCH /api/v1/repositories/:id | Settings and suspension | Expected version, CSRF, audit, permission validation |
-| GET /api/v1/pulls/:id | State, report, and decision | Links to fixed revisions, sanitized content |
-| POST /api/v1/pulls/:id/reviews | Explicit rerun | Idempotency-Key, expected SHA, budget and mode checked |
-| POST /api/v1/approvals/:id/decision | Approve or reject | Expected ActionDigest and version, expiry, CSRF |
+| GET /api/v1/projects | Internally authorized project list | Owner session, cursor pagination; no repository-derived additions |
+| POST /api/v1/projects | Add a project to the internal allowlist | Owner session, stable GitHub identity validation, CSRF, audit |
+| PATCH /api/v1/projects/:id | Project settings, allowlist state and suspension | Expected version, CSRF, audit, policy validation |
+| POST /api/v1/requests | Submit an explicit plan/dev request | Idempotency-Key, owner session, project/mode validation; ambiguity creates clarification only |
+| POST /api/v1/requests/:id/clarification | Answer a pending clarification | Same owner/request, expected version, reauthorize before queueing |
+| GET /api/v1/tasks/:id | Request, plan/patch, status and linked PR | Scoped authorization; sanitized output and immutable revision links |
+| GET /api/v1/projects/:id/skills | Inspect candidate skill revisions | Read-only discovery; content remains untrusted and non-executable |
+| PUT /api/v1/projects/:id/skills/:skillId/approval | Approve/revoke exact skill revision | Explicit owner action, digest/version, CSRF, audit; no command permission |
 | POST /api/v1/control/pause | Durable global stop | Prioritized, authenticated, and audited |
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
 | GET /api/v1/usage | Consumption summary and groupings | Authenticated scope, bounded period/groups, IANA zone, currencies and completeness |
@@ -295,7 +311,7 @@ interface SandboxManager {
 | GET /api/v1/tasks/:id/events | SSE progress | Session, filtered events, no raw sensitive data |
 | GET /health/live and /health/ready | Internal probes | Details not exposed publicly |
 
-An API mutation returns `202` for scheduled work, `409` for an outdated version or revision, `422` for an invalid contract, and `429` for a local limit. A normal business-rule block is a persisted decision with a reason code, not a generic technical error. No "arbitrary merge" endpoint is exposed to the browser or runtime.
+An API mutation returns `202` for scheduled work, `409` for an outdated version or revision, `422` for an invalid contract, and `429` for a local limit. Ambiguity is a persisted clarification, while authorization blocks carry stable reason codes. There is no merge endpoint and no runtime publication endpoint; only the core's validated dev-task workflow can request PR publication.
 
 Controller routes are separate (`/internal/v1/sandboxes`) and are not published. A local network does not provide authentication: internal mTLS, certificate rotation, service identity verification, and route restrictions remain necessary.
 
@@ -306,14 +322,14 @@ Controller routes are separate (`/internal/v1/sandboxes`) and are not published.
 | Repository permission | Minimum mode | Reason |
 | --- | --- | --- |
 | Metadata | Read | Repository and installation identification |
-| Contents | Read in observation mode; write for merging | Snapshots and the merge endpoint |
-| Pull requests | Read; write only when publishing reports | PRs, files, reviews; optional review comment |
+| Contents | Read for project snapshots; narrowly scoped write capability may be required to publish a task branch | Snapshot retrieval and, if selected, deterministic branch publication; exact publication path/permission needs owner/configuration validation |
+| Pull requests | Read; write for the owner-selected dev-mode PR handoff | PR facts and creation for an authorized task; never approve or merge |
 | Checks | Read | Check run state and provenance |
 | Commit statuses | Read | Legacy status contexts |
 | Administration | Read only if needed to inspect effective protections | Branch verification; never write |
 | Actions | Read only if needed to identify the expected workflow | Enable after endpoint-by-endpoint verification |
 
-Issues write, Workflows write, Secrets, Deployments, and Administration write are absent. A review App can remain read-only and separate from the merge App for stronger credential separation; the MVP can use a single merge App, with tokens consistently narrowed by role. `Contents: write` grants more than a merge-only capability, so the executor must remain deterministic and inaccessible to agents. [G6](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps)
+Issues write, Workflows write, Secrets, Deployments, and Administration write are absent. Merge permissions/endpoints are not part of v0.1. Branch publication and PR creation permissions must be minimized for the selected implementation and validated on a test installation; agent containers never receive tokens. Any `Contents: write` capability remains in a deterministic executor inaccessible to agents. [G6](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps)
 
 The App is installed only on selected repositories and is not a bypass actor. The broker creates an installation token limited to one repository and the task's permissions. Tokens expire according to the returned `expires_at`; the documentation specifies one hour. Never assume a fixed token length. The App private key never leaves the trusted service responsible for authentication. [G7](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
 
@@ -321,11 +337,9 @@ The App is installed only on selected repositories and is not a bypass actor. Th
 
 The adapter first reads `GET /repos/{owner}/{repo}/rules/branches/{branch}` for active rules from applicable rulesets, including organization-level rules. This endpoint requires Metadata read permission. It supplements this with classic branch protections when present; inspecting these may require Administration read permission. A 403 does not prove that a rule is absent. The need for this additional permission is therefore assessed per repository rather than granted universally. [G10](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch)
 
-Review conversations and their resolved state are read through a read-only GitHub adapter, using GraphQL if the selected REST endpoints cannot provide the required evidence. Missing usable data blocks merging when resolution is required. This contract is part of the live pilot repository test.
+Review conversations and their resolved state may be read for explicit PR-analysis tasks through a read-only GitHub adapter. Missing evidence is surfaced as a limitation; no JARVIS merge decision is made.
 
-Subscribe only to events that are used: `pull_request`, `pull_request_review`, `check_run`, `check_suite`, `status`, installation and repository-access events; `push` for the target branch, and conversation events if tracked. Exact subscription and permission rules are validated with a test installation. Reconciliation also rereads missing or stale facts.
-
-Dependabot detection uses the bot identity obtained from GitHub metadata and matches it against the platform's expected identity. It cross-checks branch origin and manifests without trusting the title, body, or labels. A signed event is still a change notification; current state is read from the API again.
+Read current GitHub facts when admitting an explicit task and immediately before publication. A repository-provided label or other repository content never substitutes for current trusted state.
 
 ## 10 OpenCode and interchangeable providers
 
@@ -339,15 +353,15 @@ Output is validated against a JARVIS JSON Schema. A native structured-output cap
 
 ### 10.2 Controlled configuration and permissions
 
-OpenCode has several configuration layers, including project files and `.opencode` directories. Setting only `OPENCODE_CONFIG` does not automatically neutralize repository configuration. [O3](https://opencode.ai/docs/config/) JARVIS therefore prepares a separate read-only analysis snapshot: no executable `.git` configuration, hooks, active OpenCode configuration, MCP, plugins, or automatic repository skill loading. Files of these types are retained as text in a neutralized location if they need to be analyzed.
+OpenCode has several configuration layers, including project files and `.opencode` directories. Setting only `OPENCODE_CONFIG` does not automatically neutralize repository configuration. [O3](https://opencode.ai/docs/config/) JARVIS therefore prepares profile-specific workspaces: a read-only plan snapshot and a separate writable dev task workspace. Neither loads repository `.git` configuration, hooks, active OpenCode configuration, MCP servers, plugins, or skills automatically. Candidate project skills are treated as data and inspected; only an exact revision explicitly approved in JARVIS's internal project configuration may supply instructions. Files not loaded are retained as inert text only when needed for the task.
 
 The prototype also checks recognized instruction files, parent-directory searches, remote configuration, and custom agents. The image starts with no preexisting OpenCode user identity or stored credential. Managed settings in the selected version can supplement this approach, but a permission list is not enough to stop a plugin from executing at startup: loading must be prevented.
 
-The profile starts by denying all tools and explicitly allows only the required file reads, file searches, and content searches. `bash`, edit, webfetch, websearch, task/subagents, skills, LSP, MCP, and custom commands are prohibited. No blanket automatic approval is enabled. An unexpected interactive permission request is denied and surfaced as a review limitation. OpenCode permissions are an application layer; the sandbox and remote permissions form the effective boundary. [O4](https://opencode.ai/docs/permissions/)
+The plan profile denies all tools except required reads/searches. The development profile allows only isolated workspace editing and required reads/searches; no GitHub tool, host tool, arbitrary shell, plugin, MCP, task/subagent, or command is enabled. Repository scripts/tests remain disabled pending D16. JARVIS skills are loaded only from a pinned trusted bundle; project skills are supplied as inert, consented instruction content, not executable runtime configuration. No blanket automatic approval is enabled. An unexpected permission request is denied and surfaced. OpenCode permissions are an application layer; sandbox and remote permissions form the effective boundary. [O4](https://opencode.ai/docs/permissions/)
 
 ### 10.3 Two LLM abstraction levels
 
-`ModelProfile` contains the provider, model, capabilities, maximum context, output limits, data rules, versioned prices, and authorized repository list. The core may use a `TextGenerator` port for an optional digest. Review is delegated to the `AgentRuntime` port; its adapter translates the profile into OpenCode provider configuration and the gateway endpoint.
+`ModelProfile` contains the provider, model, capabilities, maximum context, output limits, data rules, versioned prices, and authorized project set. The core may use a `TextGenerator` port for an optional digest. Plan and dev missions are delegated to distinct qualified `AgentRuntime` profiles; an adapter translates the trusted profile into OpenCode configuration and gateway endpoint. Runtime output cannot select the project or change task authorization.
 
 OpenCode documents multiple providers and local models. This does not guarantee equivalent tool calling, streaming, or JSON behavior across every combination. [O5](https://opencode.ai/docs/providers/) The MVP compatibility matrix qualifies two authorized providers with the socket bridge, authentication, limits, and output contract. Switching providers remains a configuration operation without changing the domain.
 
@@ -360,12 +374,14 @@ Fallback is limited to a per-repository approved list with the same confidential
 | Table | Key fields | Constraints and purpose |
 | --- | --- | --- |
 | installations | github_id, app_id, state, revoked_at | Unique external identity; revocation immediately blocks tasks |
-| repositories | github_id, installation_id, mode, config_version | Unique repository; references stable across renames |
-| policies | id, version, canonical_json, hash, activated_at | Immutable versions; active configuration per repository |
-| webhook_deliveries | delivery_id, event, payload_hash, received_at, state | Unique per App and delivery_id; payload redacted or purged promptly |
-| pull_requests | repository_id, number, head_sha, base_sha, remote_state | Unique repository and number; current-state projection |
+| projects | github_id, owner_id, state, config_version | Internal owner-controlled allowlist; stable identity, never provisioned from repository files |
+| project_config_versions | project_id, version, policy_hash, provider_profile, limits, permissions, created_by | Immutable audited internal project configuration |
+| project_skill_approvals | project_id, skill_id, revision_digest, decision, actor_id, config_version, decided_at | Exact revision consent stored internally; revocation/change invalidates selection |
+| requests | request_id, owner_id, project_id, mode, prompt_digest, state, idempotency_key | Authenticated explicit request; clarification is not an admitted task |
+| policies | id, version, canonical_json, hash, activated_at | Immutable core-controlled policies; agent output cannot write |
+| pull_requests | project_id, number, head_sha, base_sha, remote_state | Unique project and number; current-state projection |
 | evidence_snapshots | revision, checks_json, reviews_json, rules_json, fetched_at, hash | Immutable evidence from trusted adapters |
-| tasks | revision, type, profile_hash, policy_hash, state, dedupe_key | Unique logical key per revision and profiles |
+| tasks | project_id, request_id, mode, revision, profile_hash, policy_hash, config_version, state, dedupe_key | Explicit request and mode bound to allowlist/configuration snapshot |
 | task_attempts | task_id, ordinal, lease_epoch, lease_until, sandbox_id, state | Append-only attempt history; absolute deadline |
 | task_checkpoints | task_id, attempt_id, lease_epoch, step, schema_version, state_json, created_at | Core-authored bounded workflow state; no arbitrary command or provider session replay |
 | knowledge_items | repository_id, id, current_version, lifecycle_state, deleted_at | Stable identity, scoped authorization, lifecycle serialization |
@@ -373,9 +389,8 @@ Fallback is limited to a per-repository approved list with the same confidential
 | task_contexts | task_id, attempt_id, repository_id, schema_version, profile_hash, input_hashes, selected_versions, omissions, budget, created_at | Manifest of inputs and memory versions; no duplicate raw excerpts |
 | forgotten_items | repository_id, item_id, forgotten_at | Content-free deletion markers, also exported separately for restore reconciliation |
 | review_reports | task_id, attempt_id, schema_version, report_json, digest | Immutable report; one accepted canonical version per task |
-| policy_decisions | evidence_id, report_id, policy_hash, outcome, reasons, action_digest, expires_at | Decisions never modified in place |
-| approvals | action_digest, actor_id, decision, expected_version, expires_at, consumed_at | Atomically consumed approval; explicit invalidation |
-| action_intents | action_key, revision, decision_id, state, remote_uuid, merge_sha | Unique logical action; unknown result distinct from failure |
+| policy_decisions | request_id, evidence_id, artifact_digest, policy_hash, outcome, reasons, effect_digest | Decisions never modified in place |
+| action_intents | action_key, task_id, revision, kind, state, remote_id | Unique logical publication action; unknown result distinct from failure; no merge intent in v0.1 |
 | outbox | id, aggregate_id, event_type, payload, available_at, delivered_at | Event written in the same transaction as domain state |
 | scheduled_runs | schedule_id, local_date, period_start, period_end, state | Unique per schedule and logical occurrence |
 | daily_digests | scope_id, local_date, source_watermark, body, totals_json | One current version per date; totals retain provenance |
@@ -389,9 +404,9 @@ GitHub identifiers are stored as `bigint` or text and serialized as API strings 
 
 ### 11.2 Relationships and integrity
 
-An installation has multiple repositories; a repository has multiple PRs and rule versions. A PR has several revision-bound tasks; a task has multiple attempts and reports, but only one active canonical decision per action. A decision references an evidence snapshot and a report. An approval references the action digest; a merge intent references the decision and retains the GitHub result.
+An installation can serve multiple internally allowlisted projects. A project has immutable configuration versions, exact-revision skill-consent records, requests, and pull requests. Each task binds the project identity/configuration, explicit mode, task prompt digest, source revision, profile, policy, and selected skill digests. A decision references the request and evidence. Publication intents reference one authorized dev task; no merge intent is defined for v0.1.
 
-Composite foreign keys, including repository and PR where necessary, prevent a report from repository A from authorizing an action on B. Transitions check within the transaction that the PR revision is still current. A partial index or domain-lock constraint prevents two active intents for the same PR. Deleting secrets and temporary artifacts is independent of retaining minimal audit evidence.
+Composite foreign keys and authorization checks prevent a report, skill approval, or task from project A authorizing an action on B. Task admission and effect dispatch recheck current project authorization, configuration version, skill revision, task mode, and expected source revision. A partial unique key prevents duplicate PR-publication intents for one task. No memory, skill content, or model message can insert or mutate internal authorization rows. Deleting secrets and temporary artifacts is independent of retaining minimal audit evidence.
 
 Application audit records are not tamper-proof against a PostgreSQL administrator or compromised Engine control. A hash chain and regular exports can make changes detectable; a regulatory guarantee would require dedicated external storage, outside scope.
 
@@ -417,7 +432,7 @@ For each attempt, the core performs the following bounded procedure:
 1. Resolve the authorized repository and current H/B through trusted adapters; read the active policy separately from knowledge.
 2. Filter by repository, lifecycle state, review deadline, source validity, and applicability to the current dependency, paths, and revisions. The initial default supplies only owner-validated knowledge as additional memory; recent unvalidated reports remain visible in history and may inform a proposal, not automatic reuse.
 3. Rank eligible items using exact metadata matches and PostgreSQL full-text search, with deterministic recency and identifier tie-breaking. PostgreSQL supports indexed text matching and relevance ranking; JARVIS must implement the authorization and lifecycle filters itself. [P3](https://www.postgresql.org/docs/current/textsearch-intro.html)
-4. Select at most 10 items within 4,000 tokens and 32 KiB in total. These are proposed defaults within the selected runtime's complete input/output context allowance. Use the provider/model tokenizer or a conservative bound; no known token budget means no start. Required mission and current evidence take priority. If critical input cannot fit, return a limited review ineligible for automerge. Record omitted items and contradictions without generating an unsupported consensus.
+4. Select at most 10 items within 4,000 tokens and 32 KiB in total. These are proposed defaults within the selected runtime's complete input/output context allowance. Use the provider/model tokenizer or a conservative bound; no known token budget means no start. Required mission and current evidence take priority. If critical input cannot fit, return an explicitly limited plan or stop development before publication. Record omitted items and contradictions without generating an unsupported consensus.
 5. Persist a context manifest containing input hashes, knowledge versions, retrieval/profile version, and limits. Deliver selected excerpts as explicitly quoted, untrusted reference data through the controller transport; do not provide database access or a searchable history dump to the agent.
 6. Bind the accepted report to that manifest. Before accepting it, verify that the selected versions have not been deleted, invalidated, expired, or superseded. A conflicting edit cancels the attempt and schedules fresh analysis if authorized. Current GitHub checks and protections are still reread before any action.
 
@@ -429,7 +444,7 @@ Use `proposed`, `validated`, `invalidated`, `expired`, and `deleted` lifecycle s
 
 Proposals initially expire after 30 days. Validated items require review within 90 days and are excluded after that deadline unless explicitly revalidated. Changed supporting files/revisions invalidate revision-specific claims; dependency claims apply only within their declared version range. When the core cannot establish applicability or supporting evidence has been purged, it excludes the item and requests review. Revalidation must retain a minimal supporting citation under the selected knowledge retention policy rather than copying entire expired reports.
 
-Deletion atomically marks an item forgotten and makes it immediately ineligible for new context selection. The worker cancels affected active attempts, invalidates pending decisions/approvals whose reports used it, purges content and derived search data within 60 seconds, and clears in-process caches. Context manifests keep only identifiers and hashes. Historical reports containing the forgotten content must also be purged or redacted; the interface explains the scope. Retained audit metadata contains no memory text. Knowledge deletion does not retract an already accepted GitHub effect, which remains tracked through its outcome.
+Deletion atomically marks an item forgotten and makes it immediately ineligible for new context selection. The worker cancels affected active attempts, invalidates pending task/publication eligibility that depended on its context, purges content and derived search data within 60 seconds, and clears in-process caches. Context manifests keep only identifiers and hashes. Historical reports containing the forgotten content must also be purged or redacted; the interface explains the scope. Retained audit metadata contains no memory text. Knowledge deletion does not retract an already accepted GitHub effect, which remains tracked through its outcome.
 
 Encrypted backup copies disappear according to the documented backup rotation rather than instant physical erasure. Keep a minimal content-free forgetting ledger in a separate trusted administrative export, updated before confirming completion. On restore, reconcile that ledger and reapply deletions before exposing memory or resuming tasks. Test this procedure with a backup made before deletion; never claim immediate removal from provider-side retention or immutable backups.
 
@@ -439,76 +454,74 @@ Task recovery uses a lease-bound core checkpoint, not an agent-written command l
 
 ### 12.1 States
 
-A task follows `queued -> preparing -> running -> validating -> completed`. Alternative terminal states are `failed`, `cancelled`, `timed_out`, and `superseded`. A recoverable failure closes an attempt and requeues the task with a new attempt; it does not reuse a partially compromised sandbox. The merge policy decision is a separate entity.
+A request follows `received -> clarifying` or `authorized -> queued -> preparing -> running -> validating -> completed/limited/blocked`. A plan task can only return a plan; a dev task may validate a patch and prepare a PR intent. Alternative terminal states include `failed`, `cancelled`, `timed_out`, and `superseded`. A recoverable failure closes an attempt and requeues with a new attempt; it does not reuse a partially compromised sandbox.
 
 A decision can deny an action, require human input, or authorize an intent. An intent follows `prepared -> dispatched -> pending_remote -> confirmed`, with alternative states `rejected`, `unknown`, and `cancelled_before_dispatch`. `unknown` is never treated as `failed`, because a remote effect may already have occurred.
 
 ### 12.2 Ingestion and reconciliation
 
-1. Ingress limits size, retains the raw body bytes, and verifies HMAC-SHA256 before parsing JSON. Comparison uses constant time. [G2](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)
-2. It validates the type, action, and installation identifier, then inserts the delivery and outbox entry in a transaction. A known identifier with the same hash is acknowledged; a different hash triggers an alert and no additional work.
-3. Ingress returns 2xx after commit. The internal target is below 2 seconds at p95; GitHub requires a response within 10 seconds. A persistence failure returns an error rather than acknowledging a delivery that would be lost. [G3](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks)
-4. The worker rereads current GitHub state, updates the PR projection, and creates the task using its business key. An old event never resets the head to a previous SHA.
-5. Every 15 minutes, and on recovery, a paginated scan of open PRs and unconfirmed operations compensates for lost events. It uses ETags where appropriate, periodic full audits, and rate limiting.
+1. The authenticated API validates request size, owner session, idempotency key, selected project identity, and explicit `plan`/`dev` mode.
+2. The core reads the current internal allowlist/configuration. If the project or intent/mode is ambiguous, it records a clarification request without creating a model attempt or external effect.
+3. For an authorized request, the core persists the immutable request, configuration version and task intent transactionally, then rereads current project/revision facts through trusted adapters.
+4. A task is created with a unique business key. Duplicate requests return the existing canonical task; old or stale source revisions cannot silently reset a task's binding.
+5. On restart, reconcile leases and unconfirmed PR-publication operations before resuming authorized work.
 
-### 12.3 Snapshot preparation and review
+### 12.3 Snapshot preparation and task execution
 
 The GitHub service resolves H and B and downloads the exact trees or archives with a read token. No clone token is given to the runtime. Downloads use approved GitHub origins and verified redirects; Authorization is not forwarded to an arbitrary host. Submodules and Git LFS are not resolved automatically.
 
-A trusted preparer neutralizes absolute paths, traversal, special files, escaping symbolic links, excessive decompressed sizes, and malicious archives. The initial profile enforces limits of 250 MiB decompressed, 20,000 files, and a 200 KB diff; beyond these limits, a partial review is possible but automerge is rejected. Base and head snapshots and a manifest of exclusions are retained under opaque identifiers and hashes. The manifest parser works on original raw files; the runtime receives a sanitized view with traceable mappings.
+A trusted preparer neutralizes absolute paths, traversal, special files, escaping symbolic links, excessive decompressed sizes, and malicious archives. Base/source snapshots and a manifest of exclusions are retained under opaque identifiers and hashes. The plan profile mounts the sanitized snapshot read-only. The dev profile mounts a separate per-attempt writable task workspace; its output is treated as an untrusted patch and validated against path, size, symlink, and task-scope limits before any publication. Repository commands, installation and tests remain disabled until D16 is accepted and an execution profile is qualified.
 
-The controller copies the validated snapshot into a dedicated volume through the Engine channel, without extracting repository data onto the Mac. The snapshot is mounted read-only in the agent. The controller creates the gateway, state, and sandbox, checks health and configuration, and then the adapter creates a session and sends the fixed mission with the bounded context assembled under section 11.4. On receipt, the core validates the report, cross-checks paths and revision, persists usage and the result, and requests destruction even on failure. An independent janitor provides a second cleanup mechanism.
+The controller copies validated inputs into dedicated volumes through the Engine channel, without extracting repository data onto the Mac. The controller creates the gateway, state, and mode-specific workspace, checks health and effective configuration, and then the adapter sends the fixed mission with bounded context assembled under section 11.4. The core validates report or patch, cross-checks project/mode/path/revision and selected skill digests, persists usage/result, and destroys the sandbox even on failure. An independent janitor provides a second cleanup mechanism.
 
-### 12.4 Decision and approval
+### 12.4 Request authorization and skill consent
 
-For an immediate action, the engine receives a fact snapshot less than 60 seconds old. It checks every POL condition from the PRD, then builds `actionDigest` from the repository, PR number, H, B, target reference, method, report, policy, and validation profile. A material change to any of these invalidates the approval. Checks and reviews are reread at execution; any blocking difference cancels the action even if the approved digest still matches.
+Admission is performed by the deterministic core against authenticated owner identity and the current internal project allowlist. The admitted task records project stable identity, request/mode, project configuration version, policy/profile digests, source revision, and selected context. Any ambiguity is returned for owner clarification before an attempt is created.
 
-The API accepts a human decision with the expected version and an idempotency key. A transaction checks the session, current SHA, expiry, and unconsumed state, then records the decision. The approval is atomically consumed when preparing the intent; a network timeout does not reuse it for a different intent.
+Project skills are enumerated as untrusted data. Before use, the owner sees the skill identity and exact digest/revision; the core stores explicit approval only in internal project configuration. Admission checks that same digest before including its instruction text. A changed, revoked, or unverifiable revision is excluded until its exact revision is approved. Skill consent does not confer command execution, provider, filesystem, GitHub, or broader project permissions.
 
-### 12.5 Merge and revision races
+### 12.5 PR publication and revision races
 
-1. Acquire an exclusive action lease for the PR and reread suspension, mode, budget, and policy version.
-2. Reread GitHub: H, B, state, classified diff, checks, reviews, and effective rules. If `mergeable` is unknown, wait and retry within a bounded window; never infer "true."
-3. Reject any mismatch with the report or approval. Require active protections with no bypass and up-to-date CI according to the profile. Prepare the decision and intent in a durable transaction.
-4. Send `PUT /repos/{owner}/{repo}/pulls/{number}/merge-async` with `sha: H`, the approved `merge_method`, `merge_action: direct_merge`, and `bypass_rules: false`. The profile excludes stacked PRs and branches requiring a merge queue. [G1](https://docs.github.com/en/rest/pulls/pulls)
-5. Store the returned UUID, track `pending`, `merged`, or `failed`, then reread PR state. A `202` response indicates only acceptance for processing. A `409` indicating an existing operation must be reconciled with the intent, not automatically interpreted as a changed head.
-6. Record the observed merge SHA and actor. If the network fails before the response is known, enter `unknown` and reconcile PR state; do not resend the request blindly.
+1. Acquire an exclusive task/publication lease; recheck owner/project authorization, suspension, mode, configuration and policy versions, budget, and stop epoch.
+2. Reread repository identity and target/base revision through the trusted GitHub adapter. A changed authorization, source revision, or task scope invalidates the candidate and requires revalidation or a new attempt.
+3. Validate the patch independently of the model: permitted project and task, exact path set, file types, size, symlinks, diff integrity, and source/base binding. A dev profile cannot request broader scope or add an approval.
+4. Persist an idempotent PR-publication intent bound to the task, base/head, patch digest, target branch, selected policy and publisher profile. Use only a trusted executor with a narrowly scoped installation token; no token enters OpenCode.
+5. Publish the branch/PR using the selected GitHub API strategy. The exact branch-write mechanism and minimum App permissions remain an implementation qualification item; do not grant merge or bypass permissions. Record the remote PR identity and reconcile after uncertain responses before any retry.
+6. Return confirmed, failed, or unknown publication status. An unknown result is never treated as failure or retried blindly. JARVIS does not call any merge endpoint in v0.1; subsequent human/GitHub review and merge remain external.
 
-The `sha` parameter is a precondition on the head. It does not atomically compare B with the base. GitHub rules requiring checks and an up-to-date branch remain the enforcement barrier at remote execution; the App must never be able to bypass them. If the repository requires human review, JARVIS analysis does not replace it. A local policy cannot guarantee cancellation of a request already accepted by GitHub.
-
-Support for the asynchronous endpoint is verified against the chosen API version, recorded in configuration and tested on GitHub.com. The documentation consulted recommends this endpoint. Future GHES compatibility will require its own matrix; no silent fallback to another endpoint or merge mode is planned.
+GitHub branch protections and required reviews remain authoritative. A PR creation result does not mean checks passed, review was granted, or merge is authorized. Endpoint/API version and selected write permissions must be tested on a disposable repository before publication is enabled.
 
 ### 12.6 CI evidence and provenance
 
 For each piece of evidence, JARVIS retains the evaluated SHA, name, type, run identifier, issuer, conclusion, and timestamps. Check runs and commit statuses are read separately and paginated. Absence is not success. An aggregate `success` result alone does not prove that a configured check exists. [G8](https://docs.github.com/en/rest/checks/runs), [G9](https://docs.github.com/en/rest/commits/statuses)
 
-The profile verifies expected checks on the relevant commit. GitHub may require results on a test merge commit instead of H; JARVIS resolves this association and blocks if it cannot bind the evidence to the reviewed combination. GitHub may accept some neutral/skipped outcomes; JARVIS applies a stricter requirement for explicit success and also blocks skipped critical jobs when detectable. [G5](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
+When a request asks for CI context, the adapter binds each reported check to its evaluated SHA and displays missing/ambiguous evidence as a limitation. JARVIS v0.1 does not convert check state into merge eligibility. [G5](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
 
-For GitHub Actions, a shared `app_id` does not distinguish two workflows: the pilot repository must identify the expected validation workflow and jobs. A workflow modified by the PR is excluded from automerge. Pipelines using PR code with powerful secrets, particularly unsafe uses of `pull_request_target`, are fixed or excluded from the pilot. JARVIS cannot make an insecurely designed CI system trustworthy.
+For GitHub Actions, a shared `app_id` does not distinguish workflows. A user-requested validation assessment must identify expected workflows/jobs and disclose if a workflow is changed by the candidate. Pipelines using PR code with powerful secrets, particularly unsafe uses of `pull_request_target`, remain a project risk; JARVIS cannot make an insecure CI design trustworthy.
 
 ### 12.7 Digest and catch-up
 
 The scheduler determines the daily occurrence in Europe/Paris and records its UTC boundaries. Uniqueness is based on local date and scope, not a fixed 24-hour interval. On restart, it produces a catch-up digest covering missed days, indicating the interruption in monitoring.
 
-Action totals and lists come from SQL queries over confirmed facts. Optional LLM-written prose receives these facts and links under a separate budget; if generation fails, a deterministic template remains available. Outbound links and Markdown are sanitized. Merges in `unknown` state are never presented as successful.
+Task and PR totals/lists come from SQL queries over confirmed facts. Optional LLM-written prose receives these facts and links under a separate budget; if generation fails, a deterministic template remains available. Outbound links and Markdown are sanitized. PR-publication operations in `unknown` state are never presented as successful.
 
 <!-- Preserve previously published section links. -->
 <a id="128-proposed-v03-autonomous-delivery"></a>
 
 ### 12.8 Proposed autonomous delivery
 
-This extension is planned in [JV-044](https://github.com/grasdouble/Jarvis/issues/44), with profile/policy, author/publication, review/repair and qualification slices JV-045–JV-048. It does not change MVP contracts or enable writable agent tools. The session-driven [contributor procedure](autonomous-delivery.md) is a separate development capability.
+This extension is planned in [JV-044](https://github.com/grasdouble/Jarvis/issues/44), with profile/policy, autonomous issue selection, independent review/repair and qualification slices JV-045–JV-048. It is distinct from the v0.1 explicit user-requested dev workflow: J06 adds autonomous issue-to-PR delivery and its separately selected routine merge policy, not the first writable product profile. The session-driven [contributor procedure](autonomous-delivery.md) is a separate development capability.
 
 Reuse domain/policy, orchestration, runtime ports, sandbox-manager, persistence and GitHub executor modules in the PNPM modular monolith. Keep role-specific adapters behind typed ports; no OpenCode plugin or second general-purpose planner is required. Core alone selects context, validates outputs and owns credentials/effects.
 
 - **Author attempt:** isolated writable task volume; sanitized scoped issue/base snapshot; export a bounded patch/artifact. No host shares, Engine socket, GitHub credentials or permanent provider key. A trusted validator rejects traversal, symlinks, unexpected artifacts and out-of-scope changes before publication.
 - **Reviewer attempt:** new read-only snapshot/context bound to exact base/head and accepted criteria, separate from author conversation/state. The core verifies coverage, paths and reviewer-attempt provenance. Findings and `approved`/`changes_requested`/`limited` are model assessments; no field becomes native approval or merge authority.
-- **Validation executor:** separately qualified repository-command environment, without LLM gateway or GitHub/provider credentials. Dependency acquisition, egress, quotas and artifact channels need an accepted profile; never relax the static MVP sandbox automatically.
-- **Publisher/merge controller:** validates scope and authenticated CI/protection/review facts, prepares durable intents, publishes via trusted GitHub adapters and rechecks revision-bound eligibility. Routine automation requires explicit per-repository policy; sensitive/unknown changes retain human approval. No author/reviewer bypass or personal credential fallback.
+- **Validation executor:** separately qualified repository-command environment, without LLM gateway or GitHub/provider credentials. Dependency acquisition, egress, quotas and artifact channels need an accepted profile; do not inherit or silently widen the v0.1 dev profile.
+- **Publisher/merge controller:** extends v0.1 trusted PR publication for autonomous issue delivery and any separately accepted merge capability. It validates scope and CI/protection/review facts, prepares durable intents, and rechecks revision-bound eligibility. Routine automation requires explicit per-project policy; sensitive/unknown changes retain human approval. No author/reviewer bypass or personal credential fallback.
 
 Proposed durable records extend the existing schema with `delivery_runs` (issue/PR/branch claim, authorization/policy versions, state, limits/spend/start/deadline, stop epoch), `delivery_rounds` (run/round/base/head, author/reviewer attempt IDs, validated report digest), `delivery_findings` (stable ID, location, blocking severity, disposition/evidence) and publication intents. Unique keys bind run/round/role and remote effect targets; leases and inbox/outbox prevent duplicate work. A PR comment is an audit projection, not the authoritative run ledger. Validate final schemas in JV-045 rather than declaring these tables installed.
 
-Transitions: authoring → validating → publishing → reviewing; requested fixes go through fixing → validating → reviewing on a new revision. Complete clean evidence goes to eligible or needs_human, then the existing guarded merge intent and confirmed delivered state. Persist limited/blocked/exhausted/cancelled and uncertain-effect states explicitly. Every relevant revision/policy/evidence change invalidates eligibility. Reread/reconcile PRs, comments, refs, reviews and merge outcomes before retrying ambiguous effects; never reuse an approval for a different action digest.
+Transitions: authoring → validating → publishing → reviewing; requested fixes go through fixing → validating → reviewing on a new revision. Complete evidence goes to eligible or needs_human under J06 policy, then a separately authorized merge intent where policy allows. Persist limited/blocked/exhausted/cancelled and uncertain-effect states explicitly. Every relevant revision/policy/evidence change invalidates eligibility. Reread/reconcile PRs, refs, reviews and merge outcomes before retrying ambiguous effects; never reuse an approval for a different action digest.
 
 The core enforces owner-configured finite review-round, time, token/currency and resource limits across crashes and retries. Exceeding a limit stops the run and records the required owner action; model output cannot extend it. Cancellation/revocation invalidates leases and future effects. UI/digest expose rounds, findings/dispositions, costs, head/base, approval gates and actual remote results. Qualification includes stale reviews, malicious suggestions, CI/protection changes, forked/renamed paths, duplicate events, lost responses, restore/revocation and zero unauthorized effects in a controlled pilot. See P11 and D12 in the PRD.
 
@@ -543,13 +556,13 @@ UI/digest show every proposal and disposition, sources, revisions, fixed protoco
 
 [JV-064](https://github.com/grasdouble/Jarvis/issues/64) and children JV-065–JV-068 plan a post-MVP conversational capability in J08, with no committed version/date and no automatic dependency on J06/J07. The [shared runtime/capability contract](common-agent-runtime.md) defines full profiles, contracts, trust boundaries, recovery and qualification. Reuse the PNPM modular monolith and headless OpenCode adapter; JARVIS retains deterministic authorization, persistence/memory, budgets, scheduling, secrets and external-effect ownership. No second agent framework, Herdr service or OpenCode plugin is required.
 
-Keep `AgentRuntime.review` and required revision-bound static-review validation intact. Add a versioned tagged mission/result port for general requests versus exact repository/revision work, bound to authenticated owner/session/turn/attempt, trusted released profile/policy/tool/model digests, context manifest, reservation, deadline, fence and stop epoch. General requests require neither repository nor issue. Model-suggested tools/profile changes are requests for deterministic admission; unsupported or ambiguous requests return limits/clarification, not escalation. Conversation, code author, independent reviewer and self-improvement use distinct attempts and context/tool scopes.
+Keep v0.1 plan/dev request contracts and exact repository/revision binding distinct from J08 conversational turns. Add a versioned tagged mission/result port for general requests, bound to authenticated owner/session/turn/attempt, trusted released profile/policy/tool/model digests, context manifest, reservation, deadline, fence and stop epoch. General requests require neither repository nor issue. Model-suggested tools/profile changes are requests for deterministic admission; unsupported or ambiguous requests return limits/clarification, not escalation. Conversation, v0.1 code author, independent reviewer and self-improvement use distinct attempts and context/tool scopes.
 
 The future `assistant-readonly-v1` profile has no repository/host mount, Engine socket, shell/edit/delegation tools, permanent key, GitHub writes or direct network. Expose only admitted typed capabilities through a separately qualified narrow per-attempt transport, such as a guest-volume socket with controlled MCP stdio or a typed adapter bridge. Core validates identity, schema, catalog/policy, arguments, scope, limits and current stop/lease before a trusted executor calls the allowlisted service. Keep service secrets and outbound networking outside the agent, and constrain redirects, DNS/IPv4/IPv6, response sizes and timeouts. Do not turn the LLM gateway into a generic proxy or load repository/global tool configuration. Missing proof under pinned OpenCode/Colima disables the new profile while leaving the MVP restrictions in place.
 
 Extend proposed records with owner-scoped conversations/turns and capability invocations/results, using existing persistence, queue, memory, policy and observability ports. Unique message and invocation keys, fenced claims, durable intents and remote rereads reconcile duplicates, reconnect/restart and unknown effects without resetting limits. Conversation context is bounded and separate from repository knowledge; provenance, sensitivity, expiry and forgetting apply to raw/derived data and restored backups. Conversation persistence and reusable knowledge need accepted D14 retention/consent. Record model plus tool costs and partial/cancelled/unknown outcomes without raw private log dumps. A model answer, closed turn or tool result cannot authorize GitHub actions, promotion or activation.
 
-The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; the v0.1 API/sandbox and J06/J07 gates remain unchanged.
+The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; all capabilities remain subject to their applicable authorization, isolation and qualification gates.
 
 ### 12.11 Proposed messaging channels
 
@@ -565,19 +578,17 @@ The paired private sender maps to existing owner scope, not a broader approval r
 
 | Level | Key and mechanism | Intended guarantee |
 | --- | --- | --- |
-| Ingestion | Unique App + delivery_id, body hash | Replaying a delivery does not recreate work |
-| Task | Repository + PR + H + B + type + hashes of profiles and policy | Coalesce semantically identical events |
+| Request intake | Owner + Idempotency-Key + request digest | A replay returns the canonical request; a changed payload conflicts |
+| Task | request_id + project/configuration/policy/profile versions + source revision | A replay returns the canonical task; retries create new leased attempts only under core policy |
 | Attempt | task_id + ordinal, monotonic lease_epoch | Retry history and rejection of stale worker results |
 | Sandbox creation | Unique attempt_id in the controller | A lost response does not create a second container |
-| Decision | actionDigest + expected version | Approval limited to the reviewed action |
-| GitHub effect | Unique action_key, durable intent, and reconciliation | Avoid repeating an effect after an unknown response |
+| Authorization | request_id + mode + project/configuration/policy revision | Core rechecks current allowlist and task scope; skills cannot grant permission |
+| PR publication | dev_task_id + patch digest + base/target revision, durable intent | Reconcile unknown outcomes before retry; no merge or approval intent |
 | Digest | scope + local_date | One logical occurrence despite daylight saving time and recovery |
 
 Internal delivery is at least once. The system does not promise distributed exactly-once behavior between PostgreSQL and GitHub. The outbox makes local state and the processing request atomic; remote effects are reconciled against their intent and the outcome actually observed.
 
-For a published report, a stable action-bound marker makes it possible to find and update an existing comment after a failure. Before creation, the executor searches for that marker; if the result is uncertain, it waits for reconciliation. Permissions remain `Pull requests: write` and the review type is `COMMENT`; no `APPROVE` review is generated.
-
-A task-completion event from an older lease epoch is retained for diagnostics, but cannot replace the canonical report or create an intent. A local lock alone is insufficient: the controller and transactions also verify the lease epoch.
+A task-completion event from an older lease epoch is retained for diagnostics, but cannot replace the canonical task result or create a publication intent. A local lock alone is insufficient: the controller and transactions also verify the lease epoch.
 
 ## 14 Work queue and resilience
 
@@ -599,7 +610,7 @@ The initial lease lasts 60 seconds and is renewed every 15 seconds; the absolute
 
 Analysis retries are limited to technical errors and the remaining budget. An unfavorable recommendation or rejected rule is not an error to retry until a favorable outcome appears. Permanent errors enter a visible failure queue, requiring an explicit human rerun and a new intent.
 
-The janitor runs every minute, inspects labels, and destroys expired or orphaned resources after a 5-minute grace period. On startup, the worker suspends actions, reloads interruptions, inspects resources, reconciles unknown GitHub effects, and only then resumes authorized starts.
+The janitor runs every minute, inspects labels, and destroys expired or orphaned resources after a 5-minute grace period. On startup, the worker suspends actions, reloads interruptions, inspects resources, reconciles unknown GitHub publication effects, and only then resumes authorized starts.
 
 ## 15 Prompt injection and exfiltration defenses
 
@@ -622,13 +633,13 @@ The LLM gateway necessarily allows content to be sent to the selected provider: 
 
 ### 15.3 Adversarial acceptance corpus
 
-Test at least: fake Dependabot author, a body requesting a merge, hostile `AGENTS.md`, OpenCode configuration containing a plugin, an MCP server declared in the repository, a symlink to a secret, a traversal archive, a lockfile using an external registry, a JSON report containing fake approval, a path outside the snapshot, an SSRF URL, oversized output, and terminal output containing control sequences. Also test a persisted instruction to disable checks, a poisoned summary, a cross-repository search match, contradictory or expired notes, a source-version change, deletion during an attempt, a stale validation request, and restore from a backup predating deletion. The expected outcome is a block or explicitly limited analysis, with no new privilege or unauthorized remote effect.
+Test at least: an unlisted project request, ambiguous-mode prompt, project file requesting access expansion, hostile `AGENTS.md`, OpenCode configuration containing a plugin, an MCP server declared in the repository, project skill self-approval, changed/revoked skill digest, a skill requesting shell execution, a symlink to a secret, a traversal archive, a fake approval in model output, a patch path outside scope, an SSRF URL, oversized output, and terminal output containing control sequences. Also test poisoned summaries, cross-project retrieval, contradictory/expired notes, a source-version change, deletion during an attempt, stale configuration/revision, lost PR response, cancellation, and restore from backup. The expected outcome is a block or explicitly limited result, with no new privilege or unauthorized remote effect.
 
 ## 16 Secrets and authentication
 
-Persistent secrets are the GitHub App private key, webhook secret, provider keys, PostgreSQL credentials, and internal certificates. The authoritative copies reside in a protected Mac bootstrap location or an explicitly selected secret manager, never in the repository or images. A trusted bootstrap step transfers only required secrets through authenticated administrative transport into restricted VM-local files; it does not share the Mac directory. Compose assigns these VM-local secret sources per service. Validate daemon-side paths, permissions, rotation, and cleanup at J01; local Compose secrets are not an encrypted vault. VM administrators and the controller remain trusted. [D6](https://docs.docker.com/compose/how-tos/use-secrets/)
+Persistent secrets are the GitHub App private key, provider keys, PostgreSQL credentials, and internal certificates. The authoritative copies reside in a protected Mac bootstrap location or an explicitly selected secret manager, never in the repository or images. A trusted bootstrap step transfers only required secrets through authenticated administrative transport into restricted VM-local files; it does not share the Mac directory. Compose assigns these VM-local secret sources per service. Validate daemon-side paths, permissions, rotation, and cleanup at J01; local Compose secrets are not an encrypted vault. VM administrators and the controller remain trusted. [D6](https://docs.docker.com/compose/how-tos/use-secrets/)
 
-GitHub keys stay in the trusted broker; read or merge tokens are created on demand, retained in memory, and expire or are revoked. Per-attempt LLM capabilities have a scope, limit, and deadline. Gateway keys are injected into temporary storage and disappear when it is destroyed. A control prevents them from being written to events, logs, and artifacts.
+GitHub keys stay in the trusted broker; read/PR-publication tokens are created on demand, retained in memory, and expire or are revoked. No merge token/capability is provisioned for v0.1. Per-attempt LLM capabilities have a scope, limit, and deadline. Gateway keys are injected into temporary storage and disappear when it is destroyed. A control prevents them from being written to events, logs, and artifacts.
 
 Web administration uses a single account, a password hashed with an appropriate function, an opaque server-side session, HttpOnly and SameSite cookies, inactivity expiry, and CSRF protection. Cookie behavior is tested on the strictly loopback HTTP interface; any remote exposure requires TLS and a Secure cookie. Onboarding uses a one-time secret, never printed in logs, and then revokes it.
 
@@ -644,7 +655,7 @@ Metrics include queue age, reconciliation lag, preparation and review duration, 
 
 Consumption metrics additionally expose token totals, supported cache/reasoning breakdowns, request failures and missing/estimated usage coverage by bounded provider/model/purpose dimensions. Detailed task/agent/campaign attribution stays in authenticated SQL-backed views. The [token accounting contract](token-consumption.md) specifies canonical per-request collection, no duplicate parent/child aggregation, read APIs, daily corrections and retention/restore handling. Reuse existing llm/contracts/domain/persistence/observability modules; no separate analytics service is required.
 
-Visible JARVIS alerts include: no reconciliation for more than 30 minutes while the system is active, an unknown merge result for more than 5 minutes, cleanup failing for 5 minutes, budget reaching 80% and then 100%, VM space below 10 GiB, and repeated authentication or isolation failures. External notifications are optional and deferred.
+Visible JARVIS alerts include: an unknown PR-publication result for more than 5 minutes, cleanup failing for 5 minutes, budget reaching 80% and then 100%, VM space below 10 GiB, and repeated authentication or isolation failures. External notifications are optional and deferred.
 
 ### 17.2 Cost model
 
@@ -679,21 +690,21 @@ Scoped empirical cohorts return central/range/optional percentile with sample co
 
 ### 18.1 Persistent services
 
-Compose deploys PostgreSQL, the API, worker, controller, and optional webhook ingress inside the dedicated `jarvis` VM. For consistent secret-file resolution without Mac sharing, the trusted bootstrap provisions a pinned Compose CLI plugin and the deployment manifest inside the VM, then runs Compose there against its local Engine. Mac-side administrative Docker operations explicitly select `colima-jarvis`. React is compiled and served by the API or a minimal frontend server. Gateways and sandboxes are created dynamically by the controller. The base network is private; only the interface at `127.0.0.1:3000` is published. PostgreSQL and the controller have no host port.
+Compose deploys PostgreSQL, the API, worker, and controller inside the dedicated `jarvis` VM. For consistent secret-file resolution without Mac sharing, the trusted bootstrap provisions a pinned Compose CLI plugin and deployment manifest inside the VM, then runs Compose there against its local Engine. Mac-side administrative Docker operations explicitly select `colima-jarvis`. React is compiled and served by the API or a minimal frontend server. Gateways and mode-specific sandboxes are created dynamically by the controller. The base network is private; only the interface at `127.0.0.1:3000` is published. PostgreSQL and the controller have no host port.
 
 Persistent volumes contain the database and retained evidence. Temporary resources have per-attempt volumes. The Engine socket is mounted only in the controller; bootstrap secrets are assigned per service. No global source-tree or user-home mount is present in agent execution profiles.
 
-Webhooks require an HTTPS endpoint reachable by GitHub. A relay or tunnel exposes only `/webhooks/github` to ingress, with signature verification at the JARVIS entry point. The relay provider remains an open decision. Without a relay, reconciliation supports observation but does not yet fulfill the webhook portion of the final release.
+The owner-facing interface remains local and authenticated. The v0.1 explicit request flow has no webhook-reachability prerequisite; any later webhook integration requires a separate accepted need and narrowly exposed endpoint.
 
 ### 18.2 Installation sequence
 
 1. Pin macOS, Colima/Lima, Docker Engine, CLI, Compose, and build tooling versions. Prepare the dedicated `jarvis` profile before first startup with Docker runtime, native ARM64, directory sharing disabled, and no SSH-agent forwarding. Verify effective mounts, context, memory, and free space.
 2. Build or retrieve images by approved digest, and verify provenance, vulnerabilities, and the software bill of materials.
-3. Provision the pinned Compose CLI plugin and manifest inside the VM. Transfer bootstrap secrets through trusted administrative transport to a dedicated VM-local directory with restrictive permissions; run Compose from inside the VM and verify secret paths. Install the test App on a selected repository and configure the webhook.
-4. Start PostgreSQL, apply migrations using a temporary migration role, then start services in observation mode.
-5. Verify probes, authenticated web access, signed reception, reconciliation, and a smoke-test task without GitHub writes.
+3. Provision the pinned Compose CLI plugin and manifest inside the VM. Transfer bootstrap secrets through trusted administrative transport to a dedicated VM-local directory with restrictive permissions; run Compose from inside the VM and verify secret paths. Install the test App on a selected authorized repository and verify read/PR-publication scopes on a disposable test project; no webhook is required.
+4. Start PostgreSQL, apply migrations using a temporary migration role, then start services with project tasks suspended.
+5. Verify probes, authenticated web/CLI request access, internal configuration persistence, and a plan smoke-test without GitHub writes.
 6. Run isolation tests on the actual Mac, recovery scenarios, and a restore; record the results.
-7. Enable assisted mode on the test repository, then on the pilot. Enable automerge only after the PRD gates have passed.
+7. Enable plan tasks on an authorized test project after the read-only profile passes. Enable dev-mode PR publication only after D08/publication configuration and all relevant PRD gates pass. Never enable product-side merge.
 
 ### 18.3 Development environment
 
@@ -709,44 +720,45 @@ Take a consistent daily PostgreSQL backup using the tool appropriate for the sel
 
 Targets: a 24-hour RPO and 60-minute RTO after the Mac becomes available. A restore starts with every action suspended. It reloads evidence, revokes attempt capabilities, and reconciles PRs and GitHub effects before any resumption, to avoid replaying intents already consumed after the backup point.
 
-Initial retention: snapshots and runtime state are deleted at attempt completion; raw diagnostic artifacts are disabled by default, otherwise retained for at most 7 days; operational logs for 30 days; reports, decisions, and audit for 90 days. Webhook payloads are minimized and purged after 7 days. Longer retention may be selected for merge evidence according to space and confidentiality needs. Secrets are not retained in these artifacts. Knowledge proposals and validated knowledge follow the separate review deadlines in section 11.5; expired content is purged according to the configured retention job and storage cap. Completed task checkpoint payloads are removed with temporary state; minimal step and context-manifest metadata follow task history retention. Forgetting purges content and search representations without waiting for ordinary retention, and backup restore reapplies the forgetting ledger.
+Initial retention: snapshots and runtime state are deleted at attempt completion; raw diagnostic artifacts are disabled by default, otherwise retained for at most 7 days; operational logs for 30 days; task results, decisions, and audit for 90 days. Longer retention may be selected according to space and confidentiality needs. Secrets are not retained in these artifacts. Knowledge proposals and validated knowledge follow the separate review deadlines in section 11.5; expired content is purged according to the configured retention job and storage cap. Completed task checkpoint payloads are removed with temporary state; minimal step and context-manifest metadata follow task history retention. Forgetting purges content and search representations without waiting for ordinary retention, and backup restore reapplies the forgetting ledger.
 
 **Emergency stop.** The API persists the stop; the executor rereads it before every dispatch; leases and capabilities are revoked; sandboxes are stopped. If services are unresponsive, the owner can stop services and revoke the App in GitHub. Already accepted operations are tracked through confirmation, without a promise of recall.
 
-**Update.** Suspend actions, wait for or cancel local tasks, back up, deploy compatible images and migrations, run probes and isolation acceptance tests, then resume in observation mode before reactivating repositories. An automatic restart must never reopen a previously suspended state.
+**Update.** Suspend project tasks, wait for or cancel local attempts, back up, deploy compatible images and migrations, run probes and isolation acceptance tests, then resume only the previously authorized task profiles. An automatic restart must never reopen a previously suspended state.
 
 ## 20 Testing strategy and release gates
 
 | Suite | Required scenarios | Gate |
 | --- | --- | --- |
-| Domain and policy | POL matrix, SemVer versions, unknown profiles, missing CI, neutral/skipped checks, stale approval | J03 then J04 |
+| Domain and policy | POL 08–13, project allowlist, mode separation, clarification, skill-revision consent, path/revision validation | J02–J04 |
 | OpenCode contracts | Health, creation, prompt, report, interrupted stream, cancellation, permission denial, incompatible version | J01 and J03 |
 | Provider contracts | Two providers, socket streaming, JSON, limits, interruption, no unauthorized fallback | J03 |
 | Memory | Two-repository leakage, provenance, applicability, expiry, contradiction, context limits, provider switch, restart, poisoned notes, concurrent invalidation, forgetting and pre-deletion backup restore | J03 and J05 |
-| Ingestion and queue | Raw HMAC, Unicode, duplicates, divergent hash, reversed order, pagination, lease expiry, and outbox | J02 |
+| Request and queue | Authenticated project binding, ambiguity/clarification, idempotence, stale config/revision, lease expiry, and outbox | J02 |
 | Real isolation | Effective Colima mounts, Mac-file canary, context identity, UID, capabilities, socket, Mac/LAN/core/neighbor access including Lima host aliases, IPv4/IPv6, DNS, forwarded listeners, memory/process limits | J01, then after platform updates |
 | Hostile input | Section 15 corpus, configuration, archives, injections, web rendering, and fake test results | J03 |
-| Merge | Changed H/B, blocking ruleset, degraded CI, delay, lost response, remote pending state, revoked App, no bypass | J04 |
-| Recovery | Crash before/after commit and before/after remote call, duplicated worker, Docker stopped, simulated sleep, dump restore | J02, J04, and J05 |
+| PR publication | Out-of-scope patch, changed project/revision, duplicate intent, lost response, revoked App, no merge call | J04 |
+| Project-skill consent | Exact digest approval, changed/revoked/unverifiable skill, cross-project substitution, no command execution | J03–J05 |
+| Recovery | Crash before/after commit and before/after PR call, duplicated worker, Docker stopped, simulated sleep, dump restore | J02, J04, and J05 |
 | Operations | Persistent stop, janitor, budget, missed digest, daylight saving time, low disk, and purge | J05 |
 
-Race tests use a test barrier to change the PR or checks between the read and dispatch, then verify the remote precondition and protections. A test does not merely simulate an `allow` value. Effects are verified on a test repository, including the absence of a comment or merge when denied.
+Race tests use a test barrier to change project authorization, configuration, skill revision, source revision, or task scope between validation and dispatch. A test does not merely simulate an `allow` value. PR effects are verified on a disposable test repository, including no publication when denied and no merge request under any fixture.
 
-Performance acceptance uses a versioned corpus: 1,000 events for ingestion p95, 20 reviews with diffs below 200 KB for processing time, a hard 30-minute limit, and a peak of 50 events per minute. Offline periods and external limits are recorded separately. Security and recovery tests remain necessary even when unit tests pass.
+Performance acceptance uses a versioned request corpus and records plan/dev duration, cost and failures separately. Request baselines and target thresholds remain to be measured and accepted. Offline periods and external limits are recorded separately. Security and recovery tests remain necessary even when unit tests pass.
 
 ## 21 Delivery sequence and remaining decisions
 
-**Step 1 corresponding to J00/J01.** Pin profiles and versions, implement the minimal controller, bounded Docker exec transport, and socket gateway. Demonstrate a review without IP networking or real secrets in the agent. Qualify state paths and the absence of repository code loading.
+**Step 1 corresponding to J00/J01.** Pin profiles and versions, implement the minimal controller, bounded Docker exec transport, and socket gateway. Demonstrate plan and author attempts without IP networking or real secrets in the agent. Qualify state paths and the absence of repository code/configuration loading.
 
-**Step 2 corresponding to J02.** Implement the PostgreSQL schema including checkpoints and scoped knowledge versions, inbox/outbox, leases, webhooks, and reconciliation. Provide the observation interface, authentication, and persistent stop. GitHub write actions remain disabled.
+**Step 2 corresponding to J02.** Implement internal project/configuration records, request/clarification intake, checkpoints, scoped knowledge, queue/leases, authentication, and persistent stop. GitHub writes remain disabled.
 
-**Step 3 corresponding to J03.** Finalize structured reports, scoped memory retrieval and context manifests, knowledge validation, the dependency-diff parser, pure policy rules, budget, and adversarial corpus. Qualify a second provider and the deterministic digest.
+**Step 3 corresponding to J03.** Qualify the read-only plan profile, structured plans, scoped context and memory, project-skill consent UX/digest binding, pure authorization policy, budget, and adversarial corpus. Qualify selected provider profiles and deterministic digest.
 
-**Step 4 corresponding to J04.** Connect approvals, durable intents, and the asynchronous merge API. Verify protections and CI provenance on the test repository. Exercise races and lost-response failures before the assisted pilot.
+**Step 4 corresponding to J04.** Qualify the isolated writable author profile, patch validation, scoped GitHub publisher, durable PR intents, and lost-response reconciliation on a disposable repository. Do not add a merge API or run repository commands without accepted D16 and separate qualification.
 
-**Step 5 corresponding to J05.** Add daily catch-up, final cleanup, memory inspection and forgetting, backup/restore with deletion reconciliation, cost views, and the operations guide. Enable limited automerge only after the 20 reference PRs and critical PRD gates.
+**Step 5 corresponding to J05.** Add request/task views and digest, final cleanup, memory/skill configuration inspection and revocation, backup/restore, cost views, and the operations guide. Complete accepted F/N gates and a controlled project-request pilot; JARVIS merge remains excluded.
 
-Decisions D01 through D14 in the PRD remain the product decision register; D12 gates J06 writable delivery, D13 gates J07 self-improvement and D14 gates post-MVP general assistance, not v0.1. Three technical points govern the start of implementation: compatibility of the socket transport with the selected providers; read access to effective protections without excessive administration permissions; and unambiguous identification of CI workflows. The fallback for each is to remain in observation or review mode without silently expanding permissions.
+Decisions D01 through D17 in the PRD remain the product decision register; D12 gates J06 autonomous delivery, D13 gates J07 self-improvement, D14 gates post-MVP general assistance, and D16 gates any repository command execution. D17 records accepted product direction, not implementation permission. PR-publication permissions, provider qualification, internal configuration protection, and socket transport remain implementation/qualification gates; an unresolved gate blocks the corresponding effect rather than widening permissions.
 
 **Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
 
