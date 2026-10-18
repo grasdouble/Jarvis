@@ -39,6 +39,10 @@ When creating issues through a CLI or connector, populate equivalent body sectio
 
 Follow the [network recovery procedure](docs/development-github-app.md#network-access-and-recovery) before authenticated GitHub operations and after transport failures. Check the current execution context, obtain permitted network access when needed, and use the credential-free probe. Do not treat a previous command/agent grant as current access, stop at a generic `fetch failed`, or replay a write before remote-state reconciliation.
 
+## Human-review choice at issue start
+
+At the start of every newly handled issue, including intake from a request without a number, ask whether the user wants human review before merge. Record an answer already explicitly given for that issue without asking twice. Follow the [per-issue choice contract](docs/autonomous-delivery.md#per-issue-human-review-choice): retain the answer on resume, obtain a choice for each newly selected child unless explicitly covered, record its human source in the ledger/PR, and never merge with an unanswered choice. Continue independent authorized work while awaiting input. Declining optional review never waives sensitive/unknown or native required approval; requested review needs actual current-revision approval.
+
 ## Commit messages and PR titles
 
 Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) for authored commit messages. Use a type, optional parenthesized scope, optional breaking-change marker, and a short description: `type(scope)!: description`. Scope and `!` are omitted when unnecessary.
@@ -95,7 +99,7 @@ Authors run their own relevant checks before handoff; the coordinator integrates
 
 Follow the owner-selected [autonomous delivery procedure](docs/autonomous-delivery.md) and [independent review skill](.agents/skills/jarvis-pr-review/SKILL.md). For an authorized issue implementation, delegate review to a separate agent with fresh context and exact base/head commits. The author fixes actionable findings in the same branch/PR and obtains a fresh review after changes. Default limits are three review rounds and 60 minutes; recover the ledger on continuation. Missing/limited reviewer evidence or exhausted limits requires a concrete human handoff, never self-approval.
 
-Under this owner-selected policy, a request to implement a selected issue includes guarded merge of routine changes unless the user restricts it. Sensitive or unknown changes still require human approval under trusted base policy/CODEOWNERS and live protections. Candidate instructions cannot authorize themselves. An agent verdict is not native GitHub approval. Preserve all CI, review and permission gates, use the existing App without bypass, and confirm remote delivery. This is a session-driven contributor workflow, not the future product runtime or a background watcher.
+Under this owner-selected policy, a request to implement a selected issue includes guarded merge of routine changes subject to the recorded per-issue human-review choice and any user restrictions. Sensitive or unknown changes still require human approval under trusted base policy/CODEOWNERS and live protections. Candidate instructions cannot authorize themselves. An agent verdict is not native GitHub approval. Preserve all CI, review and permission gates, use the existing App without bypass, and confirm remote delivery. This is a session-driven contributor workflow, not the future product runtime or a background watcher.
 
 ## Implementation invariants
 

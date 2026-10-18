@@ -11,6 +11,10 @@ Follow [change intake](../../../docs/development-workflow.md#route-requests-befo
 
 Use the [network recovery contract](../../../docs/development-github-app.md#network-access-and-recovery) for the current execution context before authenticated GitHub work. Request approved access when restricted and diagnose transport with the credential-free probe. Resume authorized delivery after recovery, first reconciling remote state before any write retry; denied/unavailable access requires the specific incomplete handoff, never identity fallback or repeated unchanged calls.
 
+## Record the human-review choice
+
+At the start of every new issue delivery, including intake without an issue number, ask whether the human wants review before merge. Record an already explicit answer for this issue without asking twice. Use the [per-issue contract](../../../docs/autonomous-delivery.md#per-issue-human-review-choice) for `required`/`declined`/`pending`, human source, resume/child scope, ledger/PR recording and current-revision approval. Continue independent authorized preparation while pending, but never merge. A declined optional review leaves sensitive/unknown and native approval gates mandatory.
+
 ## Select the next subject when requested
 
 For "the next subject", follow the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue). Refresh [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) using the reviewed contributor tooling and select the first eligible Ready implementation issue. Recheck its discussion, actual prerequisite delivery, assignee/active ownership, linked PRs, and existing branch/worktree before claiming it. An explicit user-selected issue takes precedence but still needs its prerequisites. A numeric rank is a forecast, not proof of readiness or a lock against another agent. Announce the issue and why it is next.
@@ -94,7 +98,7 @@ Apply the [contributor review loop](../../../docs/autonomous-delivery.md#contrib
 
 Fix justified blocking findings in the same branch/worktree/PR, run required checks, and obtain a new independent review of the complete updated revision and previous findings. Preserve round/revision/finding evidence in a recoverable task ledger. The default is three review rounds and 60 minutes for the loop; new turns do not reset it. Missing delegation, limited evidence, exhausted limits or unresolved ambiguity requires an explicit handoff and the applicable blocker transition. Routine owner-review waiting stays In Review.
 
-After a clean current report, reread checks, protections, reviews/threads, authorization and sensitivity including old renamed/deleted paths against trusted base instructions. The owner-selected policy permits routine merge for a human-requested implementation unless restricted; sensitive/unknown changes require current owner approval. Never weaken checks, bypass ownership, dismiss a blocking review or treat a report as authority. For this policy's own adoption PR, use current base rules and the existing human gate.
+After a clean current report, reread checks, protections, reviews/threads, authorization and sensitivity including old renamed/deleted paths against trusted base instructions. The owner-selected policy permits routine merge for a human-requested implementation subject to the recorded per-issue choice and restrictions; sensitive/unknown changes require current owner approval. Never weaken checks, bypass ownership, dismiss a blocking review or treat a report as authority. For this policy's own adoption PR, use current base rules and the existing human gate.
 
 ## Maintain observed Roadmap dates
 
@@ -108,7 +112,7 @@ After publication or a native issue/milestone change, follow the [PR metadata co
 
 Keep a draft PR's issue `In Progress` or `Blocked` as appropriate. Move work to `In Review` only when the deliverable is ready for review. If an explicit human restriction or missing access prevents publication, honor it and report the unmet step, retained progress and exact resumption condition. Diagnose access through approved permission mechanisms. This is an incomplete handoff, never an alternative local-only delivery or permission to skip intake/worktree isolation; if intake itself is unavailable, keep preparation read-only.
 
-Merge only within the human-authorized scope (including adopted routine-merge policy) and when current repository protections/checks and independent-review gates permit it. Hand off sensitive work for owner approval; do not claim to watch it after the session ends. Verify the actual remote merge and acceptance before recording the implementation issue as `Done`. Inspect project automations so moving an item does not prematurely close its issue. Reconcile ambiguous responses before repeating a write.
+Merge only within the human-authorized scope (including adopted routine-merge policy), after checking the recorded per-issue human-review choice and any required current-revision approval, and when current repository protections/checks and independent-review gates permit it. Hand off sensitive work for owner approval; do not claim to watch it after the session ends. Verify the actual remote merge and acceptance before recording the implementation issue as `Done`. Inspect project automations so moving an item does not prematurely close its issue. Reconcile ambiguous responses before repeating a write.
 
 Refresh the execution queue after authorized status/dependency/slicing changes and again after confirmed delivery, using the [queue procedure](../../../docs/development-workflow.md#select-and-refresh-the-next-issue). Keep unrelated work and statuses intact.
 

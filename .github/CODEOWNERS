@@ -1,22 +1,52 @@
-# Routine code changes have no mandatory code-owner approval.
-# These paths affect privileges, enforcement, or execution boundaries.
-/.github/ @noofreuuuh
-/.agents/ @noofreuuuh
+# Native approval protects execution, credentials, enforcement and core authority.
+# Read alongside docs/autonomous-delivery.md: uncovered files still need
+# content-based sensitivity assessment and the per-issue human-review choice.
+# CODEOWNERS from the PR base applies; the last matching pattern wins.
+
+# GitHub automation and merge enforcement
+# Keep the ownership file, executable workflows/actions and their dependencies owned.
+# Issue/PR templates have no blanket ownership.
+/.github/CODEOWNERS @noofreuuuh
+/.github/workflows/ @noofreuuuh
+/.github/actions/ @noofreuuuh
+/.github/requirements-ci.txt @noofreuuuh
+/.github/dependabot.yml @noofreuuuh
+
+# Contributor entrypoint, credential tooling and validation
+# Skill Markdown is classified by its effects; bundled executable scripts stay owned.
 /AGENTS.md @noofreuuuh
+/.agents/**/scripts/ @noofreuuuh
 /scripts/ci/ @noofreuuuh
 /.gitleaks.toml @noofreuuuh
 /.gitleaksignore @noofreuuuh
+
+# Deployment and product runtime boundaries
+# Retain these module-wide rules until real source layouts support narrower coverage.
+# These paths are reserved by the architecture; they are not implemented packages yet.
 /infra/ @noofreuuuh
 /packages/policy/ @noofreuuuh
 /packages/sandbox-manager/ @noofreuuuh
 /packages/runtime/ @noofreuuuh
 /packages/github/ @noofreuuuh
+
+# Product skills: executable resources and explicit permission/promotion contracts
+# Protect the current self-improvement entrypoint and promotion reference by name,
+# rather than assigning every future skill document or asset to the owner.
+/skills/**/scripts/ @noofreuuuh
+/skills/jarvis-self-improvement/SKILL.md @noofreuuuh
+/skills/jarvis-self-improvement/references/proposal.md @noofreuuuh
+
+# Security, authority and governance contracts
+# These documents define access, isolation, promotion or contributor approval rules.
+/SECURITY.md @noofreuuuh
 /docs/repository-security.md @noofreuuuh
 /docs/development-github-app.md @noofreuuuh
 /docs/autonomous-delivery.md @noofreuuuh
-/SECURITY.md @noofreuuuh
-/skills/ @noofreuuuh
 /docs/self-improvement-campaigns.md @noofreuuuh
 /docs/common-agent-runtime.md @noofreuuuh
 /docs/project-governance.md @noofreuuuh
-/docs/adr/ @noofreuuuh
+
+# ADR indexes, templates and records have no blanket native ownership.
+# Their decision/acceptance lifecycle remains in docs/project-governance.md.
+# Changes to permissions, security or approval authority still need human review
+# regardless of path; uncovered or declined optional review never waives that gate.

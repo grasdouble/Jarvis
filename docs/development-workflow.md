@@ -25,6 +25,10 @@ Pure questions, advice and read-only audits remain read-only. Backlog-only admin
 
 These are contributor routing expectations for review and skill evaluation, not an installed technical enforcement mechanism.
 
+## Choose human review for each issue
+
+At the start of every new issue delivery, including an issue created from a human request, ask whether the human wants review before merge. Record an already explicit answer for that issue instead of asking twice. Apply the [per-issue choice contract](autonomous-delivery.md#per-issue-human-review-choice): retain the answer across resumes, obtain a choice for each newly selected child unless explicitly covered, record its source in the ledger/PR, and never merge while it is pending. A declined optional review does not waive sensitive/unknown or native required approval. Continue independent authorized preparation while awaiting the answer.
+
 ## Wait for command completion
 
 Execution tools may return control while a command continues in a session. When a result includes a session identifier or indicates that execution is still running, retain that identifier and resume or poll the same session until it returns a terminal result. If the orchestration call itself yields a running cell identifier, wait for that cell too, then inspect its final result and any underlying command session. Capture the final output and exit status; an intermediate output chunk or missing exit status does not establish completion or success.
@@ -90,7 +94,7 @@ This keeps the coordinator's working context smaller without promising unlimited
 
 Authors validate their work before returning it; the coordinator integrates and freezes exact revisions; the reviewer independently selects and executes appropriate checks using the existing authorized tools. Follow the [direct validation contract](../.agents/skills/jarvis-pr-review/references/direct-validation.md) for separate scratch outputs, actual execution permissions, bounded runs and provenance. Verdicts return to the coordinator for correction routing or delivery. Small changes may combine coordinator/author, while the reviewer must have authored none of the candidate. No extra validation agent or enforced Mac isolation is installed by this contributor procedure.
 
-Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended delivery/review scheduler is installed. Future product runtime delivery is planned separately after v0.1.
+Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge subject to the per-issue human-review choice, or owner approval when requested or required. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended delivery/review scheduler is installed. Future product runtime delivery is planned separately after v0.1.
 
 ## Blocking and resuming work
 
