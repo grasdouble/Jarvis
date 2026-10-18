@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.16 • October 18, 2026 • Companion to the PRD and roadmap
+Document version 1.17 • October 19, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -170,7 +170,9 @@ Application ports bind explicitly to `127.0.0.1`. Verify both the guest bindings
 
 Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before affected profiles or publication are re-enabled.
 
-Prefer native `linux/arm64` images, including OpenCode and its tools. An initial sizing proposal is 4 VM CPUs, 8 GiB of VM memory if physical RAM permits, one sandbox capped at 2 CPUs and 4 GiB, and at least 40 GiB free for images, the database, logs, and snapshots. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac. These are design targets, not measured results.
+Prefer native `linux/arm64` images, including OpenCode and its tools. The owner-selected D06 baseline is 4 VM CPUs, 8 GiB VM memory if host capacity permits, an 80 GiB VM disk, at least 40 GiB free host disk before provisioning, and a 2-CPU/4-GiB per-sandbox target. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac. The sandbox cap remains a target until it is enforced and measured.
+
+**Selected J01 bootstrap pins (October 19, 2026).** The contributor-selected baseline is Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 with Ubuntu Noble ARM64 packages, containerd 2.2.4, and Docker Compose 5.6.0. The Compose binary is SHA-256 checked before transfer into the VM. The bootstrap PostgreSQL image is `postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`, selected with `platform: linux/arm64`. Exact values and bootstrap instructions are maintained in [`infra/colima/versions.env`](../infra/colima/versions.env). These pins are reproducible inputs, not evidence that the profile is provisioned, images are scanned, or isolation is qualified.
 
 ## 7 Monorepo modules and dependencies
 
@@ -692,15 +694,17 @@ Scoped empirical cohorts return central/range/optional percentile with sample co
 
 Compose deploys PostgreSQL, the API, worker, and controller inside the dedicated `jarvis` VM. For consistent secret-file resolution without Mac sharing, the trusted bootstrap provisions a pinned Compose CLI plugin and deployment manifest inside the VM, then runs Compose there against its local Engine. Mac-side administrative Docker operations explicitly select `colima-jarvis`. React is compiled and served by the API or a minimal frontend server. Gateways and mode-specific sandboxes are created dynamically by the controller. The base network is private; only the interface at `127.0.0.1:3000` is published. PostgreSQL and the controller have no host port.
 
+The initial infrastructure delivery currently includes only the pinned PostgreSQL service; API/web/controller container images and authentication are separate implementation work. Do not claim an authenticated UI listener until those services exist and the unauthenticated/authenticated and host-forwarding checks pass.
+
 Persistent volumes contain the database and retained evidence. Temporary resources have per-attempt volumes. The Engine socket is mounted only in the controller; bootstrap secrets are assigned per service. No global source-tree or user-home mount is present in agent execution profiles.
 
 The owner-facing interface remains local and authenticated. The v0.1 explicit request flow has no webhook-reachability prerequisite; any later webhook integration requires a separate accepted need and narrowly exposed endpoint.
 
 ### 18.2 Installation sequence
 
-1. Pin macOS, Colima/Lima, Docker Engine, CLI, Compose, and build tooling versions. Prepare the dedicated `jarvis` profile before first startup with Docker runtime, native ARM64, directory sharing disabled, and no SSH-agent forwarding. Verify effective mounts, context, memory, and free space.
+1. Check the pinned macOS/Colima/Lima/Engine/CLI/Compose baseline. Prepare the dedicated `jarvis` profile before first startup with Docker runtime, native ARM64, directory sharing disabled, no SSH-agent forwarding, and the owner-selected CPU/memory/disk allocation. Verify effective mounts, context, memory, and free space.
 2. Build or retrieve images by approved digest, and verify provenance, vulnerabilities, and the software bill of materials.
-3. Provision the pinned Compose CLI plugin and manifest inside the VM. Transfer bootstrap secrets through trusted administrative transport to a dedicated VM-local directory with restrictive permissions; run Compose from inside the VM and verify secret paths. Install the test App on a selected authorized repository and verify read/PR-publication scopes on a disposable test project; no webhook is required.
+3. Provision the pinned Compose CLI plugin and manifest inside the VM. Transfer bootstrap secrets through trusted administrative transport to a dedicated VM-local directory with restrictive permissions; run Compose from inside the VM and verify secret paths. The initial manifest must publish no database/controller host ports; the later authenticated UI is the only permitted loopback publication. Install the test App on a selected authorized repository and verify read/PR-publication scopes on a disposable test project; no webhook is required.
 4. Start PostgreSQL, apply migrations using a temporary migration role, then start services with project tasks suspended.
 5. Verify probes, authenticated web/CLI request access, internal configuration persistence, and a plan smoke-test without GitHub writes.
 6. Run isolation tests on the actual Mac, recovery scenarios, and a restore; record the results.
