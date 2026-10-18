@@ -49,7 +49,7 @@ gh issue create --repo "$task_repo" --title "$task_issue_title" \
   --label "$task_priority_label" --milestone "$task_milestone_title"
 ```
 
-The milestone flag is mandatory for every new issue, including coordination parents and children. Resolve the appropriate phase before creation; do not use J00 as a fallback. Capture the returned issue URL and reread `milestone` using `gh issue view "$task_issue_number" --repo "$task_repo" --json number,milestone` before further writes. Verify the expected title; a reference in the body does not assign metadata. For an existing issue, edit only intended attributes; `--body-file` replaces the entire body, so first preserve unaffected sections in the edited file. Omit metadata flags that should remain unchanged.
+The milestone flag is mandatory for every new issue, including coordination parents and children. Resolve the appropriate phase before creation; do not use J00 as a fallback. For contributor work, inspect open and closed milestones and reuse a matching ongoing DEV track. Reopen a closed matching track in place before assigning the issue; do not reopen its completed issues. Capture the returned issue URL and reread `milestone` using `gh issue view "$task_issue_number" --repo "$task_repo" --json number,milestone` before further writes. Verify the expected title; a reference in the body does not assign metadata. For an existing issue, edit only intended attributes; `--body-file` replaces the entire body, so first preserve unaffected sections in the edited file. Omit metadata flags that should remain unchanged.
 
 ```bash
 gh issue edit "$task_issue_number" --repo "$task_repo" --body-file "$task_issue_body_file"
@@ -81,13 +81,16 @@ Exit 0 means every supplied issue has a milestone, 1 lists omissions, and 2 mean
 
 ## Milestones and native dependencies
 
-Milestones use REST. Apply [selection and creation rules](../../../../docs/development-workflow.md#milestone-selection-and-creation) before these commands. Inspect open and closed milestones by title, identity, scope and exit gate. Reuse a suitable open outcome; a new authorized outcome needs an English title and a description containing scope, measurable exit gate and non-overlap rationale. Use two-digit `JNN` indices for accepted product phases and bounded `DEV` outcomes for contributor work; neither J00 nor DEV is a fallback. Rename existing milestones by their stable native number, never by deleting/recreating them; update current references and affected project filters and verify equivalent queue ordering with the reviewed padded/legacy parser. Update only supplied fields; leave dates unset unless agreed. Reread after creation/assignment, synchronize linked PR metadata and refresh the queue.
+Milestones use REST. Apply [selection and creation rules](../../../../docs/development-workflow.md#milestone-selection-and-creation) before these commands. Inspect open and closed milestones by title, identity, scope and exit gate. Reuse an open match. If a closed DEV milestone is an ongoing track whose scope matches the new issue, reopen the same milestone in place by its stable number, preserve its identity/history and leave completed issues closed. Record the reason and update its description if needed. Do not reopen a bounded, retired or unrelated milestone. A new authorized bounded outcome needs an English title, scope, measurable exit gate and non-overlap rationale. Use two-digit `JNN` indices for accepted product phases and `DEV — <track>` for ongoing contributor areas or `DEV — <outcome>` for bounded contributor work; neither J00 nor DEV is a fallback. Rename existing milestones by their stable native number, never by deleting/recreating them; update current references and affected project filters and verify equivalent queue ordering with the reviewed padded/legacy parser. Update only supplied fields; leave dates unset unless agreed. Reread after creation/assignment, synchronize linked PR metadata and refresh the queue.
 
 ```bash
 gh api --method POST "repos/$task_repo/milestones" \
   --raw-field title="$task_milestone_title" --raw-field description="$task_milestone_description"
 gh api --method PATCH "repos/$task_repo/milestones/$task_milestone_number" \
   --raw-field description="$task_milestone_description"
+# Reopen a matching ongoing DEV track in place; do not reopen its completed issues.
+gh api --method PATCH "repos/$task_repo/milestones/$task_milestone_number" \
+  --raw-field state=open --raw-field description="$task_milestone_description"
 ```
 
 For `A` blocked by `B`, edit `A` with `--add-blocked-by B`. Verify direction and check for a path from `B` back to `A` before adding the edge. Removal is a separate authorized change, not part of adding a dependency.
