@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.15 • October 18, 2026 • Companion to the PRD and roadmap
+Document version 1.16 • October 18, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -633,7 +633,7 @@ The LLM gateway necessarily allows content to be sent to the selected provider: 
 
 ### 15.3 Adversarial acceptance corpus
 
-Test at least: an unlisted project request, ambiguous-mode prompt, project file requesting access expansion, hostile `AGENTS.md`, OpenCode configuration containing a plugin, an MCP server declared in the repository, project skill self-approval, changed/revoked skill digest, a skill requesting shell execution, a symlink to a secret, a traversal archive, a fake approval in model output, a patch path outside scope, an SSRF URL, oversized output, and terminal output containing control sequences. Also test poisoned summaries, cross-project retrieval, contradictory/expired notes, a source-version change, deletion during an attempt, stale configuration/revision, lost PR response, cancellation, and restore from backup. The expected outcome is a block or explicitly limited result, with no new privilege or unauthorized remote effect.
+Use the versioned [v0.1 acceptance corpus](acceptance-corpus.md) as the scenario inventory and requirement-to-evidence index. It expands the hostile-input cases below into stable IDs, deterministic expected outcomes, and J00–J05 evidence ownership. Test at least: an unlisted project request, ambiguous-mode prompt, project file requesting access expansion, hostile `AGENTS.md`, OpenCode configuration containing a plugin, an MCP server declared in the repository, project skill self-approval, changed/revoked skill digest, a skill requesting shell execution, a symlink to a secret, a traversal archive, a fake approval in model output, a patch path outside scope, an SSRF URL, oversized output, and terminal output containing control sequences. Also test poisoned summaries, cross-project retrieval, contradictory/expired notes, a source-version change, deletion during an attempt, stale configuration/revision, lost PR response, cancellation, and restore from backup. The expected outcome is a block or explicitly limited result, with no new privilege or unauthorized remote effect. Corpus presence is not execution evidence.
 
 ## 16 Secrets and authentication
 
@@ -730,16 +730,16 @@ Initial retention: snapshots and runtime state are deleted at attempt completion
 
 | Suite | Required scenarios | Gate |
 | --- | --- | --- |
-| Domain and policy | POL 08–13, project allowlist, mode separation, clarification, skill-revision consent, path/revision validation | J02–J04 |
+| Domain and policy | Versioned corpus scenarios AC-001–AC-006, AC-017–AC-025; POL 08–13, project allowlist, mode separation, clarification, skill-revision consent, path/revision validation | J02–J04 |
 | OpenCode contracts | Health, creation, prompt, report, interrupted stream, cancellation, permission denial, incompatible version | J01 and J03 |
 | Provider contracts | Two providers, socket streaming, JSON, limits, interruption, no unauthorized fallback | J03 |
 | Memory | Two-repository leakage, provenance, applicability, expiry, contradiction, context limits, provider switch, restart, poisoned notes, concurrent invalidation, forgetting and pre-deletion backup restore | J03 and J05 |
 | Request and queue | Authenticated project binding, ambiguity/clarification, idempotence, stale config/revision, lease expiry, and outbox | J02 |
 | Real isolation | Effective Colima mounts, Mac-file canary, context identity, UID, capabilities, socket, Mac/LAN/core/neighbor access including Lima host aliases, IPv4/IPv6, DNS, forwarded listeners, memory/process limits | J01, then after platform updates |
-| Hostile input | Section 15 corpus, configuration, archives, injections, web rendering, and fake test results | J03 |
+| Hostile input | Section 15 corpus / AC-007–AC-013 and AC-018–AC-021, configuration, archives, injections, web rendering, and fake test results | J03 |
 | PR publication | Out-of-scope patch, changed project/revision, duplicate intent, lost response, revoked App, no merge call | J04 |
 | Project-skill consent | Exact digest approval, changed/revoked/unverifiable skill, cross-project substitution, no command execution | J03–J05 |
-| Recovery | Crash before/after commit and before/after PR call, duplicated worker, Docker stopped, simulated sleep, dump restore | J02, J04, and J05 |
+| Recovery | AC-019, AC-024–AC-027; crash before/after commit and before/after PR call, duplicated worker, Docker stopped, simulated sleep, dump restore | J02, J04, and J05 |
 | Operations | Persistent stop, janitor, budget, missed digest, daylight saving time, low disk, and purge | J05 |
 
 Race tests use a test barrier to change project authorization, configuration, skill revision, source revision, or task scope between validation and dispatch. A test does not merely simulate an `allow` value. PR effects are verified on a disposable test repository, including no publication when denied and no merge request under any fixture.
