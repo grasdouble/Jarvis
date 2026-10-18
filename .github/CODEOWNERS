@@ -1,7 +1,12 @@
-# Routine code changes have no mandatory code-owner approval.
-# These paths affect privileges, enforcement, or execution boundaries.
-/.github/ @noofreuuuh
-/.agents/ @noofreuuuh
+# Native approval protects execution, credentials, enforcement and core authority.
+# Uncovered contributor guidance/templates still need content-based classification
+# and the per-issue human-review choice in docs/autonomous-delivery.md.
+/.github/CODEOWNERS @noofreuuuh
+/.github/workflows/ @noofreuuuh
+/.github/actions/ @noofreuuuh
+/.github/requirements-ci.txt @noofreuuuh
+/.github/dependabot.yml @noofreuuuh
+/.agents/**/scripts/ @noofreuuuh
 /AGENTS.md @noofreuuuh
 /scripts/ci/ @noofreuuuh
 /.gitleaks.toml @noofreuuuh

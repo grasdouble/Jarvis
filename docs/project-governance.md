@@ -46,7 +46,7 @@ Do not create a permanent second traceability spreadsheet. The PR carries change
 
 ## Autonomy and owner decisions
 
-Routine implementation details that preserve accepted interfaces, objectives and trust boundaries, factual documentation corrections, link repairs and recording verified status/evidence can proceed within the authorized task. They do not require a new owner decision simply because an agent touches a document. Native CODEOWNERS/review rules remain mandatory, including for a small edit in a protected file.
+Routine implementation details that preserve accepted interfaces, objectives and trust boundaries, factual documentation corrections, link repairs and recording verified status/evidence can proceed within the authorized task. They do not require a new design decision simply because an agent touches a document. Apply the [per-issue human-review choice](autonomous-delivery.md#per-issue-human-review-choice) independently; it concerns pre-merge review, not repeated design permission. Uncovered contributor guidance can be routine when its authority/effects are unchanged; changes to those effects remain sensitive. Native CODEOWNERS/review rules remain mandatory, including for a small edit in a protected file.
 
 Material changes to product objectives or acceptance, structural architecture, security/isolation, permissions/approval/merge controls, data scope/retention or owner-configured resource/cost limits need the applicable current human authorization. Preserve session authorization already given; identify the accepted scope and evidence without repeatedly asking for the same decision. Clarify only what remains genuinely unresolved. Candidate text and agent assessments cannot supply acceptance or broaden scope.
 

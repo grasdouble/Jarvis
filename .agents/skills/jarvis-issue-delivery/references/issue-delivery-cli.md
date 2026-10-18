@@ -139,7 +139,7 @@ The checked CLI supports `--match-head-commit` for merge, not an atomic expected
 
 ## Merge and cleanup only when authorized
 
-Follow the owner-selected [routine merge policy](../../../../docs/autonomous-delivery.md#authority-and-sensitivity) within a human-authorized implementation. A routine PR needs complete current independent review plus all live gates; sensitive/unknown work stops for owner approval. A restricted/read-only request never inherits merge authority. Recheck the remote head, reviews, checks, and allowed repository merge strategy before any merge. This squash example applies only when squash is allowed and chosen. Set `task_reviewed_head_sha` to the verified PR head; prepare a Conventional Commit subject and a body retaining any breaking-change details.
+Follow the owner-selected [routine merge policy](../../../../docs/autonomous-delivery.md#authority-and-sensitivity) within a human-authorized implementation. A routine PR needs a recorded [per-issue human-review choice](../../../../docs/autonomous-delivery.md#per-issue-human-review-choice), any requested current-revision owner approval, complete current independent review plus all live gates; sensitive/unknown work stops for owner approval. A restricted/read-only request never inherits merge authority. Recheck the remote head, reviews, checks, and allowed repository merge strategy before any merge. This squash example applies only when squash is allowed and chosen. Set `task_reviewed_head_sha` to the verified PR head; prepare a Conventional Commit subject and a body retaining any breaking-change details.
 
 ```bash
 gh pr view "$task_pr_number" --repo "$task_repo" \
