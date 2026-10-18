@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence-driven self-improvement project profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "profileId",
+    "project",
+    "campaign",
+    "proposal",
+    "promotion",
+    "resultContract"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "profileId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "targetBranch"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targetBranch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "campaign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branchPattern",
+        "taskBranchPattern",
+        "taskBase"
+      ],
+      "properties": {
+        "branchPattern": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskBranchPattern": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskBase": {
+          "enum": [
+            "campaign",
+            "target"
+          ]
+        }
+      }
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recordStore",
+        "contentContract",
+        "contentContractVersion",
+        "contentLanguage"
+      ],
+      "properties": {
+        "recordStore": {
+          "enum": [
+            "controller-ledger",
+            "issue-tracker"
+          ]
+        },
+        "contentContract": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentContractVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "contentLanguage": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recordKind",
+        "targetBranch"
+      ],
+      "properties": {
+        "recordKind": {
+          "enum": [
+            "pull-request",
+            "merge-request",
+            "change-request"
+          ]
+        },
+        "targetBranch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tracking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "namespace",
+            "project",
+            "view"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "namespace": {
+              "type": "string",
+              "minLength": 1
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1
+            },
+            "view": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "resultContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

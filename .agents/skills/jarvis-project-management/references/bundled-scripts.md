@@ -1,0 +1,22 @@
+# Bundled project-management scripts
+
+These scripts live with the skill whose contributor operations they support. Run them from the JARVIS repository root with Node.js 24. They are trusted contributor tooling, not product runtime capabilities; never package them into the OpenCode review sandbox or run a candidate repository's copy for credentialed operations. Follow the skill's issue scope and approval gates before using write modes.
+
+## Command entry points
+
+| Script | Invocation and inputs | Effects and output | Failure behavior |
+| --- | --- | --- | --- |
+| `scripts/github/gh-app.mjs` | `node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --verify`, `-- <gh read arguments>`, `--write -- <gh arguments>`, or `--write --git-push`. CLI arguments select the repository operation; PR create requires explicit repository, base, and head. | `--verify` checks the installed App profile. Default CLI calls use a repository-scoped read token; `--write` enables the reviewed App write profile for an already authorized action. Push mode publishes the current non-default issue branch. CLI output and exit status are forwarded; diagnostics avoid exposing credentials. | Invalid or unsupported arguments fail before use. GitHub, authentication, scope, and push failures return nonzero; do not fall back to the owner's token or SSH identity. The helper revokes its short-lived token where possible and reports if revocation cannot be confirmed. See [App and credential details](../../../../docs/development-github-app.md). |
+| `scripts/github/sync-project-queue.mjs` | `node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs [--write]`; no positional inputs. It reads the fixed JARVIS repository/project configuration. | Default mode prints a JSON preview. `--write` updates only derived Execution order ranks, then prints the resulting plan and write counts. It does not change statuses, acceptance, dependencies, or labels. | Incomplete project/API inventory, missing fields/membership, invalid dependency data, or API errors stop the refresh with a nonzero exit. Re-read current state before retrying any uncertain write. |
+| `scripts/github/sync-pr-project-metadata.mjs` | `node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs [--pr NUMBER | --roadmap [--issue NUMBER]] [--write] [--ci]`. `--pr` scopes PR Issue/milestone reconciliation; `--roadmap` scopes actual-date synchronization; omit `--issue` only for explicitly authorized project-wide maintenance. `--ci` is for the trusted activated workflow context. | Default mode is a JSON preview. `--write` applies only the derived project membership/Issue/milestone or actual-date effects allowed by the selected mode. It does not alter status, labels, links, planned dates, or acceptance. | Invalid combinations, unsafe CI context, incomplete/malformed API data, ambiguity, or errors stop with nonzero status and structured safe diagnostics. Resolve the source ambiguity or reread state before retrying; never use CI mode as a local credential fallback. |
+| `scripts/github/check-issue-milestones.mjs` | `node .agents/skills/jarvis-project-management/scripts/github/check-issue-milestones.mjs INVENTORY.json`; input is the complete REST `state=all` issue inventory collected with `gh api --paginate --slurp`. | Read-only. Prints one canonical issue URL per issue without a native milestone, or a success message when none are missing. It excludes valid PR records and does not print API titles or payloads. | Exit `0`: all supplied issues have milestones. Exit `1`: one or more are missing. Exit `2`: usage or inventory is invalid. Completeness of the fetched pages is the caller's responsibility. |
+
+The adjacent `*-api.mjs`, `*-sync.mjs`, and `project-queue.mjs` modules provide tested validation, planning and adapter logic imported by those entry points; they are not separate commands. The queue compares canonical two-digit product indices and historical unpadded aliases by numeric phase, preserving dependencies and readiness; arbitrary extra leading zeroes are not a phase format. Their tests use fixtures and sanitized data.
+
+## Local checks
+
+```bash
+node --test .agents/skills/jarvis-project-management/scripts/github/*.test.mjs
+```
+
+This runs offline behavior tests. Fixtures use synthetic keys and data; repository CI never receives the development App key.

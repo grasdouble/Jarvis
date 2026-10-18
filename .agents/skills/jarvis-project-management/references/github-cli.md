@@ -4,7 +4,9 @@ Use only the recipes needed by the authorized task. Commands were checked agains
 
 ## App authentication for these recipes
 
-Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+
+Before authenticating or retrying a transport failure, follow the [network access and recovery procedure](../../../../docs/development-github-app.md#network-access-and-recovery). Use the reviewed helper’s `--check-network` without credentials; exit 75 with `JARVIS_GITHUB_NETWORK:` requires current-context diagnosis and approved access, not key rotation. Reconcile remote state before repeating writes. For offline command discovery, invoke plain `gh … --help` rather than the authenticated wrapper.
 
 ## Access and discovery
 
@@ -47,7 +49,7 @@ gh issue create --repo "$task_repo" --title "$task_issue_title" \
   --label "$task_priority_label" --milestone "$task_milestone_title"
 ```
 
-The milestone flag is mandatory for every new issue, including coordination parents and children. Resolve the appropriate phase before creation; do not use J0 as a fallback. Capture the returned issue URL and reread `milestone` using `gh issue view "$task_issue_number" --repo "$task_repo" --json number,milestone` before further writes. Verify the expected title; a reference in the body does not assign metadata. For an existing issue, edit only intended attributes; `--body-file` replaces the entire body, so first preserve unaffected sections in the edited file. Omit metadata flags that should remain unchanged.
+The milestone flag is mandatory for every new issue, including coordination parents and children. Resolve the appropriate scope before creation; do not use J00 as a fallback. Inspect all open and closed milestones and reuse an existing one whose original scope covers the issue. Reopen a closed matching milestone in place, regardless of type, when its scope remains applicable; leave completed issues closed and record the scope match and reason. Do not reopen retired, superseded or unrelated milestones. Capture the returned issue URL and reread `milestone` using `gh issue view "$task_issue_number" --repo "$task_repo" --json number,milestone` before further writes. Verify the expected title; a reference in the body does not assign metadata. For an existing issue, edit only intended attributes; `--body-file` replaces the entire body, so first preserve unaffected sections in the edited file. Omit metadata flags that should remain unchanged.
 
 ```bash
 gh issue edit "$task_issue_number" --repo "$task_repo" --body-file "$task_issue_body_file"
@@ -72,20 +74,23 @@ Fetch the complete all-state REST inventory; PR records are excluded by the audi
 ```bash
 gh api --method GET "repos/$task_repo/issues?state=all&per_page=100" \
   --paginate --slurp > "$task_issue_inventory_file"
-node scripts/github/check-issue-milestones.mjs "$task_issue_inventory_file"
+node .agents/skills/jarvis-project-management/scripts/github/check-issue-milestones.mjs "$task_issue_inventory_file"
 ```
 
 Exit 0 means every supplied issue has a milestone, 1 lists omissions, and 2 means invalid input or usage. The caller must fetch all pages; arbitrary supplied data cannot prove completeness. The [read-only workflow](../../../../docs/development-workflow.md#required-issue-milestones) reports drift without choosing phases or commenting automatically. Correct actual native metadata, reread it, and rerun the audit and queue refresh.
 
 ## Milestones and native dependencies
 
-Milestones use REST. Find an existing milestone by its current title and number before creating one. Update only supplied fields; leave dates unset unless agreed.
+Milestones use REST. Apply [selection and creation rules](../../../../docs/development-workflow.md#milestone-selection-and-creation) before these commands. Inspect open and closed milestones by title, identity, scope and exit gate. Reuse an open match. If a closed milestone's original scope covers the new issue and remains applicable, reopen the same milestone in place by its stable number, regardless of type; preserve its identity/history and leave completed issues closed. Record the scope match and reason and update its description if needed. Do not reopen a retired, superseded or unrelated milestone. Reapply its acceptance/exit gate to the new work before closing it again. A new authorized outcome needs an English title, scope and non-overlap rationale, plus an exit gate when bounded. Use two-digit `JNN` indices for accepted product phases and `DEV — <track>` for ongoing contributor areas or `DEV — <outcome>` for bounded contributor work; neither J00 nor DEV is a fallback. Rename existing milestones by their stable native number, never by deleting/recreating them; update current references and affected project filters and verify equivalent queue ordering with the reviewed padded/legacy parser. Update only supplied fields; leave dates unset unless agreed. Reread after creation/assignment, synchronize linked PR metadata and refresh the queue.
 
 ```bash
 gh api --method POST "repos/$task_repo/milestones" \
   --raw-field title="$task_milestone_title" --raw-field description="$task_milestone_description"
 gh api --method PATCH "repos/$task_repo/milestones/$task_milestone_number" \
   --raw-field description="$task_milestone_description"
+# Reopen a matching applicable milestone in place; do not reopen its completed issues.
+gh api --method PATCH "repos/$task_repo/milestones/$task_milestone_number" \
+  --raw-field state=open --raw-field description="$task_milestone_description"
 ```
 
 For `A` blocked by `B`, edit `A` with `--add-blocked-by B`. Verify direction and check for a path from `B` back to `A` before adding the edge. Removal is a separate authorized change, not part of adding a dependency.
@@ -162,7 +167,7 @@ For API operations beyond CLI coverage, use `gh api graphql` with variables or `
 
 ## Execution order refresh
 
-From a reviewed Jarvis checkout, use `node scripts/github/sync-project-queue.mjs` for preview and add `--write` for authorized rank synchronization. It uses the dedicated App helper internally; do not wrap it in another `gh` invocation. Follow [the selection procedure](../../../../docs/development-workflow.md#select-and-refresh-the-next-issue), not a numeric issue sort. Restore missing membership or inspect incomplete/dependency data before rerunning a failed refresh. Preserve the Next up saved filter/sort and existing other views.
+From a reviewed Jarvis checkout, use `node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs` for preview and add `--write` for authorized rank synchronization. It uses the dedicated App helper internally; do not wrap it in another `gh` invocation. Follow [the selection procedure](../../../../docs/development-workflow.md#select-and-refresh-the-next-issue), not a numeric issue sort. Restore missing membership or inspect incomplete/dependency data before rerunning a failed refresh. Preserve the Next up saved filter/sort and existing other views.
 
 ## Views and built-in automations
 
@@ -182,3 +187,25 @@ Use the documented API or authenticated browser for settings not exposed by dedi
 Reread the affected issue, milestone, dependency list, and project item as applicable. Compare changed attributes with the intended values, preserving unrelated metadata. Creation of an issue does not prove project membership or a correct status. Inspect partial results after any timeout or error before retrying a mutation.
 
 References: [issue editing](https://cli.github.com/manual/gh_issue_edit), [milestones REST API](https://docs.github.com/en/rest/issues/milestones), [dependency REST API](https://docs.github.com/en/rest/issues/issue-dependencies), [project item editing](https://cli.github.com/manual/gh_project_item-edit), [Projects GraphQL](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects), [view creation](https://docs.github.com/en/rest/projects/views), and [built-in automations](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-built-in-automations).
+
+## Synchronize PR Issue and Milestone
+
+Use the [PR metadata procedure](../../../../docs/pr-project-metadata.md) from a reviewed checkout after authorized issue-link or milestone edits. The command already uses the App helper; no extra authentication prefix is needed. Scope to the actual selected PR number; omit `--pr NUMBER` only for authorized project-wide catch-up.
+
+```bash
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+```
+
+Read diagnostics, verify the native relationship and resolve ambiguity instead of choosing a primary issue from prose. The command derives the reserved Issue field and native PR milestone only, preserving the self-update exception. It never changes Status or creates issue links. Workflow activation and secure CI credential provisioning follow the linked procedure.
+
+## Synchronize observed Roadmap dates
+
+Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
+
+```bash
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+```
+
+Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.

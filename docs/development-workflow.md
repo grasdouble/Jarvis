@@ -2,6 +2,39 @@
 
 This document governs development of JARVIS. It is not an instruction set for the untrusted OpenCode review runtime. Repository changes are maintained in English.
 
+## Route requests before editing
+
+A human request or acceptance of a concrete repository change starts the contributor delivery workflow, even when the human supplies no issue number and does not explicitly say "create a PR". This covers new files intended for version control and edits to code, configuration, documentation, `AGENTS.md` and contributor skills, regardless of size. A follow-up such as "OK, add that" after discussing a change is implementation authorization within that agreed scope; do not ask the human to restate the workflow.
+
+1. Inspect the checkout, existing worktrees/branches/PRs and matching open/closed issues. Use project management to reuse suitable active work or create one bounded English issue with acceptance and verification, the appropriate native milestone, existing labels, stable JV key and project membership. Verify the saved metadata, prerequisite outcomes and ownership before starting; do not reopen delivered work merely to avoid a new issue.
+2. Use issue delivery for governance assessment and sizing, then select/create the issue's dedicated branch in a separate worktree before any repository edits. Preserve unrelated changes in the primary checkout. Continue through focused commits, independent review and a linked PR under current publication and merge gates. Small documentation or working-agreement changes use the same route; they do not need separate issues for each file.
+3. If intake, access, review or publication cannot be completed, diagnose the actual constraint and follow the blocker/handoff procedure. Distinguish network restrictions from authentication failures and use the environment's approved permission mechanisms where available; never silently switch to owner credentials. If no issue can be established, keep preparation read-only and retain the exact resumption condition outside tracked source. Preserve already existing progress in its worktree; do not use a failure to justify edits on the primary checkout.
+
+There is no local-only delivery option. Retained uncommitted or unpublished work is incomplete progress, not a successful substitute for a PR. Explicit human limits (for example, no push or publication) and tool permissions still take precedence: honor them, explain the unmet delivery step, and do not claim completion or bypass the restriction. Routine review waiting remains In Review; an actual access or authorization blocker follows the [blocker lifecycle](blocker-lifecycle.md).
+
+Pure questions, advice and read-only audits remain read-only. Backlog-only administration may maintain GitHub records within its own authorization without starting implementation. Neither path grants permission to edit repository files. Product `self-update` promotions retain their separate [operational intake contract](self-improvement-campaigns.md#operational-tracking-and-proposal-intake); they are not a contributor local-only exception.
+
+| Human request or observed constraint | Required routing |
+| --- | --- |
+| "What do you think of this approach?" | Advice only; no file edits, issue or PR solely for the question |
+| "OK, add that" after a concrete change proposal, without an issue number | Duplicate-aware issue intake with native milestone, then branch/worktree, review and PR |
+| A small `AGENTS.md`, documentation or contributor skill edit | The same issue-to-PR workflow; no working-agreement exemption |
+| GitHub read fails before intake | Diagnose access; if unresolved, read-only preparation and a specific blocked handoff, no primary-checkout edits |
+| Unrelated changes already exist on the primary branch | Preserve them; create the selected issue's isolated worktree and exclude unrelated changes |
+| Human explicitly prohibits publication | Respect the limit; report the incomplete delivery boundary, never publish or label local progress as delivered |
+
+These are contributor routing expectations for review and skill evaluation, not an installed technical enforcement mechanism.
+
+## Choose human review for each issue
+
+At the start of every new issue delivery, including an issue created from a human request, ask whether the human wants review before merge. Record an already explicit answer for that issue instead of asking twice. Apply the [per-issue choice contract](autonomous-delivery.md#per-issue-human-review-choice): retain the answer across resumes, obtain a choice for each newly selected child unless explicitly covered, record its source in the ledger/PR, and never merge while it is pending. A declined optional review does not waive sensitive/unknown or native required approval. Continue independent authorized preparation while awaiting the answer.
+
+## Wait for command completion
+
+Execution tools may return control while a command continues in a session. When a result includes a session identifier or indicates that execution is still running, retain that identifier and resume or poll the same session until it returns a terminal result. If the orchestration call itself yields a running cell identifier, wait for that cell too, then inspect its final result and any underlying command session. Capture the final output and exit status; an intermediate output chunk or missing exit status does not establish completion or success.
+
+Do not start a dependent read, write, retry, preview, or verification while the earlier command is still running. In particular, wait for a project mutation to finish before previewing or rereading its result. If a wrapper or orchestration layer is used, preserve and return the session identifier instead of dropping it. After a terminal failure or an ambiguous mutation, inspect the result and current state before deciding whether to retry. If the session can no longer be resumed, report the operation as incomplete and reconcile its state before restarting it. This is a contributor instruction, not technical enforcement by the repository.
+
 ## Keep specifications and decisions coherent
 
 Use [project governance](project-governance.md) before implementation and again for the final diff. Delivery prepares the compact PR impact record and affected document/ADR updates; project management maintains live planning records; independent review checks the sources, authority and evidence. Routine work within accepted scope remains autonomous under current gates. Preserve actual owner authorization already given, stop only dependent unresolved work, and never change the specification solely to hide a defect. The [ADR index/template](adr/index.md) preserve significant decisions and supersession; current CI does not establish semantic alignment.
@@ -18,6 +51,19 @@ For bug fixes, the RED test reproduces the defect. Test observable contracts rat
 
 Documentation-only changes use links, consistency, and diff checks. Pure configuration/scaffolding work uses relevant validators and build/smoke evidence; behavioral scripts still warrant behavioral tests. Behavior-preserving refactors may begin with passing characterization tests. Explain the applicable exception and limitations. Unit tests alone do not establish real Colima isolation, remote permissions, or race/recovery acceptance.
 
+## Run repository checks locally
+
+The repository configuration validator and its Python unit checks require the pinned PyYAML dependency. Create an isolated environment with CPython 3.9–3.14, install the hash-verified validation requirements, and run the same checks used by CI:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-ci.txt
+.venv/bin/python scripts/ci/check_repository.py
+.venv/bin/python -m unittest discover -s scripts/ci -p 'test_*.py'
+```
+
+The requirements file retains the Ubuntu CI wheel hash and includes verified macOS ARM64 and x86_64 wheels for CPython 3.9–3.14. The `.venv/` directory is ignored by Git. Do not install the validator dependency into the system Python.
+
 ## Slice issues into reviewable deliveries
 
 A parent issue describes the complete outcome. Create native GitHub sub-issues when it contains several independently reviewable outcomes, crosses unrelated concerns, or requires a PR that cannot be understood and verified as one coherent change. Keep a small issue intact; no fixed line-count threshold substitutes for judgment.
@@ -32,7 +78,9 @@ If scope grows, split remaining work before growing the PR. Backlog planning may
 
 ## Project views
 
-[Delivery](https://github.com/orgs/grasdouble/projects/1/views/1) shows issues only (`is:issue`), including coordination parents and implementation children. [Pull requests](https://github.com/orgs/grasdouble/projects/1/views/4) shows PR items only (`is:pr`). Keep PR membership and issue links, including linked PR badges. Backlog and Roadmap retain their milestone grouping; dates require an agreed schedule.
+[Delivery](https://github.com/orgs/grasdouble/projects/1/views/1) shows issues only (`is:issue`), including coordination parents and implementation children. [Pull requests](https://github.com/orgs/grasdouble/projects/1/views/4) shows PR items only (`is:pr`). Keep PR membership and issue links, including linked PR badges. Backlog and Roadmap retain their milestone grouping; planned dates require an agreed schedule. The [actual-date contract](roadmap-actual-dates.md) separately derives observed realization from native project/closure history and defines backfill, reopen handling and automatic maintenance.
+
+The Pull requests table displays native Milestone and a reserved derived **Issue** text column with the implementation issue's JV key and clickable URL. Follow [PR metadata synchronization](pr-project-metadata.md) at publication and after authorized link/milestone changes. Its reviewed command uses native closing-issue relationships, copies the issue milestone and never guesses a source or changes Status. The opt-in main-only workflow provides later reconciliation after secure credential/environment activation; it is separate from the session-driven delivery/review loop and the future runtime.
 
 An actionable implementation child moves through Ready → In Progress → In Review → Done. A coordination parent may remain In Progress across several child PRs and review cycles. Inspect project automations before setting Done; it can close the issue. Done requires verified acceptance and confirmed delivery, including merge when a PR is used.
 
@@ -44,7 +92,9 @@ This keeps the coordinator's working context smaller without promising unlimited
 
 ## Independent review and autonomous routine delivery
 
-Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge, or owner approval for sensitive changes. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended scheduler is installed. Future product runtime delivery is planned separately after v0.1.
+Authors validate their work before returning it; the coordinator integrates and freezes exact revisions; the reviewer independently selects and executes appropriate checks using the existing authorized tools. Follow the [direct validation contract](../.agents/skills/jarvis-pr-review/references/direct-validation.md) for separate scratch outputs, actual execution permissions, bounded runs and provenance. Verdicts return to the coordinator for correction routing or delivery. Small changes may combine coordinator/author, while the reviewer must have authored none of the candidate. No extra validation agent or enforced Mac isolation is installed by this contributor procedure.
+
+Follow [autonomous delivery](autonomous-delivery.md) for the owner-selected contributor loop: create PR → independent reviewer → fixes and new review when requested → verified routine merge subject to the per-issue human-review choice, or owner approval when requested or required. [jarvis-pr-review](../.agents/skills/jarvis-pr-review/SKILL.md) provides the separate reviewer; issue delivery coordinates corrections and project management records evidence/statuses. Defaults are three review rounds and 60 minutes per selected issue run, recovered across continuations. Missing/limited evidence or exhausted limits hands off explicitly. No native self-approval, second App or unattended delivery/review scheduler is installed. Future product runtime delivery is planned separately after v0.1.
 
 ## Blocking and resuming work
 
@@ -52,27 +102,71 @@ Use the [blocker lifecycle](blocker-lifecycle.md) for English Blocked, Blocker u
 
 ## Required issue milestones
 
-Every issue must have a native GitHub milestone: coordination parents, implementation children, bugs and decisions, open or closed. Choose the phase before creation and verify the saved metadata afterward, on reopen/triage, and before Ready or implementation. CLI/API creation must pass the milestone explicitly. Children inherit the parent phase only when appropriate; document a different phase when needed. If the phase is unclear, resolve it through project management first. Never silently assign J0, substitute a body reference, or invent a due date.
+Every issue must have a native GitHub milestone: coordination parents, implementation children, bugs and decisions, open or closed. Apply [milestone selection and creation](#milestone-selection-and-creation) before creation and verify the saved metadata afterward, on reopen/triage, and before Ready or implementation. CLI/API creation must pass the milestone explicitly. A body reference is insufficient; an unknown destination must be resolved through project management before starting work.
 
-J0–J5 cover the MVP, J6 covers autonomous delivery, J7 covers self-improvement, J8 covers post-MVP general-purpose assistance, J9 covers Telegram/Signal messaging, and J10 covers advisory duration forecasting after the MVP. J10 adds no automatic prerequisite on J6/J8/J9 and grants no dispatch/routing authority. J8 has no automatic dependency on J6/J7 solely by phase number. J9 notifications require the MVP; each channel's conversation additionally requires J8 qualification, without a dependency on the other channel or J6/J7 solely by phase number. Use the accepted roadmap and native prerequisites. These later milestones have no committed dates and add no MVP exit gate. A milestone is a delivery phase, not a promise of a calendar deadline.
+J00–J05 cover the MVP, J06 covers autonomous delivery, J07 covers self-improvement, J08 covers post-MVP general-purpose assistance, J09 covers Telegram/Signal messaging, and J10 covers advisory duration forecasting after the MVP. J10 adds no automatic prerequisite on J06/J08/J09 and grants no dispatch/routing authority. J08 has no automatic dependency on J06/J07 solely by phase number. J09 notifications require the MVP; each channel's conversation additionally requires J08 qualification, without a dependency on the other channel or J06/J07 solely by phase number. Use the accepted roadmap and native prerequisites. These later milestones have no committed dates and add no MVP exit gate. A milestone is a delivery phase, not a promise of a calendar deadline.
 
 GitHub's [issue form syntax](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) cannot require native milestone metadata. Web/API users can temporarily create an issue without one or remove one afterward. The forms provide guidance; they do not enforce metadata. The [Issue milestone audit](../.github/workflows/issue-milestones.yml) runs on opening, reopening, milestone assignment/removal, main updates, manual dispatch and daily reconciliation. After merge, it fetches all open and closed repository issue pages, excludes PR records, and fails with issue links when any milestone is absent. Malformed input fails rather than reporting success. It uses read-only permissions and trusted main code, never issue text as commands, and never assigns arbitrary phases or posts comments. Failures are visible in Actions under the repository's existing notification settings; no separate notification service is installed.
 
 Use the [CLI audit recipe](../.agents/skills/jarvis-project-management/references/github-cli.md#audit-required-issue-milestones) during backlog administration. Correct the native milestone, reread it, then verify the audit and refresh ranks. The queue additionally rejects any open issue without a milestone before preview or mutation, including coordination parents; closed history is checked by the broader audit. This detects drift and prevents incomplete queue updates; it does not atomically block GitHub issue creation.
 
+### Milestone selection and creation
+
+A product-phase or bounded one-off milestone groups a delivery outcome and its exit gate. A thematic DEV track groups continuing contributor work in one area and remains open for that area's evolution. Select the milestone from what the issue actually delivers, not the date of the request, its priority, the earliest prerequisite, or the fact that its files are documentation. Labels describe area/priority; native dependencies describe prerequisites. Milestone membership grants no implementation or merge authority.
+
+Before creating or triaging an issue, inspect the roadmap and existing open and closed milestones/issues, then use these rules:
+
+| Issue outcome | Destination |
+| --- | --- |
+| Initial MVP scope, owner decisions, threat model or acceptance plan | J00. It is not a general planning, documentation or maintenance bucket. |
+| Product implementation, qualification or feature-specific design/decision | The accepted product phase whose outcome the issue advances. A specification delivered early still belongs with its feature; closing it does not satisfy runtime or milestone qualification gates. |
+| Contributor-only repository security, development App, CI, project tooling, skills or governance | The thematic `DEV` track that matches the primary deliverable, separate from product phases. Reuse its open track for related work over time. Use a bounded `DEV — <outcome>` milestone only when the work has a distinct exit gate and does not fit an ongoing track. |
+| Product workspace, package versioning or release foundation | J01 when it delivers the planned product foundation; contributor validation/administration alone follows DEV. |
+| Bug or follow-up | The outcome whose next acceptance gate includes the repair, rather than automatically the component's historical phase or J00. |
+
+For mixed or cross-phase work, identify the primary independently verifiable deliverable and record the destination rationale in the issue, with references to the other phases. For example, the shared token-accounting specification [JV-072](https://github.com/grasdouble/Jarvis/issues/72) belongs to J03, while digest/operations implementation remains in J05; self-improvement specifications belong to J07. Split independently reviewable outcomes through the existing issue-slicing procedure instead of forcing them into one milestone. A coordination parent follows its integrated outcome; each child is assessed separately and inherits only when appropriate. A decision belongs to the outcome it unlocks. An unresolved material owner choice remains unresolved, regardless of assignment.
+
+Reuse an existing open milestone when its scope fits. Do not create a duplicate merely for one issue, a document type, a priority or a new request. Inspect closed milestones too. If a new issue falls within the original scope of a closed milestone that is still applicable, reopen that milestone in place by its stable native number and assign the issue to it. This applies to product-phase milestones and contributor DEV milestones alike. Record the scope match and reason; update the milestone description if needed to clarify its scope or lifecycle. Reopening does not reopen completed issues or rewrite their history. The milestone's original acceptance or exit gate applies again, and the new issue must pass it before the milestone can close. Do not reopen a milestone whose scope is retired, superseded or unrelated; create a distinct milestone when no existing scope fits.
+
+A thematic DEV track remains open while its contributor area is active; completing every currently assigned issue does not close the track. Close an ongoing track only when its scope is retired or superseded by an explicit owner decision. Product-phase milestones and bounded one-off DEV milestones may close when their defined acceptance or exit gate is verified; a later in-scope issue reopens that same milestone and returns its gate to active work.
+
+The ongoing contributor tracks are:
+
+| Track | Included scope | Excluded scope |
+| --- | --- | --- |
+| [DEV — Delivery & planning](https://github.com/grasdouble/Jarvis/milestone/16) | Issue intake and sizing; native dependencies and milestone selection; execution queue; issue/PR/project planning metadata and Roadmap planning synchronization. | CI, development environments, validation tooling, ownership policy and review/merge rules. |
+| [DEV — Tooling & validation](https://github.com/grasdouble/Jarvis/milestone/17) | Development App and network tooling; CI and repository security automation; contributor scripts; development environments; validation execution, checks and disposable review workspaces. | Issue/milestone/queue administration; specification and decision governance; CODEOWNERS and human-review/merge policy. |
+| [DEV — Governance & review](https://github.com/grasdouble/Jarvis/milestone/18) | Specification and decision traceability; CODEOWNERS and ownership gates; human and independent review, approval and merge policy; contributor process and skill guidance. | CI or validation tooling implementation; project planning and queue administration. Script/tool implementation bundled with a skill belongs to Tooling & validation; process and policy guidance belongs here. |
+
+For mixed work, choose the primary independently verifiable outcome and record the rationale. Split independently reviewable outcomes into separate issues and assign each issue to its own track. If tightly coupled work cannot be split, assign the primary deliverable's track and explain the cross-track scope in the issue.
+
+`DEV — Contributor foundation` ([milestone #13](https://github.com/grasdouble/Jarvis/milestone/13)) is retained as closed historical tracking after these three tracks are established. Its existing issues and linked PRs keep their historical milestone assignment. It is superseded and must not be reopened for new thematic work; assign future work to the applicable track. The closed `DEV — Milestone ordering` and `DEV — Contributor review controls` milestones remain their original bounded outcomes and are not repurposed as thematic tracks. Reopen either only for new work within its original scope, under the rule above.
+
+Select the destination by scope across the complete open and closed milestone inventory, not by milestone type or title similarity alone. A closed milestone can be reused only when the new issue is within its original scope and that scope remains applicable. Reopen it in place by its stable native number, record the rationale, preserve its identity/history, and leave completed issues closed. A product phase or bounded DEV milestone may therefore be reopened when new work falls within its scope; its acceptance or exit gate must be verified again after the work. Do not reopen a retired, superseded or unrelated milestone to avoid creating a genuinely distinct outcome. Historical reclassification remains a separate metadata correction.
+
+Create a milestone only when no existing applicable open or closed milestone covers the work. A new bounded milestone needs an authorized distinct outcome, English title, included/excluded scope, measurable exit gate, non-overlap rationale and relevant prerequisite references. A new thematic DEV track needs an authorized continuing contributor area, English title, scope, lifecycle condition and non-overlap rationale. Routine creation within already authorized delivery/planning needs no repeated permission; a new product objective, acceptance gate or unresolved phase choice needs the applicable owner decision first. Reuse or reopen an existing matching milestone if one appears during the final reread.
+
+Use `JNN — <outcome>` only for an accepted product roadmap phase, with two digits for indices 0–99 (`J00`, `J01`, …, `J09`, `J10`), maintaining existing identities and the roadmap mapping. This keeps title-based project grouping in numeric order. Before exceeding that width, qualify a wider common format and its queue compatibility rather than reintroducing lexical drift. Do not invent the next number to classify contributor work. Use an existing thematic `DEV — <track>` for continuing contributor areas and `DEV — <outcome>` for a bounded one-off contributor delivery that fits no ongoing track. Leave due dates unset without an agreed schedule, and do not derive package versions from milestone names. Keep ongoing DEV tracks open under the lifecycle rule above; reopen any applicable closed milestone when new in-scope work arrives.
+
+The previous unpadded names `J0`–`J9` are historical aliases for `J00`–`J09`, not new phases. The queue accepts both spellings during migration and for historical data, comparing their numeric values. Deliver the compatible parser to trusted main through the existing review/merge gates before renaming live milestones; a reviewed candidate alone does not update other agents or main-based automation. Older checkouts that cannot read the new spelling must update before refreshing ranks. Renaming a native milestone in place updates issue/PR membership and project groups automatically; update current repository guidance, active issue titles/bodies, project README and affected saved filters, then verify identity, membership and equivalent queue ranks. Preserve closed discussions and historical decision text instead of rewriting acceptance evidence.
+
+After assignment or creation, reread the saved native metadata and verify title, scope/exit gate and project membership. Record a short issue rationale for a new milestone, mixed scope, child/parent divergence or historical move; routine unambiguous assignments need no duplicate commentary. Synchronize linked delivery PRs through the [PR metadata contract](pr-project-metadata.md) and refresh Next up. Preserve statuses, dependencies and observed dates unless their change is separately justified. Named milestones, including DEV, currently sort after numeric J phases; an explicitly selected issue still takes precedence. Do not rename milestones or invent dependencies to manipulate ranks; a queue-ordering change is a separate authorized change.
+
+The missing-milestone audit checks presence, not whether this semantic choice is correct. Contributor assessment and independent review provide the selection evidence; these rules install no semantic classifier or background service.
+
 ## Select and refresh the next issue
 
 [Next up](https://github.com/orgs/grasdouble/projects/1/views/5) is the execution-order view. The project is the live source of work; this document defines the rule rather than copying a numbered backlog into Git. The table filters `is:issue is:open has:execution-order`, sorts Execution order ascending, and displays title, status, labels, milestone, and rank. Delivery/Backlog/Roadmap retain their existing purposes.
 
-Ranks are derived from native blocking links plus parent/child structure. Treat open children as prerequisites of their coordination parent for ordering; give only open implementation issues ranks. Coordination parents and closed issues have their old rank cleared. Topologically order dependencies first; among the currently dependency-available nodes, choose milestone phase numerically (`J0`, `J1`, …, `J7`, `J10`, …), priority P0–P2, creation time, then GitHub issue number. Named milestones follow all numeric phases; missing priorities sort last. Every open issue, including a coordination parent, must have a nonblank native milestone or the entire preview/write fails before rank mutation. JV identifiers remain stable references, not priority. This forecasts future execution as prerequisites finish; it does not claim they have already finished.
+Ranks are derived from native blocking links plus parent/child structure. Treat open children as prerequisites of their coordination parent for ordering; give only open implementation issues ranks. Coordination parents and closed issues have their old rank cleared. Topologically order dependencies first; among the currently dependency-available nodes, choose milestone phase numerically (`J00`, `J01`, …, `J09`, `J10`, …), priority P0–P2, creation time, then GitHub issue number. Legacy unpadded aliases have the same numeric value. Named milestones follow all numeric phases; missing priorities sort last. Every open issue, including a coordination parent, must have a nonblank native milestone or the entire preview/write fails before rank mutation. JV identifiers remain stable references, not priority. This forecasts future execution as prerequisites finish; it does not claim they have already finished.
 
 Run from a reviewed checkout with the configured development App:
 
 ```bash
 # Read-only preview, including unmet prerequisite numbers and Ready candidates.
-node scripts/github/sync-project-queue.mjs
+node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs
 # Authorized project maintenance: write changed ranks and reread them.
-node scripts/github/sync-project-queue.mjs --write
+node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs --write
 ```
 
 The tool reads project 1 and the complete Jarvis issue inventory, paginates outer connections, and fails without writes if nested connections are truncated, dependencies/children are unavailable, a cycle exists, or an open repository issue lacks project membership. It rereads before mutation and verifies the resulting ranks. API writes are not atomic across batches. Writes use sequential batches of at most five field changes, with at least one second between mutative requests. After a recognized transient transport/HTTP 500/502/503/504 or GraphQL timeout, the tool waits, rereads the complete snapshot, and retries only missing intended changes with smaller batches (five, two, then one). It permits at most three recovery rounds, with exponential waits starting at one second; successful responses also require a final reread and use the same bounded recovery budget if ranks are missing. A lost response after complete success needs no further mutation.

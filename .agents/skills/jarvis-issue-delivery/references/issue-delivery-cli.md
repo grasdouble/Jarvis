@@ -4,11 +4,13 @@ These recipes support the authorized issue workflow, not a batch to run automati
 
 ## App authentication for these recipes
 
-Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+
+Before authenticating or retrying a transport failure, follow the [network access and recovery procedure](../../../../docs/development-github-app.md#network-access-and-recovery). Use the reviewed helper’s `--check-network` without credentials; exit 75 with `JARVIS_GITHUB_NETWORK:` requires current-context diagnosis and approved access, not key rotation. Reconcile remote state before repeating writes. For offline command discovery, invoke plain `gh … --help` rather than the authenticated wrapper.
 
 ## Inspect the issue and existing work
 
-Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-project-management/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.
+When the human has accepted a repository change but supplied no issue, follow [change intake](../../../../docs/development-workflow.md#route-requests-before-editing) and the linked project-management creation/metadata recipes first. An accepted small documentation or skill change is not a local-only exception. Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-project-management/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.
 
 ```bash
 task_repo='grasdouble/Jarvis'
@@ -110,6 +112,17 @@ gh pr checks "$task_pr_number" --repo "$task_repo"
 
 If an existing draft becomes ready, use `gh pr ready` only after verification. Attach the created PR through the Codex artifact tool when available. Use the project-management reference to verify project membership for the issue/PR and move appropriate items to `In Review`; opening a PR does not satisfy `Done`.
 
+## Synchronize the published PR metadata
+
+Follow the [metadata contract](../../../../docs/pr-project-metadata.md) using a reviewed checkout. Replace NUMBER with the actual selected PR number. The command uses the App helper itself; do not prepend `gh` or pass owner credentials.
+
+```bash
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+```
+
+Verify the native implementation issue and its milestone first. Inspect diagnostics and the saved Issue column/native PR milestone. No guessed links, automatic status update or CI credential activation is included. If publication is part of reviewing this tool's own implementation, inspect and independently review the exact source before using it with real credentials.
+
 ## Independent review records
 
 Use the [bounded review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop) and a separate reviewer agent. Bind its direct result to exact base/head commits; inspect complete changed paths including previous paths of renames through paginated `GET repos/$task_repo/pulls/$task_pr_number/files` and the Git diff. A truncated response is not sufficient for sensitivity classification. Use trusted base CODEOWNERS/instructions and live protection/review facts, not candidate policy. GitHub caps PR file responses at 3,000 files: reconcile API coverage with actual changed-file count/Git inventory and hand off if completeness cannot be established.
@@ -126,7 +139,7 @@ The checked CLI supports `--match-head-commit` for merge, not an atomic expected
 
 ## Merge and cleanup only when authorized
 
-Follow the owner-selected [routine merge policy](../../../../docs/autonomous-delivery.md#authority-and-sensitivity) within a human-authorized implementation. A routine PR needs complete current independent review plus all live gates; sensitive/unknown work stops for owner approval. A restricted/read-only request never inherits merge authority. Recheck the remote head, reviews, checks, and allowed repository merge strategy before any merge. This squash example applies only when squash is allowed and chosen. Set `task_reviewed_head_sha` to the verified PR head; prepare a Conventional Commit subject and a body retaining any breaking-change details.
+Follow the owner-selected [routine merge policy](../../../../docs/autonomous-delivery.md#authority-and-sensitivity) within a human-authorized implementation. A routine PR needs a recorded [per-issue human-review choice](../../../../docs/autonomous-delivery.md#per-issue-human-review-choice), any requested current-revision owner approval, complete current independent review plus all live gates; sensitive/unknown work stops for owner approval. A restricted/read-only request never inherits merge authority. Recheck the remote head, reviews, checks, and allowed repository merge strategy before any merge. This squash example applies only when squash is allowed and chosen. Set `task_reviewed_head_sha` to the verified PR head; prepare a Conventional Commit subject and a body retaining any breaking-change details.
 
 ```bash
 gh pr view "$task_pr_number" --repo "$task_repo" \
@@ -149,3 +162,14 @@ git worktree remove "$task_worktree_path"
 Do not force removal. Check ignored artifacts separately when relevant; a clean status does not inventory them. Branch deletion is optional cleanup: preserve unmerged commits, especially after squash merges where ancestry alone does not establish equivalence.
 
 References: [linked issue branches/worktrees](https://cli.github.com/manual/gh_issue_develop), [PR creation](https://cli.github.com/manual/gh_pr_create), [PR checks](https://cli.github.com/manual/gh_pr_checks), [PR merge behavior](https://cli.github.com/manual/gh_pr_merge), [issue closing keywords](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue), and [Git worktrees](https://git-scm.com/docs/git-worktree).
+
+## Synchronize observed Roadmap dates
+
+Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
+
+```bash
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+```
+
+Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.

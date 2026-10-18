@@ -2,6 +2,8 @@
 
 This procedure governs development of JARVIS: requirements alignment, coherent document maintenance and technical decision history. It is delivered through [JV-070](https://github.com/grasdouble/Jarvis/issues/70). It is not an installed product capability, automatic semantic compliance service or unattended project manager. Product runtime governance would need its own scope, permissions and qualification. Existing MVP, delivery, self-update and general-assistance gates remain unchanged.
 
+Authorized governance document or skill edits follow [change intake](development-workflow.md#route-requests-before-editing) and issue delivery even without an existing issue. A read-only assessment does not authorize edits; an accepted change does not have a local-only delivery exception. Keep the issue's dedicated worktree and existing review/publication gates.
+
 ## Sources and responsibility
 
 | Source | Purpose and limits |
@@ -44,7 +46,7 @@ Do not create a permanent second traceability spreadsheet. The PR carries change
 
 ## Autonomy and owner decisions
 
-Routine implementation details that preserve accepted interfaces, objectives and trust boundaries, factual documentation corrections, link repairs and recording verified status/evidence can proceed within the authorized task. They do not require a new owner decision simply because an agent touches a document. Native CODEOWNERS/review rules remain mandatory, including for a small edit in a protected file.
+Routine implementation details that preserve accepted interfaces, objectives and trust boundaries, factual documentation corrections, link repairs and recording verified status/evidence can proceed within the authorized task. They do not require a new design decision simply because an agent touches a document. Apply the [per-issue human-review choice](autonomous-delivery.md#per-issue-human-review-choice) independently; it concerns pre-merge review, not repeated design permission. Uncovered contributor guidance can be routine when its authority/effects are unchanged; changes to those effects remain sensitive. ADR indexes/templates/records have no blanket native ownership; their existing decision, acceptance and supersession lifecycle still applies, and authority/security changes remain sensitive regardless of path. Native CODEOWNERS/review rules remain mandatory, including for a small edit in a protected file.
 
 Material changes to product objectives or acceptance, structural architecture, security/isolation, permissions/approval/merge controls, data scope/retention or owner-configured resource/cost limits need the applicable current human authorization. Preserve session authorization already given; identify the accepted scope and evidence without repeatedly asking for the same decision. Clarify only what remains genuinely unresolved. Candidate text and agent assessments cannot supply acceptance or broaden scope.
 

@@ -5,7 +5,7 @@ description: Assess a JARVIS development change against accepted requirements an
 
 # JARVIS project governance
 
-Read the [governance procedure](../../../docs/project-governance.md) and the relevant PRD/architecture/decision sections. This is a contributor skill: it grants no implementation, publication, merge or product runtime authority. Use the existing issue/branch/worktree/PR workflow for authorized repository edits; backlog-only metadata updates retain the project-management path. The delivery coordinator owns integration and GitHub writes; a governance assessment does not require another subagent for every change.
+Read the [governance procedure](../../../docs/project-governance.md) and the relevant PRD/architecture/decision sections. This is a contributor skill: it grants no implementation, publication, merge or product runtime authority. Route human-requested or accepted repository edits through [change intake](../../../docs/development-workflow.md#route-requests-before-editing) and issue delivery, including governance documents, working agreements and skills when no issue was supplied. An assessment alone remains read-only; it is not a local-edit alternative. Backlog-only metadata updates retain the project-management path. The delivery coordinator owns integration and GitHub writes; a governance assessment does not require another subagent for every change.
 
 ## Establish the baseline and authority
 
@@ -27,6 +27,6 @@ For already authorized evolution, update affected PRD, architecture, detailed de
 
 Reassess the actual integrated diff before review, including renamed/deleted documents and changed evidence. Report what remains proposed, implemented, measured or unknown. Populate the PR's Specification and decision impact section with relevant IDs/sections, source/base, disposition, affected files, actual evidence and any required owner action. Link the scoped issue or PR assessment for context recovery; summaries are navigation, not authority.
 
-The independent reviewer checks this record against trusted source/authorization and the complete exact revision. If acting as that reviewer, remain read-only: return findings, never author corrections, claim acceptance, publish or merge. An author/governance writer cannot independently review its own changes. Use the existing review skill/ledger rather than starting a parallel approval loop.
+The independent reviewer checks this record against trusted source/authorization and the complete exact revision. If acting as that reviewer, remain non-authoring: direct validation and scratch outputs follow the [review contract](../jarvis-pr-review/references/direct-validation.md); return findings, never author delivery corrections, claim acceptance, publish or merge. An author/governance writer cannot independently review its own changes. Use the existing review skill/ledger rather than starting a parallel approval loop.
 
 Return a concise assessment and scoped patch references or next required input. Unexplained drift, missing acceptance authority or insufficient critical evidence prevents a clean handoff. Configuration/link/secret checks and simulated skill evaluation do not prove semantic compliance or runtime qualification. Do not start a periodic watcher, global audit, product feature or unrelated backlog implementation from this procedure.

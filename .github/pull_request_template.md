@@ -23,7 +23,8 @@
 ## Independent review
 
 <!-- Link the confirmed agent assessment comment and identify reviewer, reviewed base/head, coverage and finding dispositions. An agent verdict is not native GitHub approval. State limited/unavailable evidence honestly. -->
-<!-- Classify routine/sensitive/unknown using trusted base policy and current protections; sensitive/unknown changes retain the owner gate. -->
+<!-- Record the per-issue human-review choice (required/declined/pending), its actual human source and scope, and any requested current-head approval still needed. Never infer consent from silence or another issue. -->
+<!-- Classify routine/sensitive/unknown using trusted base policy and current protections; sensitive/unknown and native gates remain mandatory even when optional review is declined. -->
 
 ## Risks and follow-up
 

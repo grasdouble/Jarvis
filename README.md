@@ -1,6 +1,6 @@
 # JARVIS
 
-A self-hosted assistant for managing GitHub development projects, built in-house with TypeScript and Node.js. The v0.1 MVP covers Dependabot monitoring, isolated OpenCode reviews, strict automerge, and a daily digest.
+A self-hosted assistant for owner-directed work on internally authorized software projects, built in-house with TypeScript and Node.js. Version 0.1 supports explicit read-only `plan` and bounded `dev` requests, requested read-only pull-request analysis, validated PR publication without JARVIS merge, and a daily digest.
 
 The repository is maintained in English.
 
@@ -19,21 +19,23 @@ The repository is maintained in English.
 - [Task duration estimates, timing and calibration](docs/duration-forecasting.md)
 - [Development repository security](docs/repository-security.md)
 - [Development App, local key storage, and authentication](docs/development-github-app.md)
+- [PR Issue/Milestone synchronization and CI activation](docs/pr-project-metadata.md)
+- [Observed Roadmap dates and historical backfill](docs/roadmap-actual-dates.md)
 - [Security reporting](SECURITY.md)
 
 The product roadmap also plans [evidence-driven self-improvement after autonomous delivery](docs/prd-and-roadmap.md#111-post-mvp-evolution), tracked by [JV-051](https://github.com/grasdouble/Jarvis/issues/51). It is future work with fixed evaluation, human-sensitive gates and separately authorized rollout; no runtime optimizer is installed.
 
 ## Shared agent runtime
 
-OpenCode is the planned common engine for conversation, code review/development and self-improvement through separate trusted profiles. JARVIS owns permissions, memory, budgets, scheduling and external effects. The MVP admits static review only; [J8 general-purpose assistance](https://github.com/grasdouble/Jarvis/issues/64) plans authenticated conversation and approved read-only tools, with weather as the first qualification example. No chat/tool broker/connector is enabled and Herdr is not a dependency. See the [runtime design](docs/common-agent-runtime.md).
+OpenCode is the planned common engine for conversation, code review/development and self-improvement through separate trusted profiles. JARVIS owns permissions, memory, budgets, scheduling and external effects. Version 0.1 supports explicit project-scoped `plan`/`dev` requests, including requested read-only pull-request analysis; repository commands remain disabled absent accepted D16 and qualification. [J08 general-purpose assistance](https://github.com/grasdouble/Jarvis/issues/64) plans authenticated conversation and approved read-only tools, with weather as the first qualification example. No chat/tool broker/connector is enabled and Herdr is not a dependency. See the [runtime design](docs/common-agent-runtime.md).
 
 ## Messaging channels
 
-J9 separately plans opted-in Telegram/Signal notifications after the MVP, then authenticated text conversation reusing qualified J8 services. [JV-075](https://github.com/grasdouble/Jarvis/issues/75) tracks the work; neither channel is enabled and Signal bridge feasibility remains to be qualified. See the [messaging contract](docs/messaging-channels.md). Channel messages grant no additional GitHub, approval or deployment authority.
+J09 separately plans opted-in Telegram/Signal notifications after the MVP, then authenticated text conversation reusing qualified J08 services. [JV-075](https://github.com/grasdouble/Jarvis/issues/75) tracks the work; neither channel is enabled and Signal bridge feasibility remains to be qualified. See the [messaging contract](docs/messaging-channels.md). Channel messages grant no additional GitHub, approval or deployment authority.
 
 ## Self-update pull requests
 
-Actual product self-improvements are tracked directly by a detailed promotion PR carrying `self-update`, with no mandatory operational issue or milestone. The [Self-update project view](https://github.com/orgs/grasdouble/projects/1/views/7) filters `repo:grasdouble/Jarvis is:pr label:self-update`; the controller must also add each PR to the project. J7 issues track building the capability. One bounded hypothesis has one campaign and at most one active main-promotion PR; technical task PRs remain linked in its manifest. See the [tracking/skill contract](docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake) and [PR content contract](skills/jarvis-self-improvement/references/proposal.md). The versioned [product skill source](skills/jarvis-self-improvement/SKILL.md) is prepared for future qualified integration; no loader, autonomous proposal service or self-update is enabled.
+Actual product self-improvements are tracked directly by a detailed promotion PR carrying `self-update`, with no mandatory operational issue or milestone. The [Self-update project view](https://github.com/orgs/grasdouble/projects/1/views/7) filters `repo:grasdouble/Jarvis is:pr label:self-update`; the controller must also add each PR to the project. J07 issues track building the capability. One bounded hypothesis has one campaign and at most one active main-promotion PR; technical task PRs remain linked in its manifest. See the [tracking/skill contract](docs/self-improvement-campaigns.md#operational-tracking-and-proposal-intake) and [PR content contract](skills/jarvis-self-improvement/references/proposal.md). The versioned [product skill source](skills/jarvis-self-improvement/SKILL.md) is prepared for future qualified integration; no loader, autonomous proposal service or self-update is enabled.
 
 ## Next development subject
 
@@ -46,9 +48,11 @@ Every issue must have an appropriate native GitHub milestone, including coordina
 For routine issue delivery and backlog management, use the [dedicated development App](docs/development-github-app.md). Its helper defaults to read-only tokens and supports explicit authorized writes and App-authenticated branch pushes. Keep its PEM in `$HOME/Library/Application Support/Jarvis Development/credentials` with directory/file permissions `700`/`600`.
 
 ```bash
-node scripts/github/gh-app.mjs --verify
-node scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --verify
+node .agents/skills/jarvis-project-management/scripts/github/gh-app.mjs -- issue list --repo grasdouble/Jarvis
 ```
+
+The helper’s `--check-network` public probe needs no key and confirms transport only. Check the current environment’s network permissions before authenticating; follow [network recovery](docs/development-github-app.md#network-access-and-recovery) for `fetch failed` or exit 75, without switching identities or blindly retrying writes.
 
 The OAuth setup below is for the human owner's personal CLI and authorized administration; it is separate from the development App identity.
 

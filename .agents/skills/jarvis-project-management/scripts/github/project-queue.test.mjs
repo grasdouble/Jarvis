@@ -59,8 +59,40 @@ test('completed historical issues without a milestone remain omitted from the im
 test('only a whole nonnegative safe integer J phase is treated as numeric', () => {
   assert.deepEqual(numbers(planQueue([
     issue(1,{milestone:'J1.5 — Named'}),
-    issue(2,{milestone:'J01 — Named'}),
+    issue(2,{milestone:'J001 — Named'}),
     issue(3,{milestone:'J99999999999999999999 — Named'}),
     issue(4,{milestone:'J100'}),
   ])),[4,1,2,3]);
+});
+
+test('padded product phases sort numerically through J10 before named outcomes', () => {
+  assert.deepEqual(numbers(planQueue([
+    issue(1,{milestone:'J01 — Foundation'}),
+    issue(2,{milestone:'J10 — Forecasting'}),
+    issue(3,{milestone:'J02 — Observation'}),
+    issue(4,{milestone:'J00 — Scoping'}),
+    issue(5,{milestone:'J09 — Messaging'}),
+    issue(6,{milestone:'DEV — Tooling',labels:['priority:P0']}),
+  ])),[4,1,3,5,2,6]);
+});
+
+test('renaming legacy phases preserves ranks, dependencies and Ready eligibility', () => {
+  const legacy=[
+    issue(1,{milestone:'J0',status:'Ready',blockers:['3']}),
+    issue(2,{milestone:'J1',status:'Ready'}),
+    issue(3,{milestone:'J9',status:'Ready'}),
+    issue(4,{milestone:'J10',status:'Ready'}),
+    issue(5,{milestone:'DEV — Tooling'}),
+    issue(6,{milestone:'J7',children:['7']}),
+    issue(7,{milestone:'J7'}),
+    issue(8,{milestone:'J6',state:'CLOSED',stateReason:'NOT_PLANNED'}),
+    issue(9,{milestone:'J2',status:'Ready',blockers:['8']}),
+  ];
+  const padded=legacy.map(row=>({...row,milestone:row.milestone.replace(/^J(\d)$/, 'J0$1')}));
+  const mixed=padded.map((row,index)=>index%2?row:legacy[index]);
+  const expected=planQueue(legacy);
+  assert.deepEqual(planQueue(padded),expected);
+  assert.deepEqual(planQueue(mixed),expected);
+  assert.deepEqual(expected.find(row=>row.number===9).unmet,[8]);
+  assert.equal(expected.find(row=>row.number===9).candidate,false);
 });

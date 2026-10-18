@@ -31,11 +31,13 @@ jobs:
         run: python3 scripts/ci/check_repository.py
       - name: Exercise invalid configuration and title cases
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Test the PR-review validation workspace helper
+        run: python3 .agents/skills/jarvis-pr-review/scripts/test_prepare_validation_workspace.py
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
       - name: Test contributor GitHub tooling without real credentials
-        run: node --test scripts/github/*.test.mjs
+        run: node --test .agents/skills/jarvis-project-management/scripts/github/*.test.mjs
 
   pr-title:
     name: Conventional PR title
