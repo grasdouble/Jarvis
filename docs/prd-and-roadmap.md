@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.17 • October 18, 2026 • Personal self-hosted product
+Document version 1.18 • October 18, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -33,9 +33,9 @@ The values below are design targets to confirm at milestone J00; they are not me
 | --- | --- |
 | Users | One owner and a single administrator account |
 | GitHub hosting | GitHub.com; GitHub Enterprise Server deferred |
-| Initial project set | JARVIS repository only, as selected by the owner; any expansion requires a later explicit selection |
+| Initial project set | `grasdouble/Jarvis-Test` only, as selected by the owner; the JARVIS source repository is not an initial project target |
 | Nominal volume | 20 user requests per day; peak request rate remains to be measured |
-| Test repository | `grasdouble/Jarvis-Test` is for disposable testing only, not an enabled initial project |
+| Repository state | The owner reports `Jarvis-Test` currently contains only `README.md`; repository and product-App access still require verification |
 | Concurrency | One OpenCode sandbox at a time |
 | Per-attempt quotas | 2 vCPUs, 4 GiB RAM, 256 processes, 30 minutes |
 | Plan profile | Read-only project context and approved skill instructions; no repository writes |
@@ -361,7 +361,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 | --- | --- | --- | --- |
 | D01 | Sandbox controller | Owner; dedicated container with Engine socket and closed API | J01; native option only if explicitly accepted |
 | D02 | Providers and code processing | Owner; one primary provider and one authorized secondary | J00; no private code sent without selection |
-| D03 | Repositories, branch, and required CI | Owner selected only the JARVIS repository as the initial project; `Jarvis-Test` remains disposable testing, not an enabled project | J00 plan work requires an authorized project and approved provider/data processing; no development task or PR publication until its repository, base branch, and required CI are selected and verified |
+| D03 | Repositories, branch, and required CI | Owner selected `grasdouble/Jarvis-Test` as the only initial project target; the owner reports a local checkout with only `README.md`. `grasdouble/Jarvis` is the product source repository, not the initial JARVIS-operated project. | J00 plan work requires authorized project access and approved provider/data processing; no development task or PR publication until product access, target base branch, required CI, and provenance are verified |
 | D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
 | D05 | Consumption monitoring and spending controls | Owner prioritizes monitoring consumption and is unsure whether fixed ceilings are wanted; prior EUR figures are not current approved defaults | J00; record request/provider usage, estimated/reported cost, and unknown coverage. Owner must decide whether hard ceilings are required, with any thresholds/currency and plan/dev allocation, before billable dispatch |
 | D06 | Colima version, RAM, and disk allocation | Owner; ARM64 measurements and effective VM configuration verification | J01; one task, lower quotas if necessary |
@@ -379,19 +379,19 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 ### J00 decision status for JV-001
 
-The owner restarted JV-001 for the revised project-request MVP and selected the JARVIS repository as the only initial project. `Jarvis-Test` remains a disposable test repository and is not in the active project set; `Jarvis-Demo` is not selected. This project selection does not prove repository configuration, branch protection, or product access. The current owner inputs are recorded in [issue #1](https://github.com/grasdouble/Jarvis/issues/1#issuecomment-6254478220).
+The owner selected `grasdouble/Jarvis-Test` as the only initial project target for the revised project-request MVP; `grasdouble/Jarvis` is the source repository used by contributors to develop JARVIS, not a project JARVIS will operate on. `Jarvis-Demo` is not selected. The owner reports that a local `Jarvis-Test` checkout contains only `README.md`; this has not been independently verified and does not prove GitHub/product-App access, branch protection, or qualification. The current owner clarification is recorded in [issue #1](https://github.com/grasdouble/Jarvis/issues/1#issuecomment-6254649247), superseding the earlier initial-project selection.
 
 Provider selection remains open. The earlier Copilot/ChatGPT-Codex primary-group and OpenCode Zen/Claude secondary-group preferences are not an exact provider, account, model, data-processing authorization, or fallback choice. No private project content may be sent until D02's actual route and handling are selected and qualified.
 
 The owner prioritizes consumption monitoring and has not decided whether fixed hard spending ceilings are wanted. The previously recorded EUR amounts are not current approved defaults. F09 already specifies request-level provider/model attribution, usage breakdowns, estimated/reported costs, unknown coverage, and daily/monthly summaries; D05 still needs an owner decision on any hard-stop/approval policy, applicable thresholds/currency, and plan/dev allocation. Until the applicable billable-use policy is selected and enforced, no billable request is authorized.
 
-JARVIS is the only selected initial project for `plan`; a plan request still requires an approved provider and data-processing route. No `dev` repository/base branch is selected by the restart direction. Before development or PR publication, D03 requires selection of the target repository and branch plus verified required CI identities and provenance. D01's controller decision and D06's Colima allocation remain J01 gates; unsolicited events remain excluded under D04.
+`Jarvis-Test` is the only selected initial project for MVP requests. A `plan` request still requires verified authorized project access and an approved provider/data-processing route. The repository identity is selected, but product-App access, the `dev` base branch, required CI identities, and provenance must still be verified before a development task or PR publication. The README-only report is not evidence that those gates pass. D01's controller decision and D06's Colima allocation remain J01 gates; unsolicited events remain excluded under D04.
 
 | Decision | Current disposition | Remaining gate |
 | --- | --- | --- |
 | D01 | Controller choice remains open. | Select and qualify the trusted controller at J01; the agent receives no Engine socket. |
 | D02 | Provider-group preferences only; exact model/account/route and data handling remain unselected. | Owner selects the actual route and terms; qualify access, confidentiality, isolated transport, and usage reporting before private content or billable calls. |
-| D03 | JARVIS repository only is selected for initial requests; `Jarvis-Test` is test-only. | Verify JARVIS project configuration/access. Select a separate or same authorized development target and base branch, then required CI/provenance, before any `dev` task or PR publication. |
+| D03 | `grasdouble/Jarvis-Test` is selected as the only initial project target; the owner reports its local checkout contains only `README.md`. `grasdouble/Jarvis` is the contributor source repository, not a JARVIS-operated project. | Verify product-App project access and configuration. Verify the target base branch, required CI identities, and provenance before any `dev` task or PR publication. |
 | D04 | Start work only from authenticated owner requests; no unsolicited event intake. | Keep external event ingress disabled. |
 | D05 | Consumption monitoring is wanted; fixed hard ceilings and previous numeric values are not accepted as current policy. | Decide whether hard stops/approvals are needed, then select thresholds/currency and plan/dev allocation. No billable request until the applicable policy is accepted and enforced. |
 | D06 | Colima version and CPU/RAM/disk allocation remain open. | Measure the host and qualify the effective VM configuration at J01. |
