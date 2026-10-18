@@ -299,7 +299,6 @@ interface SandboxManager {
 | GET /api/v1/tasks/:id | Request, plan/patch, status and linked PR | Scoped authorization; sanitized output and immutable revision links |
 | GET /api/v1/projects/:id/skills | Inspect candidate skill revisions | Read-only discovery; content remains untrusted and non-executable |
 | PUT /api/v1/projects/:id/skills/:skillId/approval | Approve/revoke exact skill revision | Explicit owner action, digest/version, CSRF, audit; no command permission |
-| POST /api/v1/approvals/:id/decision | Approve or reject | Expected ActionDigest and version, expiry, CSRF |
 | POST /api/v1/control/pause | Durable global stop | Prioritized, authenticated, and audited |
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
 | GET /api/v1/usage | Consumption summary and groupings | Authenticated scope, bounded period/groups, IANA zone, currencies and completeness |
@@ -445,7 +444,7 @@ Use `proposed`, `validated`, `invalidated`, `expired`, and `deleted` lifecycle s
 
 Proposals initially expire after 30 days. Validated items require review within 90 days and are excluded after that deadline unless explicitly revalidated. Changed supporting files/revisions invalidate revision-specific claims; dependency claims apply only within their declared version range. When the core cannot establish applicability or supporting evidence has been purged, it excludes the item and requests review. Revalidation must retain a minimal supporting citation under the selected knowledge retention policy rather than copying entire expired reports.
 
-Deletion atomically marks an item forgotten and makes it immediately ineligible for new context selection. The worker cancels affected active attempts, invalidates pending decisions/approvals whose reports used it, purges content and derived search data within 60 seconds, and clears in-process caches. Context manifests keep only identifiers and hashes. Historical reports containing the forgotten content must also be purged or redacted; the interface explains the scope. Retained audit metadata contains no memory text. Knowledge deletion does not retract an already accepted GitHub effect, which remains tracked through its outcome.
+Deletion atomically marks an item forgotten and makes it immediately ineligible for new context selection. The worker cancels affected active attempts, invalidates pending task/publication eligibility that depended on its context, purges content and derived search data within 60 seconds, and clears in-process caches. Context manifests keep only identifiers and hashes. Historical reports containing the forgotten content must also be purged or redacted; the interface explains the scope. Retained audit metadata contains no memory text. Knowledge deletion does not retract an already accepted GitHub effect, which remains tracked through its outcome.
 
 Encrypted backup copies disappear according to the documented backup rotation rather than instant physical erasure. Keep a minimal content-free forgetting ledger in a separate trusted administrative export, updated before confirming completion. On restore, reconcile that ledger and reapply deletions before exposing memory or resuming tasks. Test this procedure with a backup made before deletion; never claim immediate removal from provider-side retention or immutable backups.
 
