@@ -373,7 +373,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 **Later.** Multiple concurrent runs, dedicated Linux hosting, multiple projects or users, and planning of more complex work. Each extension requires a new threat assessment and its own criteria.
 
-## 12 Open decisions and fallback values
+## 12 Decision register and fallback values
 
 | ID | Decision | Proposal and owner | Deadline or fallback |
 | --- | --- | --- | --- |
@@ -393,6 +393,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 | D14 | Post-MVP general-assistance profile and capability policy | Owner accepts JV-065/JV-068 profiles, pinned tool transport/runtime, provider and data processing, finite model/tool/time/cost limits, freshness/cache/retention rules and controlled pilot | Before affected live calls, conversation persistence or profile enablement; missing decisions disable that capability, never widen the MVP |
 | D15 | Telegram/Signal accounts, transport and channel policy | Owner accepts JV-076 policy and respective adapter pilots: pairing/recipients/consent, Signal bridge/account feasibility, intake method, disclosure/retention/expiry, finite limits, unknown-delivery/catch-up policy and per-capability enablement | Before corresponding account provisioning, data persistence or live sends/intake; conversation also retains D14/J08. No chat-based sensitive approval or public administration is selected |
 | D16 | Repository command and validation execution | Owner accepts whether/how project commands, scripts, tests, dependency acquisition, and network access may run in a separately qualified credential-free profile | Before any product-side project command execution; until accepted and qualified, do not execute repository-provided commands |
+| D17 | v0.1 project-request direction and project-skill consent | Owner selected explicit project-scoped `plan`/`dev` requests, internal JARVIS project authorization, explicit exact-revision approval before using project-skill instructions, and dev PR handoff without JARVIS merge; recorded in JV-124/JV-125 and the October 18, 2026 development conversation | Accepted product direction; implementation details remain subject to D01–D16 and applicable qualification/review gates |
 
 ## 13 Release criteria
 

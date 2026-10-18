@@ -10,7 +10,8 @@ Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-ti
 
 | ID / title | Status | Owner | Scope / related decisions | Record |
 | --- | --- | --- | --- | --- |
-| ADR-0012 Project-scoped requests and revision-bound skill consent | Accepted product direction; proposed implementation mechanisms | JARVIS owner | PRD F01/F11–F14, POL 08–13, N14–N15, D16; partially supersedes former Dependabot-first v0.1 scope | [Record](0012-project-scoped-requests-and-skill-consent.md); owner direction in JV-124/JV-125 |
+
+ADR-0012 was withdrawn at the owner's direction before adoption; its standalone candidate record was removed in the JV-125 change. The identifier is retired and will not be reused. The accepted product direction is recorded in [PRD D17](../prd-and-roadmap.md#12-decision-register-and-fallback-values) and its owner evidence in JV-124/JV-125.
 
 Each new index row records ID/title, status, owner, relevant requirement/Dxx or legacy ADR references, record link and acceptance/supersession evidence. Keep source and status consistent with the record; do not duplicate its full rationale here.
 

@@ -28,7 +28,7 @@ The existing ADR01–ADR11 identities below remain stable. Use [project governan
 | ADR 10 Host runtime | Colima Docker runtime, dedicated `jarvis` profile, native ARM64 | No Docker Desktop dependency; no macOS directory sharing; validate isolation on the pinned platform |
 | ADR 11 Durable memory | Core-owned PostgreSQL history, checkpoints, and scoped knowledge | Bounded context rebuilt per attempt; no persistent agent home or automatic policy learning |
 
-The changes to product purpose and the project-skill trust model are documented in [ADR-0012](adr/0012-project-scoped-requests-and-skill-consent.md). The owner's product-direction selections are accepted; implementation mechanisms remain proposed and do not grant runtime permissions. PRD F02/F04–F06 and POL 01–07 identify former Dependabot/automerge behavior as historical or superseded; F01 and applicable F03/F07–F10 remain current as reconciled there.
+The owner-selected product direction and project-skill consent model are recorded in [PRD D17](prd-and-roadmap.md#12-decision-register-and-fallback-values). Implementation mechanisms remain proposed and do not grant runtime permissions. PRD F02/F04–F06 and POL 01–07 identify former Dependabot/automerge behavior as historical or superseded; F01 and applicable F03/F07–F10 remain current as reconciled there.
 
 Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image are pinned at J00. The OpenCode runtime retains its own dependencies, with no assumption about its internal JavaScript engine. PNPM uses an explicit workspace and `workspace:` internal dependencies; versions and the lockfile are checked into version control. [T1](https://nodejs.org/en/about/previous-releases), [T2](https://pnpm.io/workspaces)
 
@@ -758,7 +758,7 @@ Performance acceptance uses a versioned request corpus and records plan/dev dura
 
 **Step 5 corresponding to J05.** Add request/task views and digest, final cleanup, memory/skill configuration inspection and revocation, backup/restore, cost views, and the operations guide. Complete accepted F/N gates and a controlled project-request pilot; JARVIS merge remains excluded.
 
-Decisions D01 through D16 in the PRD remain the product decision register; D12 gates J06 autonomous delivery, D13 gates J07 self-improvement, D14 gates post-MVP general assistance, and D16 gates any repository command execution. PR-publication permissions, provider qualification, internal configuration protection, and socket transport remain implementation/qualification gates; an unresolved gate blocks the corresponding effect rather than widening permissions.
+Decisions D01 through D17 in the PRD remain the product decision register; D12 gates J06 autonomous delivery, D13 gates J07 self-improvement, D14 gates post-MVP general assistance, and D16 gates any repository command execution. D17 records accepted product direction, not implementation permission. PR-publication permissions, provider qualification, internal configuration protection, and socket transport remain implementation/qualification gates; an unresolved gate blocks the corresponding effect rather than widening permissions.
 
 **Post-MVP delivery.** After v0.1 qualification, accept D12 and JV-045 before implementing writable authoring (JV-046), durable independent review/repair (JV-047) and qualification/operations (JV-048). See section 12.8; contributor skills do not satisfy those product isolation/runtime gates.
 
