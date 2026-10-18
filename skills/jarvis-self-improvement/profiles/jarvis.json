@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "profileId": "jarvis-self-improvement",
+  "project": {
+    "repository": "grasdouble/Jarvis",
+    "targetBranch": "main"
+  },
+  "campaign": {
+    "branchPattern": "improvement/{campaignId}",
+    "taskBranchPattern": "improvement/{campaignId}/task/{taskId}",
+    "taskBase": "campaign"
+  },
+  "proposal": {
+    "recordStore": "controller-ledger",
+    "contentContract": "references/proposal.md",
+    "contentContractVersion": 1,
+    "contentLanguage": "en"
+  },
+  "promotion": {
+    "recordKind": "pull-request",
+    "targetBranch": "main",
+    "label": "self-update",
+    "tracking": {
+      "provider": "github-project",
+      "namespace": "grasdouble",
+      "project": "1",
+      "view": "7"
+    }
+  },
+  "resultContract": {
+    "name": "jarvis-self-improvement-result",
+    "version": 1
+  }
+}
