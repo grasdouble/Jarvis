@@ -4,6 +4,19 @@ A self-hosted assistant for owner-directed work on internally authorized softwar
 
 The repository is maintained in English.
 
+## Workspace foundation
+
+The repository uses Node.js 24.22.0 and PNPM 12.5.1 in a strict TypeScript workspace. Install the pinned workspace dependencies, then run the shared checks from the repository root:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm build
+```
+
+The `apps/` tree contains the API, web interface, worker, sandbox-manager, and LLM gateway entry points. Reusable modules live in `packages/`; their intended responsibilities and dependency direction are documented in [architecture §7](docs/technical-architecture.md#7-monorepo-modules-and-dependencies). The current entry points and packages are scaffolding only: they do not claim product service behavior or isolation qualification.
+
 ## Documentation
 
 - [JARVIS v0.1 PRD and roadmap](docs/prd-and-roadmap.md)

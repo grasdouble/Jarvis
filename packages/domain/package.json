@@ -1,0 +1,6 @@
+{
+  "name": "@jarvis/domain",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" }
+}

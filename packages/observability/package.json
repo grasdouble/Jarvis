@@ -1,0 +1,6 @@
+{
+  "name": "@jarvis/observability",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" }
+}

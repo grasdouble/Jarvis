@@ -1,0 +1,7 @@
+{
+  "name": "@jarvis/llm",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" },
+  "dependencies": { "@jarvis/contracts": "workspace:*" }
+}
