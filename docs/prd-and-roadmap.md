@@ -361,7 +361,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 | --- | --- | --- | --- |
 | D01 | Sandbox controller | Owner; dedicated container with Engine socket and closed API | J01; native option only if explicitly accepted |
 | D02 | Providers and code processing | Owner; one primary provider and one authorized secondary | J00; no private code sent without selection |
-| D03 | Repositories, branch, and required CI | Owner; one test repository, then a pilot | J00; observation if evidence is insufficient |
+| D03 | Repositories, branch, and required CI | Owner; one test repository, then a pilot | J00; no development task or PR publication until the repository, base branch, and required CI are selected; plan work still requires an authorized project and approved provider/data processing |
 | D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
 | D05 | Budget and currency | Owner selected EUR caps of €2/review, €10/day, and €100/month; allocation to plan/dev request types and enforcement still need confirmation | J00; no billable task starts without an applicable configured cap |
 | D06 | Colima version, RAM, and disk allocation | Owner; ARM64 measurements and effective VM configuration verification | J01; one task, lower quotas if necessary |
