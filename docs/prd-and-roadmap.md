@@ -1,10 +1,10 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.15 • October 18, 2026 • Personal self-hosted product
+Document version 1.16 • October 18, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
-JARVIS is an assistant for handling user requests about explicitly authorized software projects. For each project, the owner can ask for a plan (`jarvis plan`) or ask JARVIS to implement the request and open a pull request (`jarvis dev`). If the requested mode or task is unclear, JARVIS asks before taking the corresponding action. The owner manages the project allowlist and project-skill approvals in JARVIS's own internal configuration; a target repository cannot grant itself access or approval. JARVIS does not merge the pull requests it creates. Dependabot work may be requested like other project work, but it is not the product's defining use case.
+JARVIS handles explicit requests about software projects the owner has authorized in its internal configuration. The owner selects a plan (`jarvis plan`) or development task (`jarvis dev`) for each request. JARVIS clarifies the project, intent, or mode before acting when any is ambiguous. Project-skill instructions require explicit owner approval for their exact revision, recorded internally. Development tasks may result in a pull request; JARVIS does not merge it.
 
 The product runs on a MacBook M2 Pro with Docker Engine inside a dedicated Colima VM profile named `jarvis`. Docker Compose deploys the persistent services; Docker Desktop is not required. The core is built in-house in TypeScript and Node.js, in a PNPM monorepo organized as a modular monolith. PostgreSQL stores state, the internal project/skill configuration, and the work queue; React provides the interface. OpenCode is the shared headless agent runtime, controlled through its SDK or API: no plugin and no dependency on a personal OpenCode session. Plan and development missions use separately qualified profiles. The development profile may author code in an isolated task workspace and request PR publication through the deterministic core; it receives no GitHub credentials and has no merge authority.
 
@@ -66,7 +66,7 @@ The priority problem is the effort required to turn a request about a project in
 
 Version 0.1 handles explicitly submitted requests for repositories listed in JARVIS's internal project configuration. The owner selects plan-only analysis or development that edits code and opens a PR. Requests are scoped to one configured project; ambiguity requires clarification. The product provides authenticated task history, bounded project context, per-project skill configuration, cost visibility and an emergency stop. PR publication is a trusted-core effect bound to the task, repository, base/head and policy; merge is not an MVP capability.
 
-Plan mode can inspect project material and propose work without writing. Dependabot updates and other PRs may be analyzed when explicitly requested; automated PR monitoring and dependency-classification-driven merge decisions are not the primary request flow or MVP exit gates.
+Plan mode inspects project material and proposes work without writing. Requests may cover repository changes, pull-request analysis, dependency updates, or other scoped project tasks, subject to project authorization and the selected mode.
 
 The MVP also includes JARVIS-owned durable memory: task checkpoints, operational history, a bounded collection of repository knowledge, and explicit preferences. Only the core selects and persists reusable context; OpenCode sandboxes remain ephemeral. Knowledge retrieval starts with repository-scoped structured filters and PostgreSQL text search.
 
@@ -76,7 +76,7 @@ The MVP also includes JARVIS-owned durable memory: task checkpoints, operational
 
 - Unrequested background issue discovery, autonomous task selection, code modification, or PR publication. Code changes and PRs require an explicit development-mode user request.
 - Model fine-tuning, a vector database, automatic knowledge promotion, unrestricted conversation retention, or cross-repository knowledge sharing.
-- Product-side PR merging, automerge, merge queues, or bypassing repository review/protection rules.
+- Product-side PR merging or bypassing repository review/protection rules.
 - An OpenCode plugin, control of the owner's personal OpenCode instance, cooperating agents, or an unrestricted general-purpose planner.
 - Merge queues, stacked PRs, forks, automatic branch updates, rebasing, or conflict resolution.
 - Automatic execution of project-provided scripts, tests, installation steps, plugins, MCP servers, or startup configuration. Project-skill instruction approval alone does not authorize command execution. The execution/validation policy remains a separate qualification and owner-decision gate; until accepted, no repository command is run by the product profile.
@@ -114,8 +114,6 @@ JARVIS may use its own qualified skills and project-specific skill instructions.
 
 **POL 13.** The core may create a PR only for the authorized development task, after validation, using a revision-bound idempotent intent and remote reconciliation after uncertain responses. PR creation grants neither review approval nor merge authority. JARVIS does not merge in v0.1.
 
-The former automerge criteria POL 01–POL 07 are retained as historical requirements for the superseded Dependabot/automerge design and are not active v0.1 authorization. No owner decision in this scope accepts that behavior.
-
 ### 5.3 Decision validity and stopping
 
 A change to repository, task scope, base/head, profile, policy, or selected skill revision invalidates dependent context and pending publication eligibility. The emergency stop prohibits new model and GitHub requests, revokes task capabilities, and initiates sandbox shutdown. A request already accepted by GitHub may still complete: the interface shows operations awaiting confirmation and never promises to cancel them.
@@ -130,29 +128,13 @@ A change to repository, task scope, base/head, profile, policy, or selected skil
 
 **Acceptance.** In a 10-project fixture, no task, sandbox, provider dispatch, or GitHub effect occurs for an unlisted project. Renames preserve identity; removal blocks new work and effects. Configuration changes require authentication, expected-version checks, and audit. The interface shows authorized projects and effective permissions.
 
-### F02 Dependabot event monitoring — superseded
-
-This historical feature describes unattended Dependabot discovery and reconciliation. It is not a v0.1 request-intake requirement; no webhook or periodic Dependabot scan is required for MVP acceptance. A user may explicitly request analysis of a Dependabot PR under F11/F12.
-
-### F03 Static PR review — retained as an optional task profile, not the defining workflow
+### F03 Perform a read-only pull-request review
 
 An explicitly requested PR review can reuse the bounded, isolated read-only analysis profile. This does not itself authorize a code change, PR publication, or merge.
 
 **Requirements.** Where this profile is used, each attempt uses a new environment, a fixed snapshot, and controlled OpenCode configuration. Repository code is not executed. The report is bound to its source revision and identifies examined files, findings, limitations, and uncertainty.
 
 **Acceptance.** A selected review fixture produces a revision-bound report with verifiable paths; malformed or incomplete input is explicitly limited. Isolation gates N01–N03 apply. This profile is not a substitute for plan or dev acceptance.
-
-### F04 Dependabot merge eligibility — superseded
-
-The former automated merge-eligibility engine and its acceptance suite are removed from v0.1. Deterministic authorization and effect validation remain required under POL 08–13; they do not produce a merge decision.
-
-### F05 Revision-bound merge approvals — superseded
-
-The former approval-to-merge flow is removed from v0.1. Explicit owner consent to use a project skill is separately specified by F14 and never authorizes execution or merge.
-
-### F06 Merge and verify — superseded
-
-JARVIS merge authority and all product-side merge behavior are excluded from v0.1. JARVIS records its own PR-publication outcome under F13; later human GitHub merge decisions are outside its authority.
 
 ### F07 Produce a daily digest
 
@@ -292,7 +274,7 @@ These targets do not prove the absence of regressions. The corpus includes clear
 
 ## 11 Roadmap and milestones
 
-The previous 8–10 week estimate was tied to Dependabot monitoring and automerge and is withdrawn. No replacement date or duration is committed. The critical path requires project authorization, isolation, qualified plan/development profiles, and safe PR publication before MVP qualification.
+No delivery date or duration estimate is committed. MVP qualification requires project authorization, isolation, qualified plan/development profiles, and safe PR publication.
 
 | Milestone | Period | Deliverable | Exit gate |
 | --- | --- | --- | --- |
@@ -303,7 +285,7 @@ The previous 8–10 week estimate was tied to Dependabot monitoring and automerg
 | J04 Development and PR handoff | No date committed | Writable task workspace, deterministic scope validation, PR publisher | F13/F14, POL 08–13; revision/scope races and uncertain publication cases covered; no merge capability |
 | J05 — MVP qualification and operations | No date committed | Request dashboard/digest, skill consent UX, backup, recovery and operations guide | F07/F08/F11–F14, N14/N15, restore, pilot and all accepted critical gates met |
 
-Milestone names describe delivery outcomes, independently of release numbers. J05 qualifies the revised MVP; J06 remains autonomous issue-to-PR delivery beyond explicit user-directed requests, including its own review/merge policy. Existing native milestone identities and historical issue assignments require reconciliation through JV-126; this PRD does not itself change GitHub metadata. Package versions and release numbers follow the [planned Changesets workflow](development-workflow.md#planned-package-versioning); no milestone reserves a particular package version.
+Milestone names describe delivery outcomes, independently of release numbers. J05 qualifies the project-request product; J06 covers autonomous issue-to-PR delivery and its separate review/merge policy. JV-126 aligns native issue and milestone assignments with this roadmap. Package versions and release numbers follow the [planned Changesets workflow](development-workflow.md#planned-package-versioning); no milestone reserves a particular package version.
 
 Post-MVP tracking uses separate, undated native GitHub milestones. This mapping adds no MVP release criterion or calendar commitment:
 
@@ -311,9 +293,9 @@ Post-MVP tracking uses separate, undated native GitHub milestones. This mapping 
 | --- | --- | --- |
 | J06 — Autonomous delivery | Agent-selected/issue-driven autonomous delivery, independent review and any separately authorized merge policy beyond explicit user-directed MVP tasks | Parent [JV-044](https://github.com/grasdouble/Jarvis/issues/44), children JV-045–JV-048 |
 | J07 — Self-improvement | Evidence-driven improvement proposals, comparison and separately approved activation after verified J06 delivery | Parent [JV-051](https://github.com/grasdouble/Jarvis/issues/51), children JV-052–JV-055 |
-| J08 — General-purpose assistance | Shared OpenCode profiles, controlled read-only capabilities and authenticated conversation after the MVP; no committed version/date or dependency on J06/J07 solely by phase number | Parent [JV-064](https://github.com/grasdouble/Jarvis/issues/64), children JV-065–JV-068 |
-| J09 — Messaging channels | Telegram/Signal notifications after the MVP, then each channel's authenticated conversation after J08; no cross-channel or J06/J07 prerequisite solely by phase number | Parent [JV-075](https://github.com/grasdouble/Jarvis/issues/75), children JV-076–JV-081 |
-| J10 — Duration forecasting | Measured task/stage history, model/effort estimates, conditional remaining-time display and calibration after the MVP; advisory only, with no committed date/version | Parent [JV-084](https://github.com/grasdouble/Jarvis/issues/84), children JV-085–JV-088 |
+| J08 — General-purpose assistance | Shared OpenCode profiles, controlled read-only capabilities and authenticated conversation following J05; no committed version/date or dependency on J06/J07 solely by phase number | Parent [JV-064](https://github.com/grasdouble/Jarvis/issues/64), children JV-065–JV-068 |
+| J09 — Messaging channels | Telegram/Signal notifications following J05, then each channel's authenticated conversation after J08; no cross-channel or J06/J07 prerequisite solely by phase number | Parent [JV-075](https://github.com/grasdouble/Jarvis/issues/75), children JV-076–JV-081 |
+| J10 — Duration forecasting | Measured task/stage history, model/effort estimates, conditional remaining-time display and calibration following J05; advisory only, with no committed date/version | Parent [JV-084](https://github.com/grasdouble/Jarvis/issues/84), children JV-085–JV-088 |
 
 Every repository issue must carry the appropriate native milestone under the [contributor policy](development-workflow.md#required-issue-milestones); body references alone do not assign it. Apply the shared [selection and creation rules](development-workflow.md#milestone-selection-and-creation): J00 covers initial MVP scoping, while feature-specific specifications remain with their product phase even when delivered early. Contributor-only work uses the thematic DEV track matching its primary scope or a bounded one-off outcome, separate from J00–J10. The ongoing tracks cover delivery/planning, tooling/validation, and governance/review; they remain open while their areas remain active. The former shared `DEV — Contributor foundation` track is superseded, while its historical issue and PR assignments remain intact. For any milestone type, reopen a matching closed milestone in place when its original scope still applies to new work, preserving its identity and completed issue history and reapplying its acceptance/exit gate. DEV adds no product phase, MVP gate or calendar commitment; completed design issues do not prove runtime qualification.
 
@@ -357,7 +339,7 @@ Merge and deployment remain separate states and permissions. A qualified limited
 
 Maintain separate conversation and repository memory scopes with bounded context, provenance and accepted retention/forgetting; no reusable personal knowledge or persistent history is enabled before its policy is accepted. Keep agents without permanent credentials, host/repository access or direct networking. Qualify a narrow tool bridge separately from the model gateway; native OpenCode permissions alone do not prove isolation. Preserve cumulative model/tool costs, finite limits, stop/revocation and uncertain-effect reconciliation across duplicate messages, retries, disconnects, restarts and restore. Arbitrary browsing/shell, mutating personal integrations, external notifications and unattended personal monitoring remain excluded from this first extension.
 
-**P13 measurable acceptance.** A controlled Nantes request yields a validated location/period, units, source, observation time where available, retrieval/cache freshness and a grounded answer or explicit limitation. Equivalent repeated client messages reuse one turn; unknown effects reconcile before bounded/accounted retries. The accepted corpus covers ambiguous place/time, stale/missing data, outages/rate limits, malformed/oversized/hostile output, forged identity/profile/catalog, unauthorized tools/destinations, cross-session/repository context, quota exhaustion, stop/deletion and pre-deletion restore, with zero unauthorized effects. Actual pinned runtime/Colima transport and egress tests demonstrate no host/LAN/core or credential access; simulated tests are identified separately. Existing static-review and future code/self-update gates still apply. Record real pilot latency and all model/tool usage against owner-accepted D14 limits before explicit enablement; JV-025 delivery and the corresponding accepted D14 policy precede live execution. See the [detailed design](common-agent-runtime.md) and [architecture 12.10](technical-architecture.md#1210-proposed-shared-runtime-and-general-purpose-assistance).
+**P13 measurable acceptance.** A controlled Nantes request yields a validated location/period, units, source, observation time where available, retrieval/cache freshness and a grounded answer or explicit limitation. Equivalent repeated client messages reuse one turn; unknown effects reconcile before bounded/accounted retries. The accepted corpus covers ambiguous place/time, stale/missing data, outages/rate limits, malformed/oversized/hostile output, forged identity/profile/catalog, unauthorized tools/destinations, cross-session/repository context, quota exhaustion, stop/deletion and pre-deletion restore, with zero unauthorized effects. Actual pinned runtime/Colima transport and egress tests demonstrate no host/LAN/core or credential access; simulated tests are identified separately. Repository authoring and self-improvement use the separately qualified J06/J07 profiles and gates. Record real pilot latency and all model/tool usage against owner-accepted D14 limits before explicit enablement; JV-025 delivery and the corresponding accepted D14 policy precede live execution. See the [detailed design](common-agent-runtime.md) and [architecture 12.10](technical-architecture.md#1210-proposed-shared-runtime-and-general-purpose-assistance).
 
 **Planned post-MVP: Telegram and Signal channels (P14).** The owner wants opted-in outbound notifications first, then authenticated bidirectional text conversation through the same core. [JV-075](https://github.com/grasdouble/Jarvis/issues/75) coordinates shared policy/identity/inbox/outbox (JV-076), Telegram notifications (JV-077), Signal bridge qualification/notifications (JV-078), respective J08 conversation adapters (JV-079/JV-080) and integrated operations (JV-081). Neither channel requires the other; notifications wait on verified JV-025, while conversation additionally waits on verified JV-068 and accepted D14. Preserve the initial P13 slice: J09 provides a separately qualified transport, not an implicit expansion of its tools or authority. No J06/J07 dependency exists solely by milestone number.
 
@@ -365,11 +347,11 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 **P14 measurable acceptance.** Ten input events with two unsubscribed categories produce eight canonical notification intents; 100 replays add none. Repeated authenticated input 100 times creates one turn/allocation, with zero model/tool calls for rejected identities or payloads. Forgery/forwarding, echoes, edits/reordering, concurrent workers, lost acknowledgements, rate limits, stop/revocation, stale notices, outages/sleep and deletion/restore preserve scope and finite accounting; unknown sends never become assumed success or blind duplicate retries. Per-channel real pinned transport/Colima pilots precede owner enablement; at least 30 owner-agreed integrated success/adversarial/recovery cases verify zero unauthorized disclosure/action and SQL/usage agreement. Missing bridge feasibility leaves Signal unavailable without weakening boundaries or blocking independently qualified Telegram. D15 accepts accounts/transport, privacy/retention, numeric limits and corresponding pilot/activation before live work. These are future targets, not runtime evidence or a new MVP gate.
 
-**Planned post-MVP: task duration forecasting (P15).** [JV-084](https://github.com/grasdouble/Jarvis/issues/84) and children JV-085–JV-088 deliver measurements, an empirical estimator/API, task/queue presentation and calibration. Reuse F08/F09 timestamps, PostgreSQL and the existing core modules. Provide preflight/post-plan predictions, conditional remaining-time updates when supported and actual-versus-predicted comparison; future J08/J09 surfaces may reuse these results when available. Verified JV-025 precedes J10; no other phase is a prerequisite solely by its number. The existing MVP measurement plan is unchanged and needs no forecasting accuracy to exit.
+**Planned post-J05: task duration forecasting (P15).** [JV-084](https://github.com/grasdouble/Jarvis/issues/84) and children JV-085–JV-088 deliver measurements, an empirical estimator/API, task/queue presentation and calibration. Reuse F08/F09 timestamps, PostgreSQL and the existing core modules. Provide preflight/post-plan predictions, conditional remaining-time updates when supported and actual-versus-predicted comparison; future J08/J09 surfaces may reuse these results when available. Verified JV-025 precedes J10; no other phase is a prerequisite solely by its number. Forecasting is not a J05 acceptance criterion.
 
 **P15 requirements.** Version task/attempt/request timing and observable provider/model/profile/effort metadata; unsupported values remain unknown. Separate execution elapsed from queue/CI/human/suspension and missing intervals; account for retries, failures/censoring, sleep and parallel critical paths without double counting. Predict from scoped comparable historical observations available at that instant, with a range/central estimate, sample/freshness/calibration provenance and explicit abstention for sparse/stale data. Preserve issued predictions and qualify chronological holdout error/coverage without future-feature leakage or hiding hard/failed cases. Current limits, provider/profile choices, priorities, memory/privacy and human/native approval gates remain authoritative. Forecasts cause no extra inference, automatic routing or budget/deadline extension. See the [duration contract](duration-forecasting.md).
 
-**P15 measurable acceptance.** A synthetic cohort of 20 durations 10..200 seconds yields median 105 and nearest-rank p90=180; 100 replays add no sample/time. Parallel spans 0–20 and 0–30 seconds yield 30 seconds of parent execution elapsed. Empty/stale/changed-profile/unknown-effort and unauthorized-history cases do not get a calibrated label. Failures/censored outcomes and unknown waits remain visible; remaining-time updates are conditioned on observed work and survival, not simple subtraction relabelled as calibrated. API/UI snapshots match scoped SQL provenance through restart/clock gaps, sleep, deletion and restore; model/profile/budget/priority/approval gates remain unchanged. JV-088 freezes method/acceptance and records chronological holdout plus actual-runtime error/coverage before production estimates, without a universal accuracy promise. These are future targets, not measured performance or new MVP gates.
+**P15 measurable acceptance.** A synthetic cohort of 20 durations 10..200 seconds yields median 105 and nearest-rank p90=180; 100 replays add no sample/time. Parallel spans 0–20 and 0–30 seconds yield 30 seconds of parent execution elapsed. Empty/stale/changed-profile/unknown-effort and unauthorized-history cases do not get a calibrated label. Failures/censored outcomes and unknown waits remain visible; remaining-time updates are conditioned on observed work and survival, not simple subtraction relabelled as calibrated. API/UI snapshots match scoped SQL provenance through restart/clock gaps, sleep, deletion and restore; model/profile/budget/priority/approval rules remain authoritative. JV-088 freezes method/acceptance and records chronological holdout plus actual-runtime error/coverage before production estimates, without a universal accuracy promise. These are future targets, not measured performance.
 
 **Later.** Multiple concurrent runs, dedicated Linux hosting, multiple projects or users, and planning of more complex work. Each extension requires a new threat assessment and its own criteria.
 
@@ -380,10 +362,10 @@ Maintain separate conversation and repository memory scopes with bounded context
 | D01 | Sandbox controller | Owner; dedicated container with Engine socket and closed API | J01; native option only if explicitly accepted |
 | D02 | Providers and code processing | Owner; one primary provider and one authorized secondary | J00; no private code sent without selection |
 | D03 | Repositories, branch, and required CI | Owner; one test repository, then a pilot | J00; observation if evidence is insufficient |
-| D04 | Webhook reception | Not required for explicit v0.1 requests; revisit only for a separately accepted event-driven capability | No external intake endpoint is exposed for this MVP request flow |
+| D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
 | D05 | Budget and currency | Owner selected EUR caps of €2/review, €10/day, and €100/month; allocation to plan/dev request types and enforcement still need confirmation | J00; no billable task starts without an applicable configured cap |
 | D06 | Colima version, RAM, and disk allocation | Owner; ARM64 measurements and effective VM configuration verification | J01; one task, lower quotas if necessary |
-| D07 | Merge method | Not applicable to v0.1; retain only for later separately authorized merge behavior | No product-side merge endpoint or permission in v0.1 |
+| D07 | Product-side merge authority | None for v0.1 | JARVIS may open a validated PR; subsequent review and merge remain outside its authority |
 | D08 | PR publication mechanism and permissions | Owner-selected dev-mode PR handoff; exact branch creation/push strategy and minimum GitHub App permissions remain to be qualified | Before enabling PR publication; no merge/bypass permission |
 | D09 | Retention and backup | Owner; logs 30 days, reports/audit 90 days, 7 daily and 4 weekly dumps | J05; encrypted export to a dedicated directory |
 | D10 | Local authentication | Developer; single account, strong password, and secure session | J02; administration inaccessible without authentication |
@@ -397,7 +379,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 ## 13 Release criteria
 
-Version 0.1 is ready when applicable retained requirements F01, F03, F07–F14 and N01–N15 have acceptance evidence, superseded F02/F04–F06 are not treated as gates, milestone gates have passed, a restore has been completed, and the pilot has shown no out-of-policy action. The owner knows how to revoke the App, rotate secrets, suspend the system, and inspect opened PRs. Repository command execution is not required for MVP unless D16 is separately accepted; no executed-check claim is made without that gate.
+Version 0.1 is ready when F01, F03, F07–F14 and N01–N15 have acceptance evidence, milestone gates have passed, a restore has been completed, and the pilot has shown no out-of-policy action. The owner knows how to revoke the App, rotate secrets, suspend the system, and inspect opened PRs. Repository command execution is not required unless D16 is accepted and separately qualified; no executed-check claim is made without that gate.
 
 The release package contains pinned images and versions, configuration without secrets, migrations, tests, installation and recovery guidance, the acceptance report, and accepted residual risks. Blocking open decisions must be resolved before enabling the corresponding behavior.
 

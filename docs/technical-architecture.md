@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.14 • October 18, 2026 • Companion to the PRD and roadmap
+Document version 1.15 • October 18, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -23,12 +23,12 @@ The existing ADR01–ADR11 identities below remain stable. Use [project governan
 | ADR 05 Sandboxes | One ARM64 container per attempt, without IP networking | Local relay and gateway transport to prototype |
 | ADR 06 Controller | Trusted container with Engine socket and restricted API | Explicit privileged-component risk; no socket in API, worker, or agent |
 | ADR 07 Review | Static repository analysis remains available; requested plan/development work has distinct contracts | No repository command execution absent separate D16 acceptance and qualification |
-| ADR 08 Merge | Historical Dependabot merge design is not v0.1 behavior | JARVIS may publish a validated task PR; product merge is excluded |
+| ADR 08 Product merge authority | JARVIS does not merge pull requests in v0.1 | Human/GitHub review and merge remain outside JARVIS's authority |
 | ADR 09 Operations | One explicit user-directed task at a time; project allowlist is internal to JARVIS | Match Mac resources; project suspension and global stop remain core-controlled |
 | ADR 10 Host runtime | Colima Docker runtime, dedicated `jarvis` profile, native ARM64 | No Docker Desktop dependency; no macOS directory sharing; validate isolation on the pinned platform |
 | ADR 11 Durable memory | Core-owned PostgreSQL history, checkpoints, and scoped knowledge | Bounded context rebuilt per attempt; no persistent agent home or automatic policy learning |
 
-The owner-selected product direction and project-skill consent model are recorded in [PRD D17](prd-and-roadmap.md#12-decision-register-and-fallback-values). Implementation mechanisms remain proposed and do not grant runtime permissions. PRD F02/F04–F06 and POL 01–07 identify former Dependabot/automerge behavior as historical or superseded; F01 and applicable F03/F07–F10 remain current as reconciled there.
+The owner-selected request modes and project-skill consent model are recorded in [PRD D17](prd-and-roadmap.md#12-decision-register-and-fallback-values). Implementation mechanisms remain proposed and do not grant runtime permissions. The PRD defines the active product requirements and authorization policies.
 
 Node.js 24 LTS is the proposed core baseline; a patch version and ARM64 image are pinned at J00. The OpenCode runtime retains its own dependencies, with no assumption about its internal JavaScript engine. PNPM uses an explicit workspace and `workspace:` internal dependencies; versions and the lockfile are checked into version control. [T1](https://nodejs.org/en/about/previous-releases), [T2](https://pnpm.io/workspaces)
 
@@ -339,7 +339,7 @@ The adapter first reads `GET /repos/{owner}/{repo}/rules/branches/{branch}` for 
 
 Review conversations and their resolved state may be read for explicit PR-analysis tasks through a read-only GitHub adapter. Missing evidence is surfaced as a limitation; no JARVIS merge decision is made.
 
-The MVP does not require webhooks or unattended Dependabot detection. Read current GitHub facts on explicit task admission and immediately before publication; use webhooks only if a separately accepted need is added. A signed event or repository-provided label never substitutes for current trusted state.
+Read current GitHub facts when admitting an explicit task and immediately before publication. A repository-provided label or other repository content never substitutes for current trusted state.
 
 ## 10 OpenCode and interchangeable providers
 
@@ -464,7 +464,7 @@ A decision can deny an action, require human input, or authorize an intent. An i
 2. The core reads the current internal allowlist/configuration. If the project or intent/mode is ambiguous, it records a clarification request without creating a model attempt or external effect.
 3. For an authorized request, the core persists the immutable request, configuration version and task intent transactionally, then rereads current project/revision facts through trusted adapters.
 4. A task is created with a unique business key. Duplicate requests return the existing canonical task; old or stale source revisions cannot silently reset a task's binding.
-5. On restart, reconcile leases and unconfirmed PR-publication operations before resuming authorized work. No periodic Dependabot scan is required for MVP.
+5. On restart, reconcile leases and unconfirmed PR-publication operations before resuming authorized work.
 
 ### 12.3 Snapshot preparation and task execution
 
@@ -562,7 +562,7 @@ The future `assistant-readonly-v1` profile has no repository/host mount, Engine 
 
 Extend proposed records with owner-scoped conversations/turns and capability invocations/results, using existing persistence, queue, memory, policy and observability ports. Unique message and invocation keys, fenced claims, durable intents and remote rereads reconcile duplicates, reconnect/restart and unknown effects without resetting limits. Conversation context is bounded and separate from repository knowledge; provenance, sensitivity, expiry and forgetting apply to raw/derived data and restored backups. Conversation persistence and reusable knowledge need accepted D14 retention/consent. Record model plus tool costs and partial/cancelled/unknown outcomes without raw private log dumps. A model answer, closed turn or tool result cannot authorize GitHub actions, promotion or activation.
 
-The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; the v0.1 API/sandbox and J06/J07 gates remain unchanged.
+The first read-only weather connector resolves Nantes/location and current-versus-forecast intent, then returns validated source/location/time/units/freshness or explicit stale/unavailable/ambiguous data. Tests and a controlled live pilot must qualify the detailed corpus, actual transport/egress isolation, scoped memory, stop/restore and cumulative usage with zero unauthorized effects. Numeric limits, provider/data processing, tool transport/profile, freshness and retention remain D14 decisions before the relevant live operation. This specification installs no chat route, connector, MCP server or executable profile; all capabilities remain subject to their applicable authorization, isolation and qualification gates.
 
 ### 12.11 Proposed messaging channels
 
@@ -744,7 +744,7 @@ Initial retention: snapshots and runtime state are deleted at attempt completion
 
 Race tests use a test barrier to change project authorization, configuration, skill revision, source revision, or task scope between validation and dispatch. A test does not merely simulate an `allow` value. PR effects are verified on a disposable test repository, including no publication when denied and no merge request under any fixture.
 
-Performance acceptance uses a versioned request corpus and records plan/dev duration, cost and failures separately. Previous event/Dependabot volume estimates are withdrawn until request baselines are measured. Offline periods and external limits are recorded separately. Security and recovery tests remain necessary even when unit tests pass.
+Performance acceptance uses a versioned request corpus and records plan/dev duration, cost and failures separately. Request baselines and target thresholds remain to be measured and accepted. Offline periods and external limits are recorded separately. Security and recovery tests remain necessary even when unit tests pass.
 
 ## 21 Delivery sequence and remaining decisions
 

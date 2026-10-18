@@ -1,6 +1,6 @@
 # Shared OpenCode runtime and controlled capabilities
 
-Status: owner-selected post-MVP design, specified by [JV-063](https://github.com/grasdouble/Jarvis/issues/63). No conversational endpoint, connector, broker, runtime profile or permission is installed by this document. V0.1 now covers explicit project-scoped plan and dev requests; this document remains about general-purpose conversation, not the MVP request/author profiles. J08 tracks general-purpose assistance; J06 tracks autonomous issue/code delivery beyond explicit user requests and J07 tracks self-improvement. J08 needs the verified MVP foundations but does not require J06/J07 solely because of its number. No version or date is committed.
+Status: owner-selected post-MVP design, specified by [JV-063](https://github.com/grasdouble/Jarvis/issues/63). No conversational endpoint, connector, broker, runtime profile or permission is installed by this document. V0.1 provides project-scoped plan and development requests; this document specifies general-purpose conversation under J08. J06 specifies autonomous issue/code delivery, and J07 specifies self-improvement. J08 needs the verified MVP foundations but does not require J06/J07 solely because of its number. No version or date is committed.
 
 ## Responsibilities and profiles
 
@@ -8,11 +8,11 @@ OpenCode is the shared headless agent engine for understanding a request, intera
 
 The first future conversational slice supports ordinary questions and approved read-only capabilities. Weather in Nantes, France, is the qualification example. Neither model knowledge nor an unavailable tool is evidence of current weather. Arbitrary browsing/shell, mutating personal integrations, email/calendar actions, external notifications, unattended personal monitoring and an open-ended planner remain outside this slice.
 
-[J09 messaging channels](messaging-channels.md) separately plan Telegram/Signal notifications and later owner-paired text entry points into this service. J09 conversation waits for verified JV-068 and D14 plus its D15 adapter/identity/privacy gates; notification-only delivery does not require J08. This leaves the first slice's tools and existing action/approval boundaries unchanged. Channel credentials stay outside OpenCode, and incoming messages cannot create a broader profile or native human approval.
+[J09 messaging channels](messaging-channels.md) separately plan Telegram/Signal notifications and later owner-paired text entry points into this service. J09 conversation waits for verified JV-068 and D14 plus its D15 adapter/identity/privacy gates; notification-only delivery does not require J08. Each channel retains its own tools and authority boundaries. Channel credentials stay outside OpenCode, and incoming messages cannot create a broader profile or native human approval.
 
 | Trusted JARVIS profile | Intended use and allowed context/tools | Gate |
 | --- | --- | --- |
-| `review-static-v1` | MVP code review; sanitized read-only repository snapshot, bounded LLM transport, structured report; no capability broker or repository execution | Existing J01/J03 qualification |
+| `review-static-v1` | Explicitly requested read-only pull-request review; sanitized repository snapshot, bounded LLM transport and structured report; no repository execution | F03 and the applicable isolation qualification |
 | `assistant-readonly-v1` | Future conversation; bounded owner/session context and only explicitly admitted read-only capabilities; no repository mount, shell/edit tools, host files or GitHub write tools | J08 and accepted D14 profile |
 | Autonomous issue author/validation/reviewer profiles | Agent-selected/issue-driven code changes, separate credential-free validation and independent review attempts; each gets its own qualified context/tools | J06/D12; distinct from the explicit user-requested v0.1 dev profile |
 | Future self-improvement profiles | Bounded proposal/candidate work, protected evaluator and trusted released skill; current human main promotion and separate activation | J07/D13 and the campaign contract |
