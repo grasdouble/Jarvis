@@ -254,7 +254,7 @@ interface AgentRuntime {
 type Decision = {
   outcome: "allow" | "deny" | "needs_human";
   reasonCodes: string[]; evidenceSnapshotId: string;
-  policyHash: string; actionDigest: string; expiresAt: string;
+  policyHash: string; effectDigest: string; validUntil: string;
 };
 interface PolicyEngine {
   evaluate(input: TrustedPolicyInput): Decision;
@@ -389,7 +389,7 @@ Fallback is limited to a per-repository approved list with the same confidential
 | task_contexts | task_id, attempt_id, repository_id, schema_version, profile_hash, input_hashes, selected_versions, omissions, budget, created_at | Manifest of inputs and memory versions; no duplicate raw excerpts |
 | forgotten_items | repository_id, item_id, forgotten_at | Content-free deletion markers, also exported separately for restore reconciliation |
 | review_reports | task_id, attempt_id, schema_version, report_json, digest | Immutable report; one accepted canonical version per task |
-| policy_decisions | request_id, evidence_id, artifact_digest, policy_hash, outcome, reasons, action_digest | Decisions never modified in place |
+| policy_decisions | request_id, evidence_id, artifact_digest, policy_hash, outcome, reasons, effect_digest | Decisions never modified in place |
 | action_intents | action_key, task_id, revision, kind, state, remote_id | Unique logical publication action; unknown result distinct from failure; no merge intent in v0.1 |
 | outbox | id, aggregate_id, event_type, payload, available_at, delivered_at | Event written in the same transaction as domain state |
 | scheduled_runs | schedule_id, local_date, period_start, period_end, state | Unique per schedule and logical occurrence |
