@@ -578,19 +578,17 @@ The paired private sender maps to existing owner scope, not a broader approval r
 
 | Level | Key and mechanism | Intended guarantee |
 | --- | --- | --- |
-| Ingestion | Unique App + delivery_id, body hash | Replaying a delivery does not recreate work |
-| Task | Repository + PR + H + B + type + hashes of profiles and policy | Coalesce semantically identical events |
+| Request intake | Owner + Idempotency-Key + request digest | A replay returns the canonical request; a changed payload conflicts |
+| Task | request_id + project/configuration/policy/profile versions + source revision | A replay returns the canonical task; retries create new leased attempts only under core policy |
 | Attempt | task_id + ordinal, monotonic lease_epoch | Retry history and rejection of stale worker results |
 | Sandbox creation | Unique attempt_id in the controller | A lost response does not create a second container |
-| Decision | actionDigest + expected version | Approval limited to the reviewed action |
-| GitHub effect | Unique action_key, durable intent, and reconciliation | Avoid repeating an effect after an unknown response |
+| Authorization | request_id + mode + project/configuration/policy revision | Core rechecks current allowlist and task scope; skills cannot grant permission |
+| PR publication | dev_task_id + patch digest + base/target revision, durable intent | Reconcile unknown outcomes before retry; no merge or approval intent |
 | Digest | scope + local_date | One logical occurrence despite daylight saving time and recovery |
 
 Internal delivery is at least once. The system does not promise distributed exactly-once behavior between PostgreSQL and GitHub. The outbox makes local state and the processing request atomic; remote effects are reconciled against their intent and the outcome actually observed.
 
-For a published report, a stable action-bound marker makes it possible to find and update an existing comment after a failure. Before creation, the executor searches for that marker; if the result is uncertain, it waits for reconciliation. Permissions remain `Pull requests: write` and the review type is `COMMENT`; no `APPROVE` review is generated.
-
-A task-completion event from an older lease epoch is retained for diagnostics, but cannot replace the canonical report or create an intent. A local lock alone is insufficient: the controller and transactions also verify the lease epoch.
+A task-completion event from an older lease epoch is retained for diagnostics, but cannot replace the canonical task result or create a publication intent. A local lock alone is insufficient: the controller and transactions also verify the lease epoch.
 
 ## 14 Work queue and resilience
 
