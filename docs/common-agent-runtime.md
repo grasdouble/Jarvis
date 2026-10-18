@@ -1,6 +1,6 @@
 # Shared OpenCode runtime and controlled capabilities
 
-Status: owner-selected post-MVP design, specified by [JV-063](https://github.com/grasdouble/Jarvis/issues/63). No conversational endpoint, connector, broker, runtime profile or permission is installed by this document. The v0.1 Dependabot/static-review scope and release gates remain unchanged. J08 tracks general-purpose assistance; J06 tracks autonomous code delivery and J07 tracks self-improvement. J08 needs the verified MVP foundations but does not require J06/J07 solely because of its number. No version or date is committed.
+Status: owner-selected post-MVP design, specified by [JV-063](https://github.com/grasdouble/Jarvis/issues/63). No conversational endpoint, connector, broker, runtime profile or permission is installed by this document. V0.1 now covers explicit project-scoped plan and dev requests; this document remains about general-purpose conversation, not the MVP request/author profiles. J08 tracks general-purpose assistance; J06 tracks autonomous issue/code delivery beyond explicit user requests and J07 tracks self-improvement. J08 needs the verified MVP foundations but does not require J06/J07 solely because of its number. No version or date is committed.
 
 ## Responsibilities and profiles
 
@@ -14,7 +14,7 @@ The first future conversational slice supports ordinary questions and approved r
 | --- | --- | --- |
 | `review-static-v1` | MVP code review; sanitized read-only repository snapshot, bounded LLM transport, structured report; no capability broker or repository execution | Existing J01/J03 qualification |
 | `assistant-readonly-v1` | Future conversation; bounded owner/session context and only explicitly admitted read-only capabilities; no repository mount, shell/edit tools, host files or GitHub write tools | J08 and accepted D14 profile |
-| Future author/validation/reviewer profiles | Scoped code changes, separate credential-free validation and independent review attempts; each gets its own qualified context/tools | J06/D12, not granted by conversation |
+| Autonomous issue author/validation/reviewer profiles | Agent-selected/issue-driven code changes, separate credential-free validation and independent review attempts; each gets its own qualified context/tools | J06/D12; distinct from the explicit user-requested v0.1 dev profile |
 | Future self-improvement profiles | Bounded proposal/candidate work, protected evaluator and trusted released skill; current human main promotion and separate activation | J07/D13 and the campaign contract |
 
 These names describe JARVIS configuration contracts, not built-in OpenCode agents or shipped profiles. The trusted core selects a profile from released configuration and supplies an immutable tool catalog/model profile. A model may suggest intent or a capability, but cannot choose a new authority scope. Reject unknown/mismatched profiles and tools; never union tool sets to make a request succeed. General questions need no fabricated GitHub issue, repository or revision. A request to work on a repository becomes a separately scoped and authorized code mission only when that capability is available.
