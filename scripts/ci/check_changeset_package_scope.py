@@ -21,7 +21,7 @@ def changed_paths(base_sha: str, root: Path) -> tuple[list[PurePosixPath], list[
 
     def diff_paths(*pathspecs: str) -> list[PurePosixPath]:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "-z", "--diff-filter=ACMR", f"{base_sha}...HEAD", "--", *pathspecs],
+            ["git", "diff", "--name-only", "-z", "--diff-filter=ACMRD", f"{base_sha}...HEAD", "--", *pathspecs],
             cwd=root,
             check=True,
             capture_output=True,

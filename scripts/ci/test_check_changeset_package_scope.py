@@ -52,6 +52,12 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
                 validate("main", root)
 
+    def test_validation_rejects_an_unrelated_changeset_for_deleted_package_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", delete_api_file=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+                validate("main", root)
+
     def test_validation_accepts_a_changeset_for_a_changed_package(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "'@jarvis/api': patch")
@@ -65,7 +71,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
                 self.assertEqual(validate("main", root), "passed")
 
     @staticmethod
-    def make_fixture(root: Path, changeset_frontmatter: str) -> Path:
+    def make_fixture(root: Path, changeset_frontmatter: str, delete_api_file: bool = False) -> Path:
         (root / ".changeset").mkdir()
         (root / "packages/api").mkdir(parents=True)
         (root / "packages/domain").mkdir(parents=True)
@@ -81,6 +87,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
                 json.dumps({"name": f"@jarvis/{name}", "version": "1.0.0", "private": True}),
                 encoding="utf-8",
             )
+        (root / "packages/api/index.js").write_text("export const existing = true;\n", encoding="utf-8")
 
         def git(*args: str) -> None:
             subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
@@ -91,7 +98,10 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         git("add", ".")
         git("commit", "--quiet", "-m", "fixture baseline")
         git("switch", "--quiet", "--create", "pr")
-        (root / "packages/api/index.js").write_text("export const changed = true;\n", encoding="utf-8")
+        if delete_api_file:
+            (root / "packages/api/index.js").unlink()
+        else:
+            (root / "packages/api/index.js").write_text("export const changed = true;\n", encoding="utf-8")
         (root / ".changeset/unrelated.md").write_text(
             f"---\n{changeset_frontmatter}\n---\nFixture change.\n", encoding="utf-8"
         )
