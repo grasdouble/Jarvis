@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.18 • October 18, 2026 • Personal self-hosted product
+Document version 1.19 • October 19, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -364,7 +364,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 | D03 | Repositories, branch, and required CI | Owner selected `grasdouble/Jarvis-Test` as the only initial project target; the owner reports a local checkout with only `README.md`. `grasdouble/Jarvis` is the product source repository, not the initial JARVIS-operated project. | J00 plan work requires authorized project access and approved provider/data processing; no development task or PR publication until product access, target base branch, required CI, and provenance are verified |
 | D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
 | D05 | Consumption monitoring and spending controls | Owner prioritizes monitoring consumption and is unsure whether fixed ceilings are wanted; prior EUR figures are not current approved defaults | J00; record request/provider usage, estimated/reported cost, and unknown coverage. Owner must decide whether hard ceilings are required, with any thresholds/currency and plan/dev allocation, before billable dispatch |
-| D06 | Colima version, RAM, and disk allocation | Owner; ARM64 measurements and effective VM configuration verification | J01; one task, lower quotas if necessary |
+| D06 | Colima deployment baseline | Owner accepted 4 VM CPUs, 8 GiB RAM if host capacity permits, an 80 GiB VM disk, at least 40 GiB free host disk, and a 2-CPU/4-GiB per-sandbox target; contributor-selected exact version pins are recorded in the [technical architecture §6](technical-architecture.md#6-colima-deployment-and-mac-isolation). The owner decision is recorded in [JV-004](https://github.com/grasdouble/Jarvis/issues/4#issuecomment-6255994904). | J01; verify ARM64 host capacity, effective VM settings and isolation. Do not silently lower the accepted allocation. |
 | D07 | Product-side merge authority | None for v0.1 | JARVIS may open a validated PR; subsequent review and merge remain outside its authority |
 | D08 | PR publication mechanism and permissions | Owner-selected dev-mode PR handoff; exact branch creation/push strategy and minimum GitHub App permissions remain to be qualified | Before enabling PR publication; no merge/bypass permission |
 | D09 | Retention and backup | Owner; logs 30 days, reports/audit 90 days, 7 daily and 4 weekly dumps | J05; encrypted export to a dedicated directory |
@@ -385,7 +385,7 @@ Provider selection remains open. The earlier Copilot/ChatGPT-Codex primary-group
 
 The owner prioritizes consumption monitoring and has not decided whether fixed hard spending ceilings are wanted. The previously recorded EUR amounts are not current approved defaults. F09 already specifies request-level provider/model attribution, usage breakdowns, estimated/reported costs, unknown coverage, and daily/monthly summaries; D05 still needs an owner decision on any hard-stop/approval policy, applicable thresholds/currency, and plan/dev allocation. Until the applicable billable-use policy is selected and enforced, no billable request is authorized.
 
-`Jarvis-Test` is the only selected initial project for MVP requests. A `plan` request still requires verified authorized project access and an approved provider/data-processing route. The repository identity is selected, but product-App access, the `dev` base branch, required CI identities, and provenance must still be verified before a development task or PR publication. The README-only report is not evidence that those gates pass. D01's controller decision and D06's Colima allocation remain J01 gates; unsolicited events remain excluded under D04.
+`Jarvis-Test` is the only selected initial project for MVP requests. A `plan` request still requires verified authorized project access and an approved provider/data-processing route. The repository identity is selected, but product-App access, the `dev` base branch, required CI identities, and provenance must still be verified before a development task or PR publication. The README-only report is not evidence that those gates pass. D01's controller decision and D06's effective Colima configuration/isolation verification remain J01 gates; unsolicited events remain excluded under D04.
 
 | Decision | Current disposition | Remaining gate |
 | --- | --- | --- |
@@ -394,7 +394,7 @@ The owner prioritizes consumption monitoring and has not decided whether fixed h
 | D03 | `grasdouble/Jarvis-Test` is selected as the only initial project target; the owner reports its local checkout contains only `README.md`. `grasdouble/Jarvis` is the contributor source repository, not a JARVIS-operated project. | Verify product-App project access and configuration. Verify the target base branch, required CI identities, and provenance before any `dev` task or PR publication. |
 | D04 | Start work only from authenticated owner requests; no unsolicited event intake. | Keep external event ingress disabled. |
 | D05 | Consumption monitoring is wanted; fixed hard ceilings and previous numeric values are not accepted as current policy. | Decide whether hard stops/approvals are needed, then select thresholds/currency and plan/dev allocation. No billable request until the applicable policy is accepted and enforced. |
-| D06 | Colima version and CPU/RAM/disk allocation remain open. | Measure the host and qualify the effective VM configuration at J01. |
+| D06 | Owner-selected 4-CPU/8-GiB (if available)/80-GiB VM baseline, >=40 GiB free host disk, 2-CPU/4-GiB sandbox target; contributor-selected version pins in architecture §6. | Verify actual host capacity, effective VM configuration, and isolation at J01; sandbox quotas remain a target until enforced and measured. |
 
 This is a record of current owner direction and remaining J00 gates, not runtime implementation, provider qualification, budget enforcement, or permission to dispatch product tasks. Unresolved gates disable their dependent actions.
 
