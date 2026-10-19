@@ -91,6 +91,14 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with redirect_stdout(StringIO()):
                 self.assertEqual(validate("main", root), "passed")
 
+    def test_validation_uses_candidate_policy_when_base_has_no_changesets_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(
+                Path(temporary), "'@jarvis/api': patch", add_changeset_config_in_pr=True
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(validate("main", root), "passed")
+
     def test_validation_accepts_an_explicit_empty_no_release_changeset(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "")
@@ -106,6 +114,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         delete_api_workspace: bool = False,
         delete_base_changeset: bool = False,
         exclude_api_workspace: bool = False,
+        add_changeset_config_in_pr: bool = False,
     ) -> Path:
         (root / ".changeset").mkdir()
         (root / "packages/api").mkdir(parents=True)
@@ -114,9 +123,10 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             json.dumps({"name": "fixture", "version": "1.0.0", "private": True}), encoding="utf-8"
         )
         (root / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n", encoding="utf-8")
-        (root / ".changeset/config.json").write_text(
-            json.dumps({"privatePackages": {"version": True}, "ignore": []}), encoding="utf-8"
-        )
+        if not add_changeset_config_in_pr:
+            (root / ".changeset/config.json").write_text(
+                json.dumps({"privatePackages": {"version": True}, "ignore": []}), encoding="utf-8"
+            )
         for name in ("api", "domain"):
             (root / f"packages/{name}/package.json").write_text(
                 json.dumps({"name": f"@jarvis/{name}", "version": "1.0.0", "private": True}),
@@ -139,6 +149,10 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         git("switch", "--quiet", "--create", "pr")
         if delete_base_changeset:
             (root / ".changeset/base.md").unlink()
+        if add_changeset_config_in_pr:
+            (root / ".changeset/config.json").write_text(
+                json.dumps({"privatePackages": {"version": True}, "ignore": []}), encoding="utf-8"
+            )
         if exclude_api_workspace:
             (root / "pnpm-workspace.yaml").write_text(
                 "packages:\n  - packages/*\n  - '!packages/api'\n", encoding="utf-8"

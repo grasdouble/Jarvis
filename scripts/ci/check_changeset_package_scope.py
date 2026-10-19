@@ -67,7 +67,12 @@ def _matches_workspace_manifest(path: PurePosixPath, patterns: list[str]) -> boo
 def workspace_packages(root: Path, ref: str = "HEAD") -> dict[PurePosixPath, str]:
     """Discover versionable workspace packages at an exact Git revision."""
     workspace = yaml.safe_load(_git(root, "show", f"{ref}:pnpm-workspace.yaml"))
-    changeset_config = _package_data(root, ref, ".changeset/config.json")
+    try:
+        changeset_config = _package_data(root, ref, ".changeset/config.json")
+    except subprocess.CalledProcessError:
+        # The Changesets config may itself be introduced by the PR; use the
+        # candidate policy to classify the base-side workspace manifests.
+        changeset_config = _package_data(root, "HEAD", ".changeset/config.json")
     private_versions = changeset_config.get("privatePackages", {}).get("version", False)
     ignored = set(changeset_config.get("ignore", []))
     packages: dict[PurePosixPath, str] = {}
