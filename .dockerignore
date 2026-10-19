@@ -3,3 +3,13 @@
 !apps/sandbox-manager/
 !apps/sandbox-manager/dist/
 !apps/sandbox-manager/dist/**
+!apps/llm-gateway/
+!apps/llm-gateway/dist/
+!apps/llm-gateway/dist/**
+!packages/
+!packages/runtime/
+!packages/runtime/dist/
+!packages/runtime/dist/**
+!infra/
+!infra/opencode-prototype/
+!infra/opencode-prototype/**
