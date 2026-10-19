@@ -11,6 +11,46 @@ test('available work sorts by milestone, priority, creation time and number', ()
   assert.deepEqual(numbers(planQueue(inputs)),[2,3,1,4]);
   assert.deepEqual(planQueue(inputs),planQueue([...inputs].reverse()));
 });
+test('a child uses its coordination parent milestone context before its own milestone', () => {
+  const child=issue(34,{milestone:'DEV — Tooling & validation',labels:['priority:P1']});
+  const parent=issue(32,{milestone:'J01 — Isolation',labels:['priority:P1'],children:['34']});
+  const sameParentPhase=issue(35,{milestone:'J01 — Isolation',labels:['priority:P1']});
+  const laterPhase=issue(8,{milestone:'J02 — Project foundation',labels:['priority:P0']});
+
+  const rows=planQueue([child,parent,laterPhase,sameParentPhase]);
+  assert.deepEqual(numbers(rows),[35,34,8]);
+  assert.equal(rows.some(row=>row.number===32),false);
+  assert.equal(child.milestone,'DEV — Tooling & validation');
+  assert.deepEqual(child.labels,['priority:P1']);
+});
+test('a child uses its coordination parent priority before its own priority', () => {
+  const child=issue(34,{milestone:'DEV — Tooling & validation',labels:['priority:P2']});
+  const parent=issue(32,{milestone:'J01 — Isolation',labels:['priority:P0'],children:['34']});
+  const samePhaseLowerPriority=issue(35,{milestone:'J01 — Isolation',labels:['priority:P1']});
+
+  assert.deepEqual(numbers(planQueue([samePhaseLowerPriority,child,parent])),[34,35]);
+});
+test('children use their own milestone and priority as tie-breakers within parent context', () => {
+  const parent=issue(32,{milestone:'J01 — Isolation',labels:['priority:P1'],children:['34','35']});
+  const laterOwnPhase=issue(34,{milestone:'J02 — Project foundation',labels:['priority:P0']});
+  const earlierOwnPhase=issue(35,{milestone:'DEV — Tooling & validation',labels:['priority:P2']});
+
+  assert.deepEqual(numbers(planQueue([earlierOwnPhase,parent,laterOwnPhase])),[34,35]);
+});
+test('children use their own priority when parent context and own phase are tied', () => {
+  const parent=issue(32,{milestone:'J01 — Isolation',labels:['priority:P1'],children:['34','35']});
+  const lowerOwnPriority=issue(34,{milestone:'DEV — Tooling & validation',labels:['priority:P2']});
+  const higherOwnPriority=issue(35,{milestone:'DEV — Tooling & validation',labels:['priority:P0']});
+
+  assert.deepEqual(numbers(planQueue([lowerOwnPriority,parent,higherOwnPriority])),[35,34]);
+});
+test('blocking dependencies remain ahead of a child parent-context sort key', () => {
+  const child=issue(1,{milestone:'J01 — Isolation',blockers:['3']});
+  const parent=issue(32,{milestone:'J00 — Scoping',children:['1']});
+  const laterPhaseBlocker=issue(3,{milestone:'J02 — Project foundation'});
+
+  assert.deepEqual(numbers(planQueue([child,parent,laterPhaseBlocker])),[3,1]);
+});
 test('parents are coordination nodes and dependent work follows their children', () => {
   const rows=planQueue([issue(1,{children:['3']}),issue(2,{blockers:['1']}),issue(3)]);
   assert.deepEqual(numbers(rows),[3,2]);
