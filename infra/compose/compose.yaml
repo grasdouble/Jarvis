@@ -1,6 +1,47 @@
 name: jarvis
 
 services:
+  sandbox-manager:
+    image: jarvis/sandbox-manager:local
+    platform: linux/arm64
+    profiles: [sandbox-manager]
+    restart: unless-stopped
+    user: "10001:10001"
+    group_add: ["${DOCKER_SOCKET_GID:?infra/colima/compose.sh must resolve the guest docker group}"]
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+    environment:
+      SANDBOX_MANAGER_PORT: "8443"
+      SANDBOX_PROFILE_CONFIG: /etc/jarvis/sandbox-profiles.json
+      DOCKER_ENGINE_API_VERSION: "1.54"
+      SANDBOX_MANAGER_TLS_KEY_FILE: /run/secrets/sandbox_manager_tls_key
+      SANDBOX_MANAGER_TLS_CERT_FILE: /run/secrets/sandbox_manager_tls_cert
+      SANDBOX_MANAGER_CLIENT_CA_FILE: /run/secrets/sandbox_manager_client_ca
+    expose: ["8443"]
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: /etc/jarvis/sandbox-profiles.json
+        target: /etc/jarvis/sandbox-profiles.json
+        read_only: true
+        bind:
+          create_host_path: false
+    secrets:
+      - sandbox_manager_tls_key
+      - sandbox_manager_tls_cert
+      - sandbox_manager_client_ca
+    networks:
+      - core
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001
+
   postgres:
     image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
     platform: linux/arm64
@@ -22,6 +63,12 @@ services:
 secrets:
   postgres_password:
     file: /etc/jarvis/secrets/postgres_password
+  sandbox_manager_tls_key:
+    file: /etc/jarvis/secrets/sandbox_manager_tls_key
+  sandbox_manager_tls_cert:
+    file: /etc/jarvis/secrets/sandbox_manager_tls_cert
+  sandbox_manager_client_ca:
+    file: /etc/jarvis/secrets/sandbox_manager_client_ca
 
 volumes:
   postgres_data:

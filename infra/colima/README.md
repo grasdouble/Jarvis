@@ -4,7 +4,7 @@ This directory provisions the JARVIS-only Colima profile. It never changes or ac
 
 ## Selected baseline
 
-`versions.env` is the reviewed version lock: Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 (Ubuntu Noble ARM64 packages), containerd 2.2.4, and Docker Compose 5.6.0. Compose is downloaded for `linux-aarch64`, checked against its release SHA-256, then streamed over Colima SSH into the guest. The Compose manifest pins PostgreSQL 18.6-bookworm by multi-platform digest and explicitly selects `linux/arm64`.
+`versions.env` is the reviewed version lock: Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 (Ubuntu Noble ARM64 packages, API 1.54), containerd 2.2.4, and Docker Compose 5.6.0. Compose is downloaded for `linux-aarch64`, checked against its release SHA-256, then streamed over Colima SSH into the guest. The Compose manifest pins PostgreSQL 18.6-bookworm by multi-platform digest and explicitly selects `linux/arm64`.
 
 The owner-selected resource baseline is 4 VM CPUs, 8 GiB RAM, an 80 GiB VM disk, at least 40 GiB free on the Mac before provisioning, and a 2-CPU/4-GiB per-sandbox target. The bootstrap refuses a host below those CPU, memory, architecture, macOS, or free-space requirements. These are selected targets, not a claim that product sandbox quotas are implemented or qualified.
 
@@ -34,7 +34,11 @@ secret-manager read jarvis/postgres-password | infra/colima/provision-secret.sh 
 
 The value is never a process argument, environment variable, host file, or log entry. It is written by root over Colima SSH to `/etc/jarvis/secrets/<name>` with mode `0400` in a `0700` directory. Existing names are refused unless `--replace` is explicitly given. Do not use `echo`, shell tracing, or a tracked `.env` file. No real secret was provisioned by this change.
 
-The current Compose manifest defines only the ARM64 PostgreSQL service and keeps it on an internal network without host ports. After provisioning the DB password, start it with `infra/colima/compose.sh up -d`; this wrapper invokes Compose through `sudo` inside the VM so root-only secret and manifest paths are readable. The API/UI image and its authentication are not implemented in the current workspace; consequently no UI listener or positive login is claimed by this bootstrap. Product services must retain the same loopback-only UI port and no other host port when added.
+The PostgreSQL service remains on an internal network without host ports. After provisioning the DB password, start it with `infra/colima/compose.sh up -d`; this wrapper invokes Compose through `sudo` inside the VM so root-only secret and manifest paths are readable.
+
+The sandbox-manager is an opt-in Compose profile, not started by ordinary `up`. Its build script verifies the explicit ARM64 `colima-jarvis` Engine and builds a digest-pinned Node.js 24.22.0 image without starting it. The Compose definition mounts the guest Engine socket only into the manager, uses the guest Docker group resolved by the wrapper, drops capabilities, uses a read-only root filesystem, exposes no host port, and attaches only to the internal `core` network. It cannot start until the owner-controlled profile file and TLS server key/certificate/client CA are provisioned in the guest. These files are not created by `bootstrap.sh` or this change. Do not enable the profile or product tasks until J01 security review and live isolation qualification pass; static configuration and mock API tests are not proof of runtime isolation. See [`infra/sandbox-manager/README.md`](../sandbox-manager/README.md).
+
+The API/UI image and its authentication are not implemented in the current workspace; consequently no UI listener or positive login is claimed by this bootstrap. Product services must retain the same loopback-only UI port and no other host port when added.
 
 ## Recovery and limitations
 

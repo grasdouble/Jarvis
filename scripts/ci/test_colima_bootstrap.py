@@ -35,6 +35,7 @@ class ColimaBootstrapTests(unittest.TestCase):
         self.assertEqual(values["LIMA_VERSION"], "2.2.1")
         self.assertEqual(values["DOCKER_CLI_VERSION"], "29.9.1")
         self.assertEqual(values["DOCKER_ENGINE_VERSION"], "29.5.2")
+        self.assertEqual(values["DOCKER_ENGINE_API_VERSION"], "1.54")
         self.assertEqual(values["COMPOSE_VERSION"], "5.6.0")
         self.assertRegex(values["COMPOSE_SHA256"], r"^[0-9a-f]{64}$")
         self.assertIn("@sha256:", values["POSTGRES_IMAGE"])
@@ -52,6 +53,36 @@ class ColimaBootstrapTests(unittest.TestCase):
         self.assertIn("file: /etc/jarvis/secrets/postgres_password", compose)
         self.assertNotRegex(compose, r"(?m)^\s+ports:")
         self.assertIn("internal: true", compose)
+
+    def test_engine_socket_is_attached_only_to_the_restricted_manager(self):
+        import yaml
+
+        compose = yaml.safe_load((ROOT / "infra" / "compose" / "compose.yaml").read_text())
+        services = compose["services"]
+        socket_mounts = [
+            name
+            for name, service in services.items()
+            for mount in service.get("volumes", [])
+            if isinstance(mount, dict) and mount.get("source") == "/var/run/docker.sock"
+        ]
+        self.assertEqual(socket_mounts, ["sandbox-manager"])
+        manager = services["sandbox-manager"]
+        self.assertEqual(manager["profiles"], ["sandbox-manager"])
+        self.assertEqual(manager["user"], "10001:10001")
+        self.assertEqual(manager["cap_drop"], ["ALL"])
+        self.assertTrue(manager["read_only"])
+        self.assertNotIn("ports", manager)
+        self.assertIn("core", manager["networks"])
+        self.assertNotIn("worker", services)
+        self.assertNotIn("agent", services)
+
+    def test_manager_image_uses_an_arm64_digest_pinned_node_base(self):
+        dockerfile = (ROOT / "infra" / "sandbox-manager" / "Dockerfile").read_text()
+        self.assertRegex(dockerfile, r"(?m)^FROM node:24\.22\.0-bookworm-slim@sha256:[0-9a-f]{64}$")
+        self.assertIn("USER 10001:10001", dockerfile)
+        dockerignore = (ROOT / ".dockerignore").read_text().splitlines()
+        self.assertIn("**", dockerignore)
+        self.assertIn("!apps/sandbox-manager/dist/**", dockerignore)
 
     def test_preflight_accepts_supported_host_and_reports_pins(self):
         script = INFRA / "bootstrap.sh"

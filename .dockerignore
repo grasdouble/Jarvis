@@ -1,0 +1,5 @@
+**
+!apps/
+!apps/sandbox-manager/
+!apps/sandbox-manager/dist/
+!apps/sandbox-manager/dist/**
