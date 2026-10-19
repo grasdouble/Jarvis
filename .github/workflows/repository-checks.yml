@@ -41,16 +41,14 @@ jobs:
         run: npm install --global pnpm@12.5.1
       - name: Install the frozen workspace dependencies
         run: pnpm install --frozen-lockfile
+      - name: Exercise the generated Changesets version PR exception
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/ci/exercise_changeset_version_pr.py
       - name: Require Changesets for changed packages
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: pnpm changeset status --since="$BASE_SHA"
-      - name: Require Changesets to target an impacted package
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/ci/check_changeset_package_scope.py "$BASE_SHA"
+        run: python3 scripts/ci/check_changeset_pr.py "$BASE_SHA"
       - name: Test the sandbox-manager contracts
         run: pnpm --filter @jarvis/sandbox-manager test
       - name: Test contributor GitHub tooling without real credentials

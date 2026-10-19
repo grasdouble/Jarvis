@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -58,6 +59,32 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
                 validate("main", root)
 
+    def test_validation_rejects_changeset_for_rename_away_from_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", rename_api_file_to_docs=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+                validate("main", root)
+
+    def test_validation_rejects_unrelated_changeset_for_removed_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", delete_api_workspace=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+                validate("main", root)
+
+    def test_validation_rejects_unrelated_changeset_when_workspace_pattern_removes_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", exclude_api_workspace=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+                validate("main", root)
+
+    def test_validation_ignores_deleted_changeset_files_without_reading_them(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(
+                Path(temporary), None, delete_base_changeset=True
+            )
+            with self.assertRaisesRegex(ValueError, "need a Changeset"):
+                validate("main", root)
+
     def test_validation_accepts_a_changeset_for_a_changed_package(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "'@jarvis/api': patch")
@@ -71,7 +98,15 @@ class ChangesetPackageScopeTests(unittest.TestCase):
                 self.assertEqual(validate("main", root), "passed")
 
     @staticmethod
-    def make_fixture(root: Path, changeset_frontmatter: str, delete_api_file: bool = False) -> Path:
+    def make_fixture(
+        root: Path,
+        changeset_frontmatter: str | None,
+        delete_api_file: bool = False,
+        rename_api_file_to_docs: bool = False,
+        delete_api_workspace: bool = False,
+        delete_base_changeset: bool = False,
+        exclude_api_workspace: bool = False,
+    ) -> Path:
         (root / ".changeset").mkdir()
         (root / "packages/api").mkdir(parents=True)
         (root / "packages/domain").mkdir(parents=True)
@@ -88,6 +123,10 @@ class ChangesetPackageScopeTests(unittest.TestCase):
                 encoding="utf-8",
             )
         (root / "packages/api/index.js").write_text("export const existing = true;\n", encoding="utf-8")
+        if delete_base_changeset:
+            (root / ".changeset/base.md").write_text(
+                "---\n'@jarvis/api': patch\n---\nBase release entry.\n", encoding="utf-8"
+            )
 
         def git(*args: str) -> None:
             subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
@@ -98,13 +137,25 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         git("add", ".")
         git("commit", "--quiet", "-m", "fixture baseline")
         git("switch", "--quiet", "--create", "pr")
-        if delete_api_file:
+        if delete_base_changeset:
+            (root / ".changeset/base.md").unlink()
+        if exclude_api_workspace:
+            (root / "pnpm-workspace.yaml").write_text(
+                "packages:\n  - packages/*\n  - '!packages/api'\n", encoding="utf-8"
+            )
+        if delete_api_workspace:
+            shutil.rmtree(root / "packages/api")
+        elif rename_api_file_to_docs:
+            (root / "docs").mkdir()
+            (root / "packages/api/index.js").rename(root / "docs/api-index.js")
+        elif delete_api_file:
             (root / "packages/api/index.js").unlink()
         else:
             (root / "packages/api/index.js").write_text("export const changed = true;\n", encoding="utf-8")
-        (root / ".changeset/unrelated.md").write_text(
-            f"---\n{changeset_frontmatter}\n---\nFixture change.\n", encoding="utf-8"
-        )
+        if changeset_frontmatter is not None:
+            (root / ".changeset/unrelated.md").write_text(
+                f"---\n{changeset_frontmatter}\n---\nFixture change.\n", encoding="utf-8"
+            )
         git("add", ".")
         git("commit", "--quiet", "-m", "change api package")
         return root

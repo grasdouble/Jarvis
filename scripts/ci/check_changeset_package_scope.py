@@ -16,41 +16,70 @@ import yaml
 FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 
 
-def changed_paths(base_sha: str, root: Path) -> tuple[list[PurePosixPath], list[PurePosixPath]]:
-    """Return changed paths and changed Changeset markdown paths from the PR diff."""
-
-    def diff_paths(*pathspecs: str) -> list[PurePosixPath]:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "-z", "--diff-filter=ACMRD", f"{base_sha}...HEAD", "--", *pathspecs],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return [PurePosixPath(path) for path in result.stdout.split("\0") if path]
-
-    return diff_paths(), diff_paths(".changeset/*.md")
+def _git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    )
+    return result.stdout
 
 
-def workspace_packages(root: Path) -> dict[PurePosixPath, str]:
-    """Discover versionable packages using the repository workspace patterns."""
-    workspace = yaml.safe_load((root / "pnpm-workspace.yaml").read_text(encoding="utf-8"))
-    changeset_config = json.loads((root / ".changeset/config.json").read_text(encoding="utf-8"))
+def changed_paths(base_sha: str, root: Path) -> list[tuple[str, PurePosixPath]]:
+    """Return status/path pairs, disabling rename detection so both sides are visible."""
+    fields = _git(root, "diff", "--name-status", "-z", "--no-renames", f"{base_sha}...HEAD").split("\0")
+    changes: list[tuple[str, PurePosixPath]] = []
+    index = 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        index += 1
+        path_count = 2 if status.startswith(("R", "C")) else 1
+        for path in fields[index : index + path_count]:
+            changes.append((status[0], PurePosixPath(path)))
+        index += path_count
+    return changes
+
+
+def _workspace_manifest_paths(root: Path, ref: str, patterns: list[str]) -> list[PurePosixPath]:
+    paths = _git(root, "ls-tree", "-r", "--name-only", "-z", ref).split("\0")
+    return [
+        PurePosixPath(path)
+        for path in paths
+        if path.endswith("/package.json")
+        and _matches_workspace_manifest(PurePosixPath(path), patterns)
+    ]
+
+
+def _package_data(root: Path, ref: str, path: str) -> dict:
+    return json.loads(_git(root, "show", f"{ref}:{path}"))
+
+
+def _matches_workspace_manifest(path: PurePosixPath, patterns: list[str]) -> bool:
+    included = False
+    for pattern in patterns:
+        excluded = pattern.startswith("!")
+        glob = pattern[1:] if excluded else pattern
+        if path.match(glob.rstrip("/") + "/package.json"):
+            if excluded:
+                return False
+            included = True
+    return included
+
+
+def workspace_packages(root: Path, ref: str = "HEAD") -> dict[PurePosixPath, str]:
+    """Discover versionable workspace packages at an exact Git revision."""
+    workspace = yaml.safe_load(_git(root, "show", f"{ref}:pnpm-workspace.yaml"))
+    changeset_config = _package_data(root, ref, ".changeset/config.json")
     private_versions = changeset_config.get("privatePackages", {}).get("version", False)
     ignored = set(changeset_config.get("ignore", []))
     packages: dict[PurePosixPath, str] = {}
-
-    for pattern in workspace.get("packages", []):
-        if pattern.startswith("!"):
+    patterns = workspace.get("packages", [])
+    for manifest_path in _workspace_manifest_paths(root, ref, patterns):
+        manifest = _package_data(root, ref, manifest_path.as_posix())
+        name = manifest.get("name")
+        if not isinstance(name, str) or name in ignored:
             continue
-        for manifest_path in root.glob(f"{pattern.rstrip('/')}/package.json"):
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            name = manifest.get("name")
-            if not isinstance(name, str) or name in ignored:
-                continue
-            if manifest.get("private", False) and not private_versions:
-                continue
-            packages[PurePosixPath(manifest_path.parent.relative_to(root).as_posix())] = name
+        if manifest.get("private", False) and not private_versions:
+            continue
+        packages[manifest_path.parent] = name
     return packages
 
 
@@ -101,10 +130,25 @@ def changeset_coverage_error(changed: set[str], entries: list[set[str]]) -> str 
 
 
 def validate(base_sha: str, root: Path) -> str:
-    paths, changeset_paths = changed_paths(base_sha, root)
-    changed = changed_workspace_names(paths, workspace_packages(root))
+    changes = changed_paths(base_sha, root)
+    paths = [path for _, path in changes]
+    base_packages = workspace_packages(root, base_sha)
+    head_packages = workspace_packages(root, "HEAD")
+    changed = changed_workspace_names(paths, base_packages)
+    changed.update(changed_workspace_names(paths, head_packages))
+    if PurePosixPath("pnpm-workspace.yaml") in paths:
+        for package_root in base_packages.keys() | head_packages.keys():
+            base_name = base_packages.get(package_root)
+            head_name = head_packages.get(package_root)
+            if base_name != head_name:
+                if base_name:
+                    changed.add(base_name)
+                if head_name:
+                    changed.add(head_name)
     entries = []
-    for path in changeset_paths:
+    for status, path in changes:
+        if status == "D" or path.parent != PurePosixPath(".changeset") or path.suffix != ".md":
+            continue
         parsed = parse_changeset((root / path).read_text(encoding="utf-8"))
         if parsed is not None:
             entries.append(parsed)
