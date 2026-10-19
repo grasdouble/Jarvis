@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.18 • October 19, 2026 • Companion to the PRD and roadmap
+Document version 1.20 • October 19, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -110,6 +110,8 @@ OpenCode listens only on `127.0.0.1:4096` inside its sandbox and requires a rand
 
 The adapter can use `createOpencodeClient` with a `fetch` transport adapted to relay requests, or a limited HTTP mapping inside the same adapter. The SDK documents a client connected to an existing server and a customizable transport. The prototype checks streams, deadlines, backpressure, cancellation, and errors before this choice is pinned; no extension of OpenCode itself is required. [O2](https://docs.opencode.ai/docs/sdk/)
 
+The JV-006 prototype includes an authenticated loopback HTTP client for the v2 API, a fixed-route Unix-socket gateway transport, and a loopback bridge for OpenCode's provider endpoint. A checksum-pinned OpenCode v2.0.32 ARM64 image runs with a synthetic provider and isolated named volumes on `colima-jarvis`; the checked qualification exercises the actual client for health, session creation, prompt admission, message reads, cancellation and deletion, plus synthetic structured output, network-none, read-only workspace/config, writable isolated state and cleanup. Its host-side fixed exec relay allows only health and qualification-probe operations, but remains a standalone harness rather than a sandbox-manager integration. The synthetic model's shell-tool attempt is refused because the tool is unavailable under the sandbox profile; this does not prove broader policy behavior. It validates no real provider and does not resolve D02/D05. This is prototype evidence, not product readiness.
+
 This transport requires additional JARVIS code. If streaming proves too complex, the first profile can use bounded messages with status polling. It keeps the same boundaries and does not publish the OpenCode port to work around the difficulty.
 
 ## 5 Sandbox profile and networking
@@ -149,6 +151,8 @@ The `none` driver leaves only loopback and provides no external network interfac
 The gateway exposes neither a CONNECT proxy nor an unrestricted destination URL. Its profile fixes the provider, base URL, model, permitted API routes, body size, request count, maximum tokens, concurrency, and deadline. It rejects redirects to other origins and any resolution to loopback, private, link-local, multicast, or metadata addresses; IPv6 and resolution after redirects are included. Destinations for a provider running locally on the Mac are prohibited by default and would require a separate network profile, still outside the MVP.
 
 The actual provider secret resides in the gateway, injected at startup into memory or a tmpfs file with minimal permissions. The agent receives only a per-attempt capability with a bounded budget; if compromised, it can abuse that allocation but cannot obtain a permanent key. The gateway has no GitHub secret, PostgreSQL connection, or Engine socket. Its container is deleted and its capability revoked when the attempt ends.
+
+The JV-006 gateway prototype reads the provider key from a startup file and does not accept it in request data; unit tests use a synthetic key and injected provider response. A separate Colima harness runs a synthetic gateway beside OpenCode through the Unix socket and loopback bridge, but is not wired to Compose or the sandbox-manager lifecycle. It does not pin DNS results against rebinding, provide durable F09 accounting or accepted provider configuration, or qualify permission behavior beyond confirming that the configured profile does not expose shell and OpenCode rejects a synthetic shell-tool attempt. It must not receive private repository data or a real provider key until D02, D05 and the relevant J01/J03 qualification gates are satisfied.
 
 The trusted secrets broker supplies the credential to the gateway through the controlled provisioning channel. A key appears in neither labels, command-line arguments, nor variables inspectable by the agent. The controller can still inspect resources through Engine, so it is inside the trusted secrets boundary. Per-project provider keys and provider-side limits reduce the consequences of its compromise.
 
@@ -349,7 +353,7 @@ Read current GitHub facts when admitting an explicit task and immediately before
 
 ### 10.1 Server and adapter
 
-OpenCode documents `opencode serve`, default port 4096, HTTP Basic authentication through `OPENCODE_SERVER_PASSWORD`, and a `/doc` specification endpoint. Session and event operations support headless control. JARVIS binds the hostname to loopback, uses a different secret for every attempt, and records the version returned by the health probe. The server is never contacted from the user's browser. [O1](https://docs.opencode.ai/docs/server/)
+OpenCode v2 documents `opencode serve`, default port 4096, HTTP Basic authentication through `OPENCODE_SERVER_PASSWORD`, and an HTTP API described by its versioned OpenAPI document. The prototype client uses `/api/info`, `/api/session`, prompt admission, message reads, interruption and deletion. JARVIS binds the hostname to loopback, uses a different secret for every attempt, and records the version returned by the info probe. The server is never contacted from the user's browser. [O1](https://opencode.ai/v2/docs/api/)
 
 The adapter uses only a client connected to the server already created by the controller; it does not call an SDK function that starts a local server inside the worker. The SDK/server pair is pinned and tested together. Differences in API shape across versions are confined to this adapter; every update passes contract tests before adoption. [O2](https://docs.opencode.ai/docs/sdk/)
 

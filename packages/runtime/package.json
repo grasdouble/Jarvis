@@ -2,6 +2,10 @@
   "name": "@jarvis/runtime",
   "private": true,
   "type": "module",
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm build && node --test test/*.test.mjs"
+  },
   "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*" }
 }
