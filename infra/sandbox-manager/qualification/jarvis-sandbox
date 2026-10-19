@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node /opt/jarvis/qualification-probe.mjs
