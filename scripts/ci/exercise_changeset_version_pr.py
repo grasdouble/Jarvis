@@ -199,11 +199,11 @@ def exercise() -> None:
                 return self.releases.get(tag)
 
             def create_release(
-                self, tag: str, commit_sha: str, name: str, body: str
+                self, tag: str, name: str, body: str
             ) -> dict:
                 result = {
                     "tag_name": tag,
-                    "target_commitish": commit_sha,
+                    "target_commitish": "main",
                     "name": name,
                     "body": body,
                     "draft": False,

@@ -134,9 +134,7 @@ class ReleaseClient(Protocol):
 
     def release(self, tag: str) -> dict | None: ...
 
-    def create_release(
-        self, tag: str, commit_sha: str, name: str, body: str
-    ) -> dict: ...
+    def create_release(self, tag: str, name: str, body: str) -> dict: ...
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -256,13 +254,12 @@ class GitHubReleaseClient:
             raise ReleaseError(f"Could not inspect GitHub Release for {tag!r} (HTTP {status}).")
         return result
 
-    def create_release(self, tag: str, commit_sha: str, name: str, body: str) -> dict:
+    def create_release(self, tag: str, name: str, body: str) -> dict:
         status, result = self.request(
             "POST",
             "releases",
             {
                 "tag_name": tag,
-                "target_commitish": commit_sha,
                 "name": name,
                 "body": body,
                 "draft": False,
@@ -310,7 +307,6 @@ def publish_release(
         try:
             existing_release = client.create_release(
                 artifact.tag,
-                commit_sha,
                 expected_name,
                 artifact.notes,
             )
@@ -321,12 +317,13 @@ def publish_release(
                 raise
     expected = {
         "tag_name": artifact.tag,
-        "target_commitish": commit_sha,
         "name": expected_name,
         "body": artifact.notes,
         "draft": False,
         "prerelease": False,
     }
+    # The verified immutable tag is the commit binding. GitHub ignores
+    # target_commitish when creating a Release for an already-existing tag.
     mismatches = [key for key, value in expected.items() if existing_release.get(key) != value]
     if mismatches:
         raise ReleaseError(

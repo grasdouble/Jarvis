@@ -185,7 +185,8 @@ class ReleaseBehaviorTests(unittest.TestCase):
 
         self.assertEqual(0, client.tag_create_count)
         self.assertEqual(1, client.release_create_count)
-        self.assertEqual("a" * 40, client.releases[release.tag]["target_commitish"])
+        self.assertEqual("a" * 40, client.tags[release.tag])
+        self.assertEqual("main", client.releases[release.tag]["target_commitish"])
 
     def test_conflicting_existing_tag_is_rejected_without_retagging(self) -> None:
         client = FakeReleaseClient()
@@ -214,16 +215,28 @@ class ReleaseBehaviorTests(unittest.TestCase):
         client = FakeReleaseClient()
         release = artifact("@fixture/api", "0.0.1")
         client.tags[release.tag] = "a" * 40
-        client.releases[release.tag] = client.release_payload(release, "a" * 40)
+        client.releases[release.tag] = client.release_payload(release)
         client.releases[release.tag]["body"] = "unexpected notes"
 
         with self.assertRaisesRegex(ReleaseError, "conflicts in fields: body"):
             publish_release(client, release, "a" * 40)
 
+    def test_verified_tag_is_authoritative_when_release_reports_default_branch(self) -> None:
+        client = FakeReleaseClient()
+        release = artifact("@fixture/api", "0.0.1")
+        client.tags[release.tag] = "a" * 40
+        client.releases[release.tag] = client.release_payload(release)
+        client.releases[release.tag]["target_commitish"] = "main"
+
+        publish_release(client, release, "a" * 40)
+
+        self.assertEqual("a" * 40, client.tags[release.tag])
+        self.assertEqual(0, client.release_create_count)
+
     def test_existing_release_without_its_tag_is_not_repaired_implicitly(self) -> None:
         client = FakeReleaseClient()
         release = artifact("@fixture/api", "0.0.1")
-        client.releases[release.tag] = client.release_payload(release, "a" * 40)
+        client.releases[release.tag] = client.release_payload(release)
 
         with self.assertRaisesRegex(ReleaseError, "exists without its immutable Git tag"):
             publish_release(client, release, "a" * 40)
@@ -292,11 +305,11 @@ class FakeReleaseClient:
     def release(self, tag: str) -> dict | None:
         return self.releases.get(tag)
 
-    def create_release(self, tag: str, commit_sha: str, name: str, body: str) -> dict:
+    def create_release(self, tag: str, name: str, body: str) -> dict:
         self.release_create_count += 1
         result = {
             "tag_name": tag,
-            "target_commitish": commit_sha,
+            "target_commitish": "main",
             "name": name,
             "body": body,
             "draft": False,
@@ -306,10 +319,10 @@ class FakeReleaseClient:
         return result
 
     @staticmethod
-    def release_payload(release: PackageRelease, commit_sha: str) -> dict:
+    def release_payload(release: PackageRelease) -> dict:
         return {
             "tag_name": release.tag,
-            "target_commitish": commit_sha,
+            "target_commitish": "main",
             "name": f"{release.package}@{release.version}",
             "body": release.notes,
             "draft": False,
