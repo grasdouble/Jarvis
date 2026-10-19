@@ -1,5 +1,6 @@
 {
   "name": "@jarvis/sandbox-manager",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
