@@ -42,7 +42,6 @@ def exercise() -> None:
                     "private": True,
                     "version": "1.0.0",
                     "scripts": {"changeset": "changeset"},
-                    "packageManager": "pnpm@12.5.1",
                 }
             ),
             encoding="utf-8",

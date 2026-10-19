@@ -36,6 +36,21 @@ class ChangesetsVersionPrTests(unittest.TestCase):
             self.git(root, "commit", "--quiet", "-m", "unrelated workspace range edit")
             self.assertFalse(is_changesets_version_pr(base, root))
 
+    def test_version_output_with_unrelated_range_alternative_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            manifest = root / "packages/other/package.json"
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            package["version"] = "1.0.1"
+            package["dependencies"]["@fixture/api"] = "workspace:^1.0.1 || ^99.0.0"
+            manifest.write_text(json.dumps(package), encoding="utf-8")
+            (root / "packages/other/CHANGELOG.md").write_text(
+                "# @fixture/other\n\n## 1.0.1\n\n- Dependent release.\n", encoding="utf-8"
+            )
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "unrelated workspace range alternative")
+            self.assertFalse(is_changesets_version_pr(base, root))
+
     def test_version_output_with_unrelated_lockfile_change_is_not_exempt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, base = self.make_version_pr(Path(temporary))
@@ -103,7 +118,10 @@ class ChangesetsVersionPrTests(unittest.TestCase):
                     "name": "@fixture/other",
                     "private": True,
                     "version": "1.0.0",
-                    "dependencies": {"@fixture/dep": "workspace:^1.0.0"},
+                    "dependencies": {
+                        "@fixture/api": "workspace:^1.0.0",
+                        "@fixture/dep": "workspace:^1.0.0",
+                    },
                 }
             ),
             encoding="utf-8",

@@ -28,6 +28,7 @@ DEPENDENCY_FIELDS = {
     "peerDependencies",
 }
 BUMP_ORDER = {"patch": 0, "minor": 1, "major": 2}
+STABLE_VERSION = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 
 
 def _changeset_bumps(text: str) -> dict[str, str] | None:
@@ -62,7 +63,7 @@ def _version_only_manifest_change(
     after: dict,
     released_versions: dict[str, str],
 ) -> set[tuple[str, str, str, str]] | None:
-    """Return only dependency-range edits explained by a released workspace version."""
+    """Return only exact simple workspace-range updates explained by a release."""
     allowed = DEPENDENCY_FIELDS | {"version"}
     if any(before.get(key) != after.get(key) for key in before.keys() | after.keys() if key not in allowed):
         return None
@@ -81,16 +82,16 @@ def _version_only_manifest_change(
             if old_value == new_value:
                 continue
             target_version = released_versions.get(name)
+            old_range = old_value.removeprefix("workspace:") if isinstance(old_value, str) else ""
+            range_match = re.fullmatch(rf"(?P<prefix>[~^]?)(?P<version>{STABLE_VERSION})", old_range)
             if not (
                 target_version
                 and isinstance(old_value, str)
                 and isinstance(new_value, str)
                 and old_value.startswith("workspace:")
                 and new_value.startswith("workspace:")
-                and re.search(
-                    rf"(?<![0-9A-Za-z.+-]){re.escape(target_version)}(?![0-9A-Za-z.+-])",
-                    new_value.removeprefix("workspace:"),
-                )
+                and range_match
+                and new_value == f"workspace:{range_match.group('prefix')}{target_version}"
             ):
                 return None
             changed_ranges.add((package_root, field, name, new_value))

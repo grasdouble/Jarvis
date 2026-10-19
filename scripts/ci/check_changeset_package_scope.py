@@ -54,13 +54,17 @@ def _package_data(root: Path, ref: str, path: str) -> dict:
 
 def _matches_workspace_manifest(path: PurePosixPath, patterns: list[str]) -> bool:
     included = False
+    excluded = False
     for pattern in patterns:
-        excluded = pattern.startswith("!")
-        glob = pattern[1:] if excluded else pattern
+        is_exclusion = pattern.startswith("!")
+        glob = pattern[1:] if is_exclusion else pattern
         manifest_glob = glob.rstrip("/") + "/package.json"
         if any(_path_matches_glob(path.as_posix(), expanded) for expanded in _expand_braces(manifest_glob)):
-            included = not excluded
-    return included
+            if is_exclusion:
+                excluded = True
+            else:
+                included = True
+    return included and not excluded
 
 
 def _expand_braces(pattern: str) -> list[str]:
