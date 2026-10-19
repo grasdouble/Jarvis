@@ -1,0 +1,104 @@
+name: Package version PR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-version-pr-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    if: github.repository == 'grasdouble/Jarvis' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      pending: ${{ steps.changesets.outputs.pending }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - name: Detect pending Changesets without loading them as commands
+        id: changesets
+        run: |
+          if find .changeset -maxdepth 1 -type f -name '*.md' ! -name README.md -print -quit | grep -q .; then
+            echo 'pending=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'pending=false' >> "$GITHUB_OUTPUT"
+          fi
+
+  version-pr:
+    needs: detect
+    if: needs.detect.outputs.pending == 'true'
+    environment: package-releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify pinned Python and provisioned release App settings
+        env:
+          APP_CLIENT_ID: ${{ vars.PACKAGE_RELEASE_APP_CLIENT_ID }}
+          APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
+          INSTALLATION_ID: ${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.PACKAGE_RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          python3 -c 'import sys; assert sys.version_info[:2] == (3, 12)'
+          test -n "$APP_CLIENT_ID" || { echo '::error::PACKAGE_RELEASE_APP_CLIENT_ID is not provisioned.'; exit 1; }
+          test -n "$APP_SLUG" || { echo '::error::PACKAGE_RELEASE_APP_SLUG is not provisioned.'; exit 1; }
+          test -n "$INSTALLATION_ID" || { echo '::error::PACKAGE_RELEASE_APP_INSTALLATION_ID is not provisioned.'; exit 1; }
+          test -n "$APP_PRIVATE_KEY" || { echo '::error::PACKAGE_RELEASE_APP_PRIVATE_KEY is not provisioned.'; exit 1; }
+      - name: Install hash-verified validation dependency
+        run: |
+          python3 -m pip install --require-hashes --only-binary=:all: \
+            -r .github/requirements-ci.txt
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install the pinned PNPM workspace manager
+        run: npm install --global pnpm@12.5.1
+      - name: Install frozen workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Create a repository-scoped release App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.PACKAGE_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PACKAGE_RELEASE_APP_PRIVATE_KEY }}
+          owner: grasdouble
+          repositories: Jarvis
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Verify the installed package-release App identity
+        env:
+          EXPECTED_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
+          EXPECTED_INSTALLATION_ID: ${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}
+          ACTUAL_SLUG: ${{ steps.app.outputs.app-slug }}
+          ACTUAL_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
+        run: |
+          test "$ACTUAL_SLUG" = "$EXPECTED_SLUG" || { echo '::error::The token belongs to an unexpected GitHub App.'; exit 1; }
+          test "$ACTUAL_INSTALLATION_ID" = "$EXPECTED_INSTALLATION_ID" || { echo '::error::The token belongs to an unexpected installation.'; exit 1; }
+      - name: Generate or update the reviewed version PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          PACKAGE_RELEASE_APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
+          PACKAGE_RELEASE_APP_INSTALLATION_ID: ${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}
+          RELEASE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          RELEASE_TOKEN_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
+        run: python3 scripts/release/create_version_pr.py

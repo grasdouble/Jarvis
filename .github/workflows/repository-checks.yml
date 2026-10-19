@@ -32,6 +32,8 @@ jobs:
         run: python3 scripts/ci/check_repository.py
       - name: Exercise invalid configuration and title cases
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Test package release workflow contracts and reconciliation
+        run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - name: Test the PR-review validation workspace helper
         run: python3 .agents/skills/jarvis-pr-review/scripts/test_prepare_validation_workspace.py
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -41,7 +43,7 @@ jobs:
         run: npm install --global pnpm@12.5.1
       - name: Install the frozen workspace dependencies
         run: pnpm install --frozen-lockfile
-      - name: Exercise the generated Changesets version PR exception
+      - name: Rehearse generated version PRs and registry-free package releases
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/exercise_changeset_version_pr.py
       - name: Require Changesets for changed packages
