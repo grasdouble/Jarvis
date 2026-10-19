@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.17 • October 19, 2026 • Companion to the PRD and roadmap
+Document version 1.18 • October 19, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -21,7 +21,7 @@ The existing ADR01–ADR11 identities below remain stable. Use [project governan
 | ADR 03 Runtime | OpenCode through SDK/API, with server and SDK pinned together; separate plan and development profiles | No OpenCode plugin or shared personal session; profiles qualify independently |
 | ADR 04 Authority | Policy Engine without an LLM; dedicated GitHub executor | A report cannot trigger a write directly |
 | ADR 05 Sandboxes | One ARM64 container per attempt, without IP networking | Local relay and gateway transport to prototype |
-| ADR 06 Controller | Trusted container with Engine socket and restricted API | Explicit privileged-component risk; no socket in API, worker, or agent |
+| ADR 06 Controller | Owner-selected trusted container with Engine socket and restricted API (PRD D01) | Explicit privileged-component risk; no socket in API, worker, or agent; J01 implementation and qualification remain required |
 | ADR 07 Review | Static repository analysis remains available; requested plan/development work has distinct contracts | No repository command execution absent separate D16 acceptance and qualification |
 | ADR 08 Product merge authority | JARVIS does not merge pull requests in v0.1 | Human/GitHub review and merge remain outside JARVIS's authority |
 | ADR 09 Operations | One explicit user-directed task at a time; project allowlist is internal to JARVIS | Match Mac resources; project suspension and global stop remain core-controlled |
@@ -85,7 +85,7 @@ The security of the Mac, Colima/Lima virtualization, Docker Engine, the guest ke
 
 | Option | Engine access | Benefit | Limitation and decision |
 | --- | --- | --- | --- |
-| A Containerized controller | Engine socket mounted only in this service | Every JARVIS component containerized; simple deployment | Recommended for the MVP, but highly privileged access must be isolated and audited |
+| A Containerized controller | Engine socket mounted only in this service | Every JARVIS component containerized; simple deployment | Owner-selected for the MVP (PRD D01); highly privileged access must be isolated, audited, and qualified at J01 |
 | B Small macOS service | Colima profile's macOS-side Docker context socket, through launchd | No socket in application containers; separate controller | Native exception to the all-Docker objective; Mac maintenance and permissions must be accepted |
 | C Separate execution VM or Linux host | Authenticated API or private channel to a separate engine | Separates agent execution from the core VM and its data | Stronger separation than the baseline dedicated Colima profile; more RAM and administration |
 | D Generic Docker API proxy | Proxy in front of Engine | Can restrict verbs or endpoints | Insufficient on its own: a container-creation POST can request bind mounts or privileges; not a sufficient security boundary |
@@ -101,6 +101,8 @@ The controller checks profiles against its own read-only configuration, enforces
 It retains a minimal registry of managed resources and reconstructs state using the labels `jarvis.managed`, `task_id`, `attempt_id`, and `expires_at`. An Engine identifier returned by an agent is never accepted. Cleanup removes only resources whose identity and labels match the registry; it never runs a global prune.
 
 The controller container runs neither OpenCode, repository code, nor LLM prompts. It uses a minimal image, installs no package at runtime, publishes no port, and runs under a user with only the Unix socket access it needs. That access remains powerful despite the other hardening measures. In the Colima deployment, only this container binds the guest socket `/var/run/docker.sock`. The macOS-side socket used by the Docker CLI is a forwarded endpoint, not the bind source for this container. Resolve the host endpoint from the `colima-jarvis` context rather than assuming a path. [C4](https://github.com/abiosoft/colima/blob/main/environment/vm/lima/yaml.go)
+
+The JV-005 implementation uses a fixed mutual-TLS worker API, immutable profile image digests, manager-generated names and ownership labels, a one-sandbox capacity, bounded per-profile CPU/memory/PID/lifetime values, and manager-owned workspace/state volumes. It recovers live attempts from Engine labels and removes only resources whose labels match its registry; its Docker adapter constructs only fixed, non-networked, non-privileged container requests. This describes candidate implementation behavior, not proof of the live Compose mount, TLS provisioning, Docker Engine enforcement, or complete J01 qualification.
 
 ### 4.3 OpenCode transport without a control network
 
@@ -172,7 +174,7 @@ Docker Desktop ECI is not part of this deployment, and no equivalent extra bound
 
 Prefer native `linux/arm64` images, including OpenCode and its tools. The owner-selected D06 baseline is 4 VM CPUs, 8 GiB VM memory if host capacity permits, an 80 GiB VM disk, at least 40 GiB free host disk before provisioning, and a 2-CPU/4-GiB per-sandbox target. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac. The sandbox cap remains a target until it is enforced and measured.
 
-**Selected J01 bootstrap pins (October 19, 2026).** The contributor-selected baseline is Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 with Ubuntu Noble ARM64 packages, containerd 2.2.4, and Docker Compose 5.6.0. The Compose binary is SHA-256 checked before transfer into the VM. The bootstrap PostgreSQL image is `postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`, selected with `platform: linux/arm64`. Exact values and bootstrap instructions are maintained in [`infra/colima/versions.env`](../infra/colima/versions.env). These pins are reproducible inputs, not evidence that the profile is provisioned, images are scanned, or isolation is qualified.
+**Selected J01 bootstrap pins (October 19, 2026).** The contributor-selected baseline is Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 with Ubuntu Noble ARM64 packages and Engine API 1.54, containerd 2.2.4, and Docker Compose 5.6.0. The Compose binary is SHA-256 checked before transfer into the VM. The bootstrap PostgreSQL image is `postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`, selected with `platform: linux/arm64`. The sandbox-manager runtime base is Node.js 24.22.0 Bookworm slim, pinned to the ARM64 manifest digest recorded in its Dockerfile. Exact values and bootstrap instructions are maintained in [`infra/colima/versions.env`](../infra/colima/versions.env). These pins are reproducible inputs, not evidence that the profile is provisioned, images are scanned, or isolation is qualified.
 
 ## 7 Monorepo modules and dependencies
 

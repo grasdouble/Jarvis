@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.19 • October 19, 2026 • Personal self-hosted product
+Document version 1.20 • October 19, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -359,7 +359,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 | ID | Decision | Proposal and owner | Deadline or fallback |
 | --- | --- | --- | --- |
-| D01 | Sandbox controller | Owner; dedicated container with Engine socket and closed API | J01; native option only if explicitly accepted |
+| D01 | Sandbox controller | Owner selected the dedicated containerized controller as the sole Engine-socket holder, with a closed API; recorded in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026 | J01; implement and qualify the restricted controller before project use; no Engine socket in API, worker, or agent |
 | D02 | Providers and code processing | Owner; one primary provider and one authorized secondary | J00; no private code sent without selection |
 | D03 | Repositories, branch, and required CI | Owner selected `grasdouble/Jarvis-Test` as the only initial project target; the owner reports a local checkout with only `README.md`. `grasdouble/Jarvis` is the product source repository, not the initial JARVIS-operated project. | J00 plan work requires authorized project access and approved provider/data processing; no development task or PR publication until product access, target base branch, required CI, and provenance are verified |
 | D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
@@ -385,11 +385,11 @@ Provider selection remains open. The earlier Copilot/ChatGPT-Codex primary-group
 
 The owner prioritizes consumption monitoring and has not decided whether fixed hard spending ceilings are wanted. The previously recorded EUR amounts are not current approved defaults. F09 already specifies request-level provider/model attribution, usage breakdowns, estimated/reported costs, unknown coverage, and daily/monthly summaries; D05 still needs an owner decision on any hard-stop/approval policy, applicable thresholds/currency, and plan/dev allocation. Until the applicable billable-use policy is selected and enforced, no billable request is authorized.
 
-`Jarvis-Test` is the only selected initial project for MVP requests. A `plan` request still requires verified authorized project access and an approved provider/data-processing route. The repository identity is selected, but product-App access, the `dev` base branch, required CI identities, and provenance must still be verified before a development task or PR publication. The README-only report is not evidence that those gates pass. D01's controller decision and D06's effective Colima configuration/isolation verification remain J01 gates; unsolicited events remain excluded under D04.
+`Jarvis-Test` is the only selected initial project for MVP requests. A `plan` request still requires verified authorized project access and an approved provider/data-processing route. The repository identity is selected, but product-App access, the `dev` base branch, required CI identities, and provenance must still be verified before a development task or PR publication. The README-only report is not evidence that those gates pass. D01's controller topology is selected; implementation and qualification of the restricted controller, plus D06's effective Colima configuration/isolation verification, remain J01 gates. Unsolicited events remain excluded under D04.
 
 | Decision | Current disposition | Remaining gate |
 | --- | --- | --- |
-| D01 | Controller choice remains open. | Select and qualify the trusted controller at J01; the agent receives no Engine socket. |
+| D01 | Owner selected a dedicated containerized controller as the sole Engine-socket holder with a closed API in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026. | Implement and qualify the restricted controller at J01; the agent receives no Engine socket. This design selection alone does not qualify or activate the controller. |
 | D02 | Provider-group preferences only; exact model/account/route and data handling remain unselected. | Owner selects the actual route and terms; qualify access, confidentiality, isolated transport, and usage reporting before private content or billable calls. |
 | D03 | `grasdouble/Jarvis-Test` is selected as the only initial project target; the owner reports its local checkout contains only `README.md`. `grasdouble/Jarvis` is the contributor source repository, not a JARVIS-operated project. | Verify product-App project access and configuration. Verify the target base branch, required CI identities, and provenance before any `dev` task or PR publication. |
 | D04 | Start work only from authenticated owner requests; no unsolicited event intake. | Keep external event ingress disabled. |
