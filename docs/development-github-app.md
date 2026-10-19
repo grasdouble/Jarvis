@@ -1,6 +1,6 @@
 # Development GitHub App and local key storage
 
-This identity develops `grasdouble/Jarvis`; it is separate from the future production App in issue #10. Neither its key nor its tokens belong in OpenCode review sandboxes. App access does not grant authorization for unrelated tasks, merges, or reviews.
+This identity develops `grasdouble/Jarvis`; it is separate from the future production App in issue #10 and the dedicated [package-release CI App](package-release-app-setup.md). Neither its key nor its tokens belong in OpenCode review sandboxes. App access does not grant authorization for unrelated tasks, merges, or reviews.
 
 ## App configuration
 
