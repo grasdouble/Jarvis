@@ -53,6 +53,14 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
                 validate("main", root)
 
+    def test_validation_maps_recursive_workspace_globs_like_pnpm(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(
+                Path(temporary), "'@jarvis/domain': patch", recursive_workspace_glob=True
+            )
+            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+                validate("main", root)
+
     def test_validation_rejects_an_unrelated_changeset_for_deleted_package_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", delete_api_file=True)
@@ -115,24 +123,30 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         delete_base_changeset: bool = False,
         exclude_api_workspace: bool = False,
         add_changeset_config_in_pr: bool = False,
+        recursive_workspace_glob: bool = False,
     ) -> Path:
         (root / ".changeset").mkdir()
-        (root / "packages/api").mkdir(parents=True)
+        api_root = Path("packages/nested/api") if recursive_workspace_glob else Path("packages/api")
+        (root / api_root).mkdir(parents=True)
         (root / "packages/domain").mkdir(parents=True)
         (root / "package.json").write_text(
             json.dumps({"name": "fixture", "version": "1.0.0", "private": True}), encoding="utf-8"
         )
-        (root / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n", encoding="utf-8")
+        workspace_pattern = "packages/**" if recursive_workspace_glob else "packages/*"
+        (root / "pnpm-workspace.yaml").write_text(
+            f"packages:\n  - {workspace_pattern}\n", encoding="utf-8"
+        )
         if not add_changeset_config_in_pr:
             (root / ".changeset/config.json").write_text(
                 json.dumps({"privatePackages": {"version": True}, "ignore": []}), encoding="utf-8"
             )
-        for name in ("api", "domain"):
-            (root / f"packages/{name}/package.json").write_text(
+        for name, package_root in (("api", api_root), ("domain", Path("packages/domain"))):
+            (root / package_root / "package.json").write_text(
                 json.dumps({"name": f"@jarvis/{name}", "version": "1.0.0", "private": True}),
                 encoding="utf-8",
             )
-        (root / "packages/api/index.js").write_text("export const existing = true;\n", encoding="utf-8")
+        api_file = root / api_root / "index.js"
+        api_file.write_text("export const existing = true;\n", encoding="utf-8")
         if delete_base_changeset:
             (root / ".changeset/base.md").write_text(
                 "---\n'@jarvis/api': patch\n---\nBase release entry.\n", encoding="utf-8"
@@ -158,14 +172,14 @@ class ChangesetPackageScopeTests(unittest.TestCase):
                 "packages:\n  - packages/*\n  - '!packages/api'\n", encoding="utf-8"
             )
         if delete_api_workspace:
-            shutil.rmtree(root / "packages/api")
+            shutil.rmtree(root / api_root)
         elif rename_api_file_to_docs:
             (root / "docs").mkdir()
-            (root / "packages/api/index.js").rename(root / "docs/api-index.js")
+            api_file.rename(root / "docs/api-index.js")
         elif delete_api_file:
-            (root / "packages/api/index.js").unlink()
+            api_file.unlink()
         else:
-            (root / "packages/api/index.js").write_text("export const changed = true;\n", encoding="utf-8")
+            api_file.write_text("export const changed = true;\n", encoding="utf-8")
         if changeset_frontmatter is not None:
             (root / ".changeset/unrelated.md").write_text(
                 f"---\n{changeset_frontmatter}\n---\nFixture change.\n", encoding="utf-8"

@@ -25,14 +25,71 @@ class ChangesetsVersionPrTests(unittest.TestCase):
             self.git(root, "commit", "--quiet", "-m", "mix source change into version PR")
             self.assertFalse(is_changesets_version_pr(base, root))
 
+    def test_version_output_with_unrelated_workspace_range_change_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            manifest = root / "packages/other/package.json"
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            package["dependencies"]["@fixture/dep"] = "workspace:^2.0.0"
+            manifest.write_text(json.dumps(package), encoding="utf-8")
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "unrelated workspace range edit")
+            self.assertFalse(is_changesets_version_pr(base, root))
+
+    def test_version_output_with_unrelated_lockfile_change_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            lockfile = root / "pnpm-lock.yaml"
+            lockfile.write_text(
+                lockfile.read_text(encoding="utf-8") + "packages:\n  evil@9.9.9: {}\n",
+                encoding="utf-8",
+            )
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "unrelated lockfile edit")
+            self.assertFalse(is_changesets_version_pr(base, root))
+
+    def test_version_output_with_unrelated_package_version_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            manifest = root / "packages/other/package.json"
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            package["version"] = "2.0.0"
+            manifest.write_text(json.dumps(package), encoding="utf-8")
+            (root / "packages/other/CHANGELOG.md").write_text(
+                "# @fixture/other\n\n## 2.0.0\n\n- Unrelated bump.\n", encoding="utf-8"
+            )
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "unrelated package version")
+            self.assertFalse(is_changesets_version_pr(base, root))
+
+    def test_version_output_with_wrong_target_semver_bump_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            manifest = root / "packages/api/package.json"
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            package["version"] = "9.9.9"
+            manifest.write_text(json.dumps(package), encoding="utf-8")
+            (root / "packages/api/CHANGELOG.md").write_text(
+                "# @fixture/api\n\n## 9.9.9\n\n- Unexpected bump.\n", encoding="utf-8"
+            )
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "wrong package version bump")
+            self.assertFalse(is_changesets_version_pr(base, root))
+
     @classmethod
     def make_version_pr(cls, root: Path) -> tuple[Path, str]:
         (root / ".changeset").mkdir()
         (root / "packages/api").mkdir(parents=True)
+        (root / "packages/other").mkdir()
+        (root / "packages/dep").mkdir()
         (root / "package.json").write_text(
             json.dumps({"name": "fixture", "private": True, "version": "1.0.0"}), encoding="utf-8"
         )
         (root / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n", encoding="utf-8")
+        (root / "pnpm-lock.yaml").write_text(
+            "lockfileVersion: '9.0'\nsettings: {}\nimporters:\n  .: {}\n  packages/api: {}\n  packages/other: {}\n  packages/dep: {}\n",
+            encoding="utf-8",
+        )
         (root / ".changeset/config.json").write_text(
             json.dumps({"privatePackages": {"version": True}, "ignore": []}), encoding="utf-8"
         )
@@ -40,6 +97,21 @@ class ChangesetsVersionPrTests(unittest.TestCase):
             json.dumps({"name": "@fixture/api", "private": True, "version": "1.0.0"}), encoding="utf-8"
         )
         (root / "packages/api/index.js").write_text("export const original = true;\n", encoding="utf-8")
+        (root / "packages/other/package.json").write_text(
+            json.dumps(
+                {
+                    "name": "@fixture/other",
+                    "private": True,
+                    "version": "1.0.0",
+                    "dependencies": {"@fixture/dep": "workspace:^1.0.0"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "packages/dep/package.json").write_text(
+            json.dumps({"name": "@fixture/dep", "private": True, "version": "1.0.0"}),
+            encoding="utf-8",
+        )
         (root / ".changeset/release.md").write_text(
             "---\n'@fixture/api': patch\n---\nRelease fixture.\n", encoding="utf-8"
         )

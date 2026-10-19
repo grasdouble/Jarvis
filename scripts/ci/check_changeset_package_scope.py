@@ -57,11 +57,77 @@ def _matches_workspace_manifest(path: PurePosixPath, patterns: list[str]) -> boo
     for pattern in patterns:
         excluded = pattern.startswith("!")
         glob = pattern[1:] if excluded else pattern
-        if path.match(glob.rstrip("/") + "/package.json"):
-            if excluded:
-                return False
-            included = True
+        manifest_glob = glob.rstrip("/") + "/package.json"
+        if any(_path_matches_glob(path.as_posix(), expanded) for expanded in _expand_braces(manifest_glob)):
+            included = not excluded
     return included
+
+
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand simple comma-separated glob braces, as used by PNPM workspace patterns."""
+    start = pattern.find("{")
+    if start < 0:
+        return [pattern]
+    depth = 0
+    alternatives: list[str] = []
+    alternative_start = start + 1
+    end = -1
+    for index in range(start + 1, len(pattern)):
+        char = pattern[index]
+        if char == "{":
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+        elif char == "}" and not depth:
+            alternatives.append(pattern[alternative_start:index])
+            end = index
+            break
+        elif char == "," and not depth:
+            alternatives.append(pattern[alternative_start:index])
+            alternative_start = index + 1
+    if end < 0 or len(alternatives) < 2:
+        return [pattern]
+    expanded = [pattern[:start] + value + pattern[end + 1 :] for value in alternatives]
+    return [result for item in expanded for result in _expand_braces(item)]
+
+
+def _path_matches_glob(path: str, pattern: str) -> bool:
+    """Match a POSIX path using globstar semantics (`**/` matches zero or more dirs)."""
+    parts = ["^"]
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*" and pattern[index : index + 2] == "**":
+            index += 2
+            if index < len(pattern) and pattern[index] == "/":
+                parts.append("(?:.*/)?")
+                index += 1
+            else:
+                parts.append(".*")
+        elif char == "*":
+            parts.append("[^/]*")
+            index += 1
+        elif char == "?":
+            parts.append("[^/]")
+            index += 1
+        elif char == "[":
+            end = pattern.find("]", index + 1)
+            if end < 0:
+                parts.append(r"\[")
+                index += 1
+                continue
+            content = pattern[index + 1 : end]
+            if content.startswith("!"):
+                content = "^" + content[1:]
+            elif content.startswith("^"):
+                content = "\\" + content
+            parts.append("[" + content.replace("\\", "\\\\") + "]")
+            index = end + 1
+        else:
+            parts.append(re.escape(char))
+            index += 1
+    parts.append("$")
+    return re.match("".join(parts), path) is not None
 
 
 def workspace_packages(root: Path, ref: str = "HEAD") -> dict[PurePosixPath, str]:

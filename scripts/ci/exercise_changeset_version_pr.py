@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from check_changeset_package_scope import changed_paths, workspace_packages
 from check_changeset_pr import is_changesets_version_pr
 
@@ -79,7 +81,7 @@ def exercise() -> None:
         git("init", "--quiet", "--initial-branch=main")
         git("config", "user.name", "Changesets version PR test")
         git("config", "user.email", "changesets-version-pr@example.invalid")
-        git("add", ".gitignore", "package.json", "pnpm-workspace.yaml", ".changeset", "packages")
+        git("add", ".gitignore", "package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", ".changeset", "packages")
         git("commit", "--quiet", "-m", "base with pending Changeset")
         base_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "--create", "version-pr")
@@ -120,7 +122,20 @@ def exercise() -> None:
             raise AssertionError("The fixture did not reproduce the ordinary target-check failure")
         if "Generated Changesets version PR detected" not in gate_result.stdout:
             raise AssertionError("The unified PR gate did not recognize the generated version PR")
-        print("Generated version PR is recognized; raw source status and target gates fail; unified gate passes.")
+        lockfile = root / "pnpm-lock.yaml"
+        lock_documents = list(yaml.safe_load_all(lockfile.read_text(encoding="utf-8")))
+        lock_documents[-1].setdefault("packages", {})["evil@9.9.9"] = {
+            "resolution": {"integrity": "sha512-unrelated-lockfile-entry"}
+        }
+        lockfile.write_text(yaml.safe_dump_all(lock_documents, sort_keys=False), encoding="utf-8")
+        git("add", "pnpm-lock.yaml")
+        git("commit", "--quiet", "-m", "unrelated lockfile entry")
+        if is_changesets_version_pr(base_sha, root):
+            raise AssertionError("The generated-version exception accepted an unrelated lockfile entry")
+        print(
+            "Generated version PR is recognized; raw source gates fail; unified gate passes; "
+            "unrelated lockfile content is rejected."
+        )
 
 
 if __name__ == "__main__":
