@@ -6,10 +6,12 @@ export function planQueue(issues) {
     (typeof issue.milestone !== 'string' || !issue.milestone.trim())).map(x=>x.number).sort((a,b)=>a-b);
   if (missing.length) throw new Error(`Open issues missing milestones: ${missing.map(x=>`#${x}`).join(', ')}. Assign native milestones before refreshing.`);
   const dependencies = new Map();
+  const parents = new Map();
   for (const issue of issues) {
     const ids = [...new Set([...issue.blockers, ...issue.children])];
     for (const id of ids) if (!byId.has(id)) throw new Error(`Missing dependency data for #${issue.number}.`);
     dependencies.set(issue.id, ids);
+    for (const id of issue.children) parents.set(id, issue);
   }
   const milestone = issue => {
     const value = /^J(0\d?|[1-9]\d*)(?:\s|$)/.exec(issue.milestone ?? '')?.[1];
@@ -17,7 +19,10 @@ export function planQueue(issues) {
     return Number.isSafeInteger(phase) ? phase : Infinity;
   };
   const priority = issue => Math.min(99, ...issue.labels.filter(x => /^priority:P[0-2]$/.test(x)).map(x => Number(x.at(-1))));
-  const compare = (a, b) => milestone(a) - milestone(b) || priority(a) - priority(b) || a.createdAt.localeCompare(b.createdAt) || a.number - b.number;
+  const sortContext = issue => parents.get(issue.id) ?? issue;
+  const compare = (a, b) => milestone(sortContext(a)) - milestone(sortContext(b)) ||
+    priority(sortContext(a)) - priority(sortContext(b)) || milestone(a) - milestone(b) ||
+    priority(a) - priority(b) || a.createdAt.localeCompare(b.createdAt) || a.number - b.number;
   const pending = new Map(issues.filter(x => x.state === 'OPEN').map(x => [x.id, x]));
   const visited = new Set(issues.filter(x => x.state !== 'OPEN').map(x => x.id));
   const result = [];
