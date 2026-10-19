@@ -1,0 +1,9 @@
+# Changesets
+
+Use Changesets to record intentional versions for the private packages in `apps/*` and `packages/*`. Each starts at `0.0.0`. The private repository root is orchestration only and is not a versionable package.
+
+For a package behavior/API change, run `pnpm changeset`, select only the affected packages, choose the deliberate SemVer bump, and summarize the user-visible change. Documentation-only, test-only, or contributor-tooling-only changes need no package changeset when they do not change a package's behavior or API. A workspace-manifest or similar package-scoped change with no release impact may use `pnpm changeset add --empty --message "Explain why no package release is needed"` when a status/release check requires an explicit no-release record. Keep that explanation specific; an empty changeset must never hide a behavior/API change, and it is not needed for every repository-only change.
+
+`pnpm changeset status` reports pending release intent. `pnpm changeset version` consumes it and updates package versions, changelogs, and internal workspace ranges; review those changes before committing. Starting at `0.0.0`, a first patch is `0.0.1` and the next patch is `0.0.2`. Choose minor or major deliberately for feature/API and incompatible changes; do not classify every change as a patch. A package version is not the JARVIS product's v0.1 MVP acceptance.
+
+This repository does not publish packages to npm. Private packages are versioned but Changesets private-package tagging is disabled. Do not run `pnpm changeset publish`. Post-merge Git tags in the form `<package-name>@<version>` are reserved for the separate, reviewed release workflow scoped by [issue #35](https://github.com/grasdouble/Jarvis/issues/35); that planned workflow must verify the release commit and handle tag conflicts/idempotently.
