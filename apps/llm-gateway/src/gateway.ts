@@ -119,8 +119,10 @@ export function createBoundedGateway(options: BoundedGatewayOptions): Server {
         return;
       }
       const body = value as Record<string, unknown>;
-      const tokenLimit = body.max_tokens ?? body.max_completion_tokens;
-      if (body.model !== options.model || !Number.isSafeInteger(tokenLimit) ||
+      const hasMaxTokens = Object.hasOwn(body, "max_tokens");
+      const hasMaxCompletionTokens = Object.hasOwn(body, "max_completion_tokens");
+      const tokenLimit = hasMaxTokens ? body.max_tokens : body.max_completion_tokens;
+      if (hasMaxTokens === hasMaxCompletionTokens || body.model !== options.model || !Number.isSafeInteger(tokenLimit) ||
           (tokenLimit as number) < 1 || (tokenLimit as number) > options.maxOutputTokens) {
         sendError(response, 400, "model_or_output_limit_rejected");
         return;

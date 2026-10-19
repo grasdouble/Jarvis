@@ -57,6 +57,9 @@ test("gateway exports a Unix-socket fetch transport for loopback HTTP bridge tes
   assert.equal(upstreamCalls.length, 1);
   assert.equal(upstreamCalls[0].url, "https://provider.invalid/v1/chat/completions");
   assert.equal(upstreamCalls[0].init.headers.authorization, "Bearer synthetic-provider-key");
+  const forwardedBody = JSON.parse(globalThis.Buffer.from(upstreamCalls[0].init.body).toString("utf8"));
+  assert.equal(forwardedBody.max_tokens, 32);
+  assert.equal(Object.hasOwn(forwardedBody, "max_completion_tokens"), false);
 });
 
 test("gateway refuses missing attempt capability, unknown routes and model or output-limit overrides", async () => {
@@ -73,6 +76,7 @@ test("gateway refuses missing attempt capability, unknown routes and model or ou
   assert.equal((await send({ model: "test-model", max_tokens: 65 })).status, 400);
   assert.equal((await send({ model: "test-model", max_completion_tokens: 64 })).status, 200);
   assert.equal((await send({ model: "test-model", max_completion_tokens: 65 })).status, 400);
+  assert.equal((await send({ model: "test-model", max_tokens: 1, max_completion_tokens: 65 })).status, 400);
   assert.equal(upstreamCalls.length, 2);
 });
 
