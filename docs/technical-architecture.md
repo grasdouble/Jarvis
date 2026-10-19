@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.20 • October 19, 2026 • Companion to the PRD and roadmap
+Document version 1.21 • October 19, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -176,7 +176,11 @@ Application ports bind explicitly to `127.0.0.1`. Verify both the guest bindings
 
 Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before affected profiles or publication are re-enabled.
 
-Prefer native `linux/arm64` images, including OpenCode and its tools. The owner-selected D06 baseline is 4 VM CPUs, 8 GiB VM memory if host capacity permits, an 80 GiB VM disk, at least 40 GiB free host disk before provisioning, and a 2-CPU/4-GiB per-sandbox target. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac. The sandbox cap remains a target until it is enforced and measured.
+Prefer native `linux/arm64` images, including OpenCode and its tools. The owner-selected D06 baseline is 4 VM CPUs, 8 GiB VM memory if host capacity permits, an 80 GiB VM disk, at least 40 GiB free host disk before provisioning, and a 2-CPU/4-GiB per-sandbox target. Verify native dependencies, volume socket transport, resource limits, mount denial, and network denial at J01 on the actual Mac.
+
+**JV-007 synthetic qualification evidence (October 19, 2026).** On the dedicated Colima 0.10.3 / Lima 2.2.1 / Docker Engine 29.5.2 ARM64 profile, the sandbox-manager and Docker Engine adapter created two temporary `network_mode: none` attempts from a fixed synthetic image. The running probe observed UID/GID 10001, zero effective/permitted/inheritable/bounding/ambient capabilities, `no_new_privs`, seccomp mode 2, distinct PID/network/mount/IPC/UTS namespaces, a read-only root and snapshot, no accessible Engine socket/secret paths or credential-like environment variables, and effective cgroup limits of 2 CPUs, 4 GiB memory, and 128 PIDs. Twenty-two direct IPv4/IPv6 targets (including discovered Mac/LAN/Docker peers and public addresses) and five DNS/Lima aliases were denied. Cancellation/destruction completed in 5.322 seconds; deadline expiry completed in 13.554 seconds, with the attempt containers and volumes removed. The host canary/share/SSH-agent checks also passed.
+
+This is measured evidence for the synthetic manager profile on that pinned local host, not production readiness: the probe received no repository or real credential, and the Compose mTLS manager, production profile/secret provisioning, image scanning, worker boundary, VM/kernel escape resistance, LAN-device listener checks, and requalification after platform updates remain unverified. Product actions remain disabled until applicable owner and native review gates pass. The qualification procedure and limitations are in [`infra/sandbox-manager/README.md`](../infra/sandbox-manager/README.md).
 
 **Selected J01 bootstrap pins (October 19, 2026).** The contributor-selected baseline is Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 with Ubuntu Noble ARM64 packages and Engine API 1.54, containerd 2.2.4, and Docker Compose 5.6.0. The Compose binary is SHA-256 checked before transfer into the VM. The bootstrap PostgreSQL image is `postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`, selected with `platform: linux/arm64`. The sandbox-manager runtime base is Node.js 24.22.0 Bookworm slim, pinned to the ARM64 manifest digest recorded in its Dockerfile. Exact values and bootstrap instructions are maintained in [`infra/colima/versions.env`](../infra/colima/versions.env). These pins are reproducible inputs, not evidence that the profile is provisioned, images are scanned, or isolation is qualified.
 

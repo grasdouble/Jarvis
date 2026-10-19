@@ -27,3 +27,19 @@ The public contract accepts only `POST /v1/sandboxes` with `Idempotency-Key`, `G
 ## Qualification boundary
 
 The Compose service is opt-in and its certificates/profile file are not provisioned by this change. Do not enable product tasks until the J01 owner/native review gates and live isolation scenarios pass. Unit tests cover recovery from synthetic Engine labels, but do not qualify actual Colima restart recovery, the guest Engine socket, mTLS certificate provisioning, Docker Engine behavior, image scanning, or the worker-to-manager network boundary.
+
+## Dedicated Colima sandbox qualification
+
+After the `jarvis` Colima profile is provisioned and running, run the live, synthetic-only profile check from the repository root:
+
+```bash
+pnpm --filter @jarvis/sandbox-manager build
+node --test infra/sandbox-manager/qualification.test.mjs
+node infra/sandbox-manager/qualify-colima.mjs --profile jarvis
+```
+
+The qualification command rejects every profile except `jarvis`, verifies the pinned ARM64 Colima profile, builds a temporary Node 24 probe image, and exercises the production `createSandboxManager` and Docker Engine adapter against the explicit `colima-jarvis` context. It creates a temporary internal-network witness and manager-owned attempts with a synthetic workspace only. The agent process tests IPv4/IPv6 routes and direct targets, DNS and Lima aliases, UID/GID, capabilities, namespaces, seccomp, read-only root/snapshot mounts, credential/socket absence, and effective CPU/memory/PID cgroups. It then exercises manager cancellation/destruction and deadline expiry, checking that each run's container and volumes are gone. Only run-labeled resources are targeted for cleanup; no global prune or Compose service start is used.
+
+Discovered Mac, LAN-neighbor, Docker-network, and public IP addresses are passed only in the temporary synthetic snapshot and are not printed. No repository snapshot, actual project content, provider/GitHub credential, host bind mount, or Engine socket is exposed to the probe. A failure is a failed qualification, not an isolation pass. If the Engine stops responding, cleanup cannot promise the five-minute limit; reconcile the exact `jv007-` run labels before retrying.
+
+This is live evidence for the fixed sandbox-manager profile and pinned local Colima/Engine only. It does not qualify production profile provisioning, the Compose mTLS service, secrets injection, the worker-to-manager boundary, a VM/kernel escape, platform updates, or a different host. The image is a synthetic fixture, not an approved product agent image. Keep product task actions disabled until the current J01 approval and qualification gates are met.
