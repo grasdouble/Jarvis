@@ -18,7 +18,7 @@ jobs:
   configuration:
     name: Repository configuration
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -36,6 +36,12 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
+      - name: Install the pinned PNPM workspace manager
+        run: npm install --global pnpm@12.5.1
+      - name: Install the frozen workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test the sandbox-manager contracts
+        run: pnpm --filter @jarvis/sandbox-manager test
       - name: Test contributor GitHub tooling without real credentials
         run: node --test .agents/skills/jarvis-project-management/scripts/github/*.test.mjs
 
