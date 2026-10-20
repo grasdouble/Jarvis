@@ -39,6 +39,8 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
+      - name: Test Dependabot Changeset API planning and commit safety
+        run: node --test scripts/ci/dependabot_changeset_api.test.mjs
       - name: Install the pinned PNPM workspace manager
         run: npm install --global pnpm@12.5.1
       - name: Install the frozen workspace dependencies

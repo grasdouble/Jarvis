@@ -1,0 +1,22 @@
+name: Dependabot changesets signal
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-changesets-signal-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Emit an unprivileged completion signal
+        run: echo 'The trusted workflow_run writer will independently validate eligible Dependabot PR facts.'

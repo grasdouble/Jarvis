@@ -1,0 +1,108 @@
+name: Dependabot changesets writer
+
+on:
+  workflow_run:
+    workflows: [Dependabot changesets signal]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-changesets-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      github.repository == 'grasdouble/Jarvis' &&
+      github.ref == 'refs/heads/main' &&
+      vars.DEPENDABOT_CHANGESET_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.plan.outputs.eligible }}
+      should_write: ${{ steps.plan.outputs.should_write }}
+      plan_digest: ${{ steps.plan.outputs.plan_digest }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install the pinned trusted workspace manager
+        run: npm install --global pnpm@12.5.1
+      - name: Validate current Dependabot facts and plan the API write
+        id: plan
+        env:
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/dependabot_changeset_api.mjs plan
+
+  write:
+    needs: validate
+    if: needs.validate.outputs.eligible == 'true' && needs.validate.outputs.should_write == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: dependabot-changesets
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install the pinned trusted workspace manager
+        run: npm install --global pnpm@12.5.1
+      - name: Revalidate the exact PR plan before requesting credentials
+        id: plan
+        env:
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_PLAN_DIGEST: ${{ needs.validate.outputs.plan_digest }}
+        run: node scripts/ci/dependabot_changeset_api.mjs plan
+      - name: Create a repository-scoped App token
+        id: app
+        if: ${{ steps.plan.outputs.should_write == 'true' }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          client-id: ${{ vars.DEPENDABOT_CHANGESET_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDABOT_CHANGESET_APP_PRIVATE_KEY }}
+          owner: grasdouble
+          repositories: Jarvis
+          permission-contents: write
+      - name: Verify the dedicated App identity
+        id: identity
+        if: ${{ steps.plan.outputs.should_write == 'true' }}
+        env:
+          EXPECTED_APP_SLUG: ${{ vars.DEPENDABOT_CHANGESET_APP_SLUG }}
+          EXPECTED_INSTALLATION_ID: ${{ vars.DEPENDABOT_CHANGESET_APP_INSTALLATION_ID }}
+          ACTUAL_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          ACTUAL_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
+        run: |
+          test -n "$EXPECTED_APP_SLUG" || { echo '::error::DEPENDABOT_CHANGESET_APP_SLUG is not provisioned.'; exit 1; }
+          test -n "$EXPECTED_INSTALLATION_ID" || { echo '::error::DEPENDABOT_CHANGESET_APP_INSTALLATION_ID is not provisioned.'; exit 1; }
+          test "$ACTUAL_APP_SLUG" = "$EXPECTED_APP_SLUG" || { echo '::error::The token belongs to an unexpected GitHub App.'; exit 1; }
+          test "$ACTUAL_INSTALLATION_ID" = "$EXPECTED_INSTALLATION_ID" || { echo '::error::The token belongs to an unexpected installation.'; exit 1; }
+      - name: Commit only the generated Changeset through the Git database API
+        if: ${{ steps.identity.outcome == 'success' }}
+        env:
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          EXPECTED_PLAN_DIGEST: ${{ needs.validate.outputs.plan_digest }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRUSTED_WORKSPACES_JSON: ${{ steps.plan.outputs.trusted_workspaces_json }}
+        run: node scripts/ci/dependabot_changeset_api.mjs write
