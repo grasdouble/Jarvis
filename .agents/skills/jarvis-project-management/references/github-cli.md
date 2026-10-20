@@ -140,6 +140,19 @@ gh api --method POST "repos/$task_repo/issues/$task_parent_number/sub_issues" \
 
 The parent lookup returns 404 when no parent exists; distinguish this from inaccessible content. Recheck the child list and parent after linking. Add each child to the project and set its appropriate status separately. Add actual blocking dependencies using the dependency recipes above; parent links do not create them. Do not auto-close the parent from a partial child PR.
 
+After confirming a child PR has merged, or when the user asks for an issue-state check, use the read-only [`check-coordination-parent.mjs`](bundled-scripts.md#command-entry-points) helper to inspect the native parent and all paginated children. A status check reports eligibility only and never closes an issue. It requires all native children to be `CLOSED` / `COMPLETED` and every item in one non-empty parent `Acceptance criteria` section checked; incomplete/ambiguous inputs fail closed. JV-032 (#32) is excluded. If the user separately instructs closure, rerun the check immediately before the authorized write, require `eligible_to_close`, then verify the saved issue state:
+
+```bash
+node .agents/skills/jarvis-project-management/scripts/github/check-coordination-parent.mjs "$task_child_number"
+node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write -- \
+  api --method PATCH "repos/$task_repo/issues/$task_parent_number" \
+  --field state=closed --field state_reason=completed
+node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs -- \
+  api "repos/$task_repo/issues/$task_parent_number"
+```
+
+Do not run the PATCH for a routine status check, an ineligible/ambiguous result, or without explicit user closure authorization. The second read must confirm `state: closed` and `state_reason: completed`; a concurrent child/body edit can race the close, so reconcile the latest state rather than claiming an atomic guarantee. Use the reviewed helper path from a trusted checkout and follow network recovery; never fall back to plain `gh` credentials.
+
 Reference: [sub-issues REST API](https://docs.github.com/en/rest/issues/sub-issues).
 
 ## Project membership and status

@@ -1,6 +1,6 @@
 ---
 name: jarvis-project-management
-description: Maintain JARVIS GitHub issues, milestones, labels, dependencies, and project views when planning, refining, or tracking its development. Use for backlog and delivery-board changes, not implementation or JARVIS runtime operations on other repositories.
+description: Maintain JARVIS GitHub issues, milestones, labels, dependencies, project views, and on-demand coordination-parent acceptance checks. Use for backlog planning and issue-state checks, not implementation or JARVIS runtime operations on other repositories.
 ---
 
 # JARVIS project management
@@ -50,6 +50,12 @@ Native dependencies precede ordering keys; children use their coordination paren
 Use the [contributor workflow](../../../docs/development-workflow.md) when an issue contains independently reviewable deliverables or delivery requests slicing. Reuse existing children before creating new ones. Preserve the parent's scope and acceptance; give each child its own `JV-*` key, bounded outcome, verification, labels, milestone, and project membership. Add native parent/child links and only the genuine blocking dependencies; parenthood is not itself a dependency.
 
 Delivery detects the need for slicing and defines implementation boundaries; project management owns the GitHub records. This handoff does not authorize implementing unselected or unrelated work. Each child implementation uses one branch/worktree/PR. Parent closure requires confirmed required child deliveries and integrated parent acceptance; a closed or abandoned child alone does not prove delivery.
+
+### Check coordination-parent acceptance on demand
+
+After confirming that a child PR has merged and its issue is completed, check its native parent with `node .agents/skills/jarvis-project-management/scripts/github/check-coordination-parent.mjs ISSUE_NUMBER`. Use the same read-only check when the user asks to inspect an issue's state or whether its parent is ready. The command reports `eligible_to_close`, `not_eligible`, `no_parent`, `excluded`, or `unable_to_assess`; inspect the reason and evidence counts, not issue prose echoed into logs. It reads the complete native child list and the parent Acceptance criteria structure. Incomplete/malformed API data or criteria never count as eligible.
+
+This is an on-demand skill action, not a webhook, background job, scheduled reconciliation, or CI check. Checking status is read-only and never closes a parent, including immediately after a child merge. A user request to check status authorizes only the check; close the parent only after a separate explicit user instruction to close it (or explicit authorization to close if eligible). Before that write, rerun the read-only check, require `eligible_to_close`, close the parent as `completed` through the reviewed App, and reread the issue to verify it. Never check or close JV-032 (#32) as part of this capability.
 
 ## Record blocking and unblocking transitions
 
