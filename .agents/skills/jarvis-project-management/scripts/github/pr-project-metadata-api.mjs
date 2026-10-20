@@ -5,6 +5,9 @@ const issue=`number url repository{nameWithOwner} ${milestone}`;
 const details=`id number repository{nameWithOwner} ${milestone}
   labels(first:100){${pageInfo} nodes{name}}
   closingIssuesReferences(first:100){${pageInfo} nodes{${issue}}}`;
+const scopedDetails=`${details}
+  projectItems(first:100){${pageInfo} nodes{id isArchived project{id number}
+    fieldValueByName(name:"Issue"){__typename ... on ProjectV2ItemFieldTextValue{text}}}}`;
 const args='$after:String';
 const project='organization(login:"grasdouble"){projectV2(number:1)';
 const repository='repository(owner:"grasdouble",name:"Jarvis")';
@@ -68,7 +71,7 @@ export function createMetadataApi({api}) {
     }
     let prs;
     if(number!==undefined) {
-      const data=await graphql(`query PullRequest($number:Int!){${repository}{pullRequest(number:$number){${details}}}}`,{number});
+      const data=await graphql(`query PullRequest($number:Int!){${repository}{pullRequest(number:$number){${scopedDetails}}}}`,{number});
       if(!data.repository?.pullRequest)throw new Error('Scoped pull request unavailable.');
       prs=[data.repository.pullRequest];
     } else prs=await collect(async after=>{
@@ -88,7 +91,30 @@ export function createMetadataApi({api}) {
       };
       const labels=await connection('labels',pr.labels,'name');
       const issues=await connection('closingIssuesReferences',pr.closingIssuesReferences,issue);
-      const item=memberships.get(pr.id);
+      let item=memberships.get(pr.id);
+      if(number!==undefined){
+        const relatedItems=await connection('projectItems',pr.projectItems,
+          'id isArchived project{id number} fieldValueByName(name:"Issue"){__typename ... on ProjectV2ItemFieldTextValue{text}}');
+        for(const related of relatedItems){
+          if(typeof related.id!=='string'||!related.id||typeof related.isArchived!=='boolean'||
+            typeof related.project?.id!=='string'||
+            !positive(related.project.number))throw new Error('Invalid scoped project membership.');
+          if(related.project.id===CONFIG.projectId&&related.project.number!==CONFIG.projectNumber)
+            throw new Error('Unexpected scoped project identity.');
+        }
+        const matches=relatedItems.filter(related=>related.project.id===CONFIG.projectId);
+        if(matches.length>1)throw new Error(`Duplicate scoped project membership for PR #${pr.number}.`);
+        const related=matches[0];
+        if(related?.isArchived)throw new Error(`Archived project membership for PR #${pr.number}; synchronization stopped.`);
+        if(item&&related&&(item.id!==related.id||
+          (item.fieldValueByName?.text??null)!==(related.fieldValueByName?.text??null)))
+          throw new Error(`Project membership reads disagree for PR #${pr.number}; synchronization stopped.`);
+        if(related){
+          if(related.fieldValueByName&&related.fieldValueByName.__typename!=='ProjectV2ItemFieldTextValue')
+            throw new Error('Unexpected scoped Issue field value type.');
+          item=related;
+        }
+      }
       normalized.push({id:pr.id,number:pr.number,repository:pr.repository?.nameWithOwner,
         milestone:pr.milestone,labels:labels.map(l=>l.name),
         issues:issues.map(i=>({...i,repository:i.repository?.nameWithOwner})),

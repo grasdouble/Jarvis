@@ -4,14 +4,19 @@ import { createMetadataApi } from './pr-project-metadata-api.mjs';
 import { CONFIG } from './pr-project-metadata.mjs';
 const page=(nodes,next=false,cursor=null)=>({nodes,pageInfo:{hasNextPage:next,endCursor:cursor}});
 const pr=()=>({id:'PR_test',number:92,repository:{nameWithOwner:CONFIG.repository},milestone:null,labels:page([]),closingIssuesReferences:page([{number:91,url:`https://github.com/${CONFIG.repository}/issues/91`,repository:{nameWithOwner:CONFIG.repository},milestone:{id:'M_test',number:1,title:'J00'}}])});
-function harness({repeatedCursor=false,wrongField=false}={}) {
+function harness({repeatedCursor=false,wrongField=false,directItems=page([]),directItemsNext=page([])}={}) {
   const requests=[];
   const api=async request=>{
     requests.push(request);const {query,variables:v}=request.body;
     if(query.includes('query ProjectFields'))return {data:{organization:{projectV2:{id:CONFIG.projectId,fields:page([{id:wrongField?'wrong':CONFIG.fieldId,name:'Issue',dataType:'TEXT'}])}}}};
     if(query.includes('query ProjectItems'))return {data:{organization:{projectV2:{id:CONFIG.projectId,items:v.after===null?page([],true,'cursor1'):page([],repeatedCursor,'cursor1')}}}};
     if(query.includes('query PullRequests'))return {data:{repository:{pullRequests:page([pr()])}}};
-    if(query.includes('query PullRequest'))return {data:{repository:{pullRequest:pr()}}};
+    if(query.includes('query PullRequestConnection'))return {data:{repository:{pullRequest:{projectItems:directItemsNext}}}};
+    if(query.includes('query PullRequest')){
+      const pullRequest=pr();
+      if(query.includes('projectItems('))pullRequest.projectItems=directItems;
+      return {data:{repository:{pullRequest}}};
+    }
     if(query.includes('mutation AddItem'))return {data:{addProjectV2ItemById:{item:{id:'ITEM_test'}}}};
     throw new Error('Unexpected API request');
   };
@@ -27,6 +32,21 @@ test('repeated cursors fail closed rather than loop or silently truncate',async(
 });
 test('unexpected Issue field identity stops before any write',async()=>{
   await assert.rejects(harness({wrongField:true}).load(),/field/i);
+});
+test('scoped PR membership reads its complete direct project relation when the project inventory is stale',async()=>{
+  const item={id:'ITEM_direct',isArchived:false,project:{id:CONFIG.projectId,number:1},
+    fieldValueByName:{__typename:'ProjectV2ItemFieldTextValue',text:`JV-091 · https://github.com/${CONFIG.repository}/issues/91`}};
+  const h=harness({directItems:page([],true,'direct-next'),directItemsNext:page([item])});
+  const snapshot=await h.load(92),loaded=snapshot.pullRequests[0];
+  assert.equal(loaded.projectItemId,'ITEM_direct');
+  assert.equal(loaded.issueText,item.fieldValueByName.text);
+  assert.ok(h.requests.some(request=>request.body.query.includes('query PullRequestConnection')&&
+    request.body.query.includes('projectItems(')));
+});
+test('archived scoped PR membership fails closed instead of being treated as absent',async()=>{
+  const h=harness({directItems:page([{id:'ITEM_archived',isArchived:true,
+    project:{id:CONFIG.projectId,number:1},fieldValueByName:null}])});
+  await assert.rejects(h.load(92),/Archived project membership/);
 });
 test('rate-limit failures are safe to retry while service failures remain ambiguous',async()=>{
   for(const [type,safeToRetry] of [['RATE_LIMITED',true],['SERVICE_UNAVAILABLE',false]]){
@@ -77,7 +97,12 @@ test('adapter and synchronizer converge through only membership, milestone and I
     const {query,variables:v}=request.body;
     if(query.includes('query ProjectFields'))return {data:{organization:{projectV2:{id:CONFIG.projectId,fields:page([{id:CONFIG.fieldId,name:'Issue',dataType:'TEXT'}])}}}};
     if(query.includes('query ProjectItems'))return {data:{organization:{projectV2:{id:CONFIG.projectId,items:page(itemId?[{id:itemId,content:{__typename:'PullRequest',id:'PR_test',number:92,repository:{nameWithOwner:CONFIG.repository}},fieldValueByName:text===null?null:{__typename:'ProjectV2ItemFieldTextValue',text}}]:[])}}}};
-    if(query.includes('query PullRequest')){const p=pr();p.milestone=m;return {data:{repository:query.includes('query PullRequests')?{pullRequests:page([p])}:{pullRequest:p}}};}
+    if(query.includes('query PullRequest')){
+      const p=pr();p.milestone=m;
+      if(query.includes('projectItems('))p.projectItems=page(itemId?[{id:itemId,isArchived:false,project:{id:CONFIG.projectId,number:1},
+        fieldValueByName:text===null?null:{__typename:'ProjectV2ItemFieldTextValue',text}}]:[]);
+      return {data:{repository:query.includes('query PullRequests')?{pullRequests:page([p])}:{pullRequest:p}}};
+    }
     mutations.push(request);
     assert.equal(v.projectId,CONFIG.projectId);
     if(query.includes('mutation AddItem')){itemId='ITEM_test';return {data:{addProjectV2ItemById:{item:{id:itemId}}}};}
