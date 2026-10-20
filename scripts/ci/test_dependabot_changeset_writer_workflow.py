@@ -33,6 +33,15 @@ class DependabotChangesetWriterWorkflowTests(unittest.TestCase):
         self.assertNotIn('APP_PRIVATE_KEY', text)
         self.assertNotIn('pull_request_target', text)
 
+    def test_signal_check_says_it_is_not_merge_readiness(self):
+        job = self.signal['jobs']['signal']
+        self.assertEqual(job['name'], 'Signal only (not merge readiness)')
+        summary = '\n'.join(step['run'] for step in job['steps'])
+        self.assertIn('It does not mean the trusted writer has completed', summary)
+        self.assertIn('Repository configuration', summary)
+        self.assertIn('current PR head', summary)
+        self.assertIn('GITHUB_STEP_SUMMARY', summary)
+
     def test_privileged_workflow_is_main_context_workflow_run_with_read_only_validation(self):
         self.assertEqual(set(self.writer['on']), {'workflow_run'})
         self.assertEqual(self.writer['on']['workflow_run']['workflows'], ['Dependabot changesets signal'])
