@@ -14,9 +14,18 @@ concurrency:
 
 jobs:
   signal:
+    name: Signal only (not merge readiness)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
       - name: Emit an unprivileged completion signal
-        run: echo 'The trusted workflow_run writer will independently validate eligible Dependabot PR facts.'
+        run: |
+          echo 'The trusted workflow_run writer will independently validate eligible Dependabot PR facts.'
+          {
+            echo '## Signal only (not merge readiness)'
+            echo
+            echo 'A green signal check only means this unprivileged workflow completed. It does not mean the trusted writer has completed or that the PR is ready to merge.'
+            echo
+            echo 'The required `Repository configuration` check validates Changeset readiness on the current PR head; it is the merge gate.'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
