@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   assessParentAcceptance,
   createAcceptanceGitHubClient,
+  parseArguments,
   parseAcceptanceChecklist,
   parseAcceptanceCriteria,
   recordParentAcceptance,
@@ -142,9 +143,31 @@ test('the structural check still rejects unmanaged comments but accepts its owne
   const report = assessParentAcceptance({ parent: parent(), childPages: children, assessment: assessment() });
   const recordedBody = updateAcceptanceBody(body, report);
   assert.deepEqual(parseAcceptanceCriteria(recordedBody), { valid: false, total: 3, unchecked: 1, reason: 'criteria_unchecked' });
+  const completeAssessment = assessment();
+  completeAssessment.criteria[2].outcomes[0] = {
+    description: 'The final child delivery is complete.',
+    status: 'validated',
+    kind: 'child',
+    childIssues: [13],
+    evidence: [
+      ...evidence('https://github.com/grasdouble/Jarvis/pull/114', 'Child 13 delivery PR', 'pull_request', 'merged', 13, '7'.repeat(40), '8'.repeat(40)),
+      ...evidence('https://github.com/grasdouble/Jarvis/actions/runs/214', 'Child 13 current head checks passed', 'workflow_run', 'success', 13, '8'.repeat(40)),
+    ],
+  };
   const allValidated = assessParentAcceptance({
-    parent: parent({ sub_issues_summary: { total: 2 } }),
-    childPages: [[child(11), child(12)]],
+    parent: parent(),
+    childPages: [[child(11), child(12), child(13)]],
+    assessment: completeAssessment,
+  });
+  assert.equal(allValidated.criteria.every(item => item.status === 'validated'), true);
+  const fullyChecked = updateAcceptanceBody(body, allValidated);
+  assert.equal(parseAcceptanceCriteria(fullyChecked).valid, true);
+});
+
+test('parent-only evidence cannot validate criteria without accounting for every native child', () => {
+  const directOnly = assessParentAcceptance({
+    parent: parent(),
+    childPages: children,
     assessment: {
       parentIssue: 10,
       criteria: [1, 2, 3].map(index => ({
@@ -160,9 +183,21 @@ test('the structural check still rejects unmanaged comments but accepts its owne
       })),
     },
   });
-  assert.equal(allValidated.criteria.every(item => item.status === 'validated'), true);
-  const fullyChecked = updateAcceptanceBody(body, allValidated);
-  assert.equal(parseAcceptanceCriteria(fullyChecked).valid, true);
+  assert.equal(directOnly.canRecord, false);
+  assert.equal(directOnly.reason, 'child_outcome_coverage_incomplete');
+  assert.deepEqual(directOnly.unassessedChildIssues, [11, 12, 13]);
+  assert.equal(directOnly.criteria.every(item => item.status === 'unable_to_assess'), true);
+  assert.throws(() => updateAcceptanceBody(body, directOnly), /incomplete/);
+});
+
+test('a native child omitted from every parent outcome blocks recording', () => {
+  const input = assessment();
+  input.criteria[2].outcomes[0].childIssues = [11];
+  const result = assessParentAcceptance({ parent: parent(), childPages: children, assessment: input });
+  assert.equal(result.canRecord, false);
+  assert.equal(result.reason, 'child_outcome_coverage_incomplete');
+  assert.deepEqual(result.unassessedChildIssues, [13]);
+  assert.throws(() => updateAcceptanceBody(body, result), /incomplete/);
 });
 
 test('maps individual criteria to complete child and integrated evidence outcomes', () => {
@@ -180,7 +215,7 @@ test('maps individual criteria to complete child and integrated evidence outcome
   assert.match(nextBody, /The required child is still open\./);
 });
 
-test('records evidence safely when Acceptance criteria is the final section and is idempotent', () => {
+test('records an evidence block when Acceptance criteria is final and is idempotent', () => {
   const bareBody = '## Acceptance criteria\n- [ ] Direct behavior is proven.';
   const bareParent = parent({ body: bareBody, sub_issues_summary: { total: 1 } });
   const input = {
@@ -244,6 +279,14 @@ test('an incomplete cross-child outcome is not validated even when one completed
     'workflow_run',
     'success',
   );
+  input.criteria[1].outcomes.push({
+    description: 'The other required child delivery is not yet evidenced.',
+    status: 'not_yet_validated',
+    kind: 'child',
+    childIssues: [12],
+    evidence: [],
+    rationale: 'No delivery evidence is cited for child 12.',
+  });
   const result = assessParentAcceptance({ parent: parent(), childPages: children, assessment: input });
   assert.equal(result.criteria[1].status, 'not_yet_validated');
   assert.equal(result.criteria[1].reason, 'integration_evidence_incomplete');
@@ -349,16 +392,31 @@ test('preview is read-only and an explicit write records only supported boxes wi
   const preview = await recordParentAcceptance(client, assessment());
   assert.equal(preview.recorded, false);
   assert.equal(preview.wouldChange, true);
+  assert.equal(preview.writeSafety.exclusiveBodyEditConfirmed, false);
   assert.equal(preview.criteria[0].outcomes[0].evidence[0].url, 'https://github.com/grasdouble/Jarvis/pull/111');
   assert.deepEqual(client.calls.updateIssueBody, []);
 
-  const recorded = await recordParentAcceptance(client, assessment(), { write: true });
+  const unconfirmed = await recordParentAcceptance(client, assessment(), { write: true });
+  assert.equal(unconfirmed.canRecord, false);
+  assert.equal(unconfirmed.reason, 'exclusive_body_edit_confirmation_required');
+  assert.deepEqual(client.calls.updateIssueBody, []);
+
+  const recorded = await recordParentAcceptance(client, assessment(), {
+    write: true,
+    exclusiveBodyEditConfirmed: true,
+  });
   assert.equal(recorded.recorded, true);
+  assert.equal(recorded.writeSafety.mode, 'exclusive_editor_required');
+  assert.match(recorded.writeSafety.warning, /cannot detect whether a concurrent edit was overwritten/);
+  assert.equal(recorded.writeSafety.exclusiveBodyEditConfirmed, true);
   assert.deepEqual(client.calls.updateIssueBody, [10]);
   assert.deepEqual(parseAcceptanceChecklist((await client.getIssue(10)).body).items.map(item => item.checked), [true, true, false]);
   assert.equal('closeIssue' in client, false);
 
-  const replay = await recordParentAcceptance(client, assessment(), { write: true });
+  const replay = await recordParentAcceptance(client, assessment(), {
+    write: true,
+    exclusiveBodyEditConfirmed: true,
+  });
   assert.equal(replay.recorded, true);
   assert.equal(replay.wouldChange, false);
   assert.deepEqual(client.calls.updateIssueBody, [10]);
@@ -378,11 +436,43 @@ test('a concurrent parent-body edit is detected before the authorized write', as
       calls.updateIssueBody.push(number);
     },
   };
-  const result = await recordParentAcceptance(client, assessment(), { write: true });
+  const result = await recordParentAcceptance(client, assessment(), {
+    write: true,
+    exclusiveBodyEditConfirmed: true,
+  });
   assert.equal(result.canRecord, false);
   assert.equal(result.reason, 'parent_changed_before_write');
   assert.deepEqual(result.criteria, []);
   assert.deepEqual(calls.updateIssueBody, []);
+});
+
+test('a body edit racing after the final read is explicitly reported as an unguarded write', async () => {
+  const calls = { getIssue: 0, updateIssueBody: [] };
+  let current = parent();
+  const client = {
+    async getIssue() {
+      calls.getIssue += 1;
+      return structuredClone(current);
+    },
+    async listSubIssuePages() {
+      return structuredClone(children);
+    },
+    async updateIssueBody(number, nextBody) {
+      calls.updateIssueBody.push(number);
+      current = { ...current, body: `${current.body}\nA racing human edit.` };
+      current = { ...current, body: nextBody };
+    },
+  };
+  const result = await recordParentAcceptance(client, assessment(), {
+    write: true,
+    exclusiveBodyEditConfirmed: true,
+  });
+  assert.equal(result.recorded, true);
+  assert.equal(result.writeSafety.mode, 'exclusive_editor_required');
+  assert.equal(result.writeSafety.atomicConflictDetection, false);
+  assert.equal(result.writeSafety.readbackMeaning, 'submitted_body_is_current');
+  assert.deepEqual(calls.updateIssueBody, [10]);
+  assert.doesNotMatch(current.body, /A racing human edit/);
 });
 
 test('the GitHub adapter uses read mode by default and enables writes only for an explicit writer', () => {
@@ -403,4 +493,24 @@ test('the GitHub adapter uses read mode by default and enables writes only for a
   client.updateIssueBody(10, 'new body');
   assert.deepEqual(calls.map(call => call.write), [false, false, true]);
   assert.equal('closeIssue' in client, false);
+});
+
+test('CLI body writes require the explicit exclusive-editor confirmation flag', () => {
+  assert.deepEqual(parseArguments(['10', 'assessment.json']), {
+    issueNumber: 10,
+    assessmentFile: 'assessment.json',
+    write: false,
+    confirmExclusiveBodyEdit: false,
+  });
+  assert.deepEqual(parseArguments([
+    '10', 'assessment.json', '--write', '--confirm-exclusive-body-edit',
+  ]), {
+    issueNumber: 10,
+    assessmentFile: 'assessment.json',
+    write: true,
+    confirmExclusiveBodyEdit: true,
+  });
+  assert.throws(() => parseArguments([
+    '10', 'assessment.json', '--confirm-exclusive-body-edit',
+  ]), /Usage/);
 });

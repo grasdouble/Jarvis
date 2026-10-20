@@ -11,7 +11,7 @@ const API_HELPER = fileURLToPath(new URL('./gh-app.mjs', import.meta.url));
 const GENERATED_START = '<!-- jarvis-coordination-parent-acceptance:start -->';
 const GENERATED_END = '<!-- jarvis-coordination-parent-acceptance:end -->';
 const STATUSES = new Set(['validated', 'not_yet_validated', 'unable_to_assess']);
-const OUTCOME_KINDS = new Set(['child', 'integration', 'direct']);
+const OUTCOME_KINDS = new Set(['child', 'integration']);
 const EVIDENCE_SOURCE_STATUSES = {
   pull_request: new Set(['merged', 'open', 'closed']),
   workflow_run: new Set(['success', 'failure', 'skipped', 'in_progress']),
@@ -30,6 +30,12 @@ const SUCCESSFUL_EVIDENCE_STATUS = {
   issue_comment: 'available',
   other: 'verified',
 };
+const BODY_WRITE_SAFETY = Object.freeze({
+  mode: 'exclusive_editor_required',
+  atomicConflictDetection: false,
+  readbackMeaning: 'submitted_body_is_current',
+  warning: 'GitHub does not support conditional writes for this issue-body PATCH endpoint. Confirm this is the only active body editor during --write. Exact readback confirms the submitted body is current; it cannot detect whether a concurrent edit was overwritten between the prewrite read and PATCH.',
+});
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isIssueNumber = value => Number.isSafeInteger(value) && value > 0;
@@ -301,7 +307,6 @@ function validateEvidence(value, kind, childIssues) {
       && item.childIssue === undefined) {
       return { valid: false, evidence: [] };
     }
-    if (kind === 'direct' && item.childIssue !== undefined) return { valid: false, evidence: [] };
     evidence.push({
       url: item.url,
       label: item.label.trim(),
@@ -348,9 +353,6 @@ function validateOutcome(outcome, childMap) {
     || new Set(outcome.childIssues).size !== outcome.childIssues.length) return result;
   if (!outcome.childIssues.every(number => childMap.has(number))) {
     return { ...result, reason: 'child_not_native' };
-  }
-  if (outcome.kind === 'direct' && outcome.childIssues.length !== 0) {
-    return { ...result, reason: 'direct_outcome_mapping_invalid' };
   }
   const parsedEvidence = validateEvidence(outcome.evidence, outcome.kind, outcome.childIssues);
   if (!parsedEvidence.valid) return { ...result, reason: 'evidence_malformed' };
@@ -547,6 +549,20 @@ export function assessParentAcceptance({ parent, childPages, assessment }) {
     entries.set(entry.index, entry);
   }
   const criteria = checklist.items.map(item => assessedCriterion(item, entries.get(item.index), inventory.children));
+  const assessedChildIssues = new Set(criteria.flatMap(criterion => criterion.outcomes.flatMap(outcome => outcome.childIssues)));
+  const unassessedChildIssues = [...inventory.children.keys()].filter(number => !assessedChildIssues.has(number));
+  if (unassessedChildIssues.length > 0) {
+    return {
+      decision: 'unable_to_assess',
+      parentIssue: parent.number,
+      childCount: inventory.children.size,
+      sectionLevel: checklist.sectionLevel,
+      canRecord: false,
+      reason: 'child_outcome_coverage_incomplete',
+      unassessedChildIssues,
+      criteria,
+    };
+  }
   return {
     decision: 'assessed',
     parentIssue: parent.number,
@@ -724,13 +740,14 @@ export function createAcceptanceGitHubClient(runGh = runReviewedHelper, { writeE
   return client;
 }
 
-function publicSummary(report, { recorded = false, wouldChange = false } = {}) {
+function publicSummary(report, { recorded = false, wouldChange = false, exclusiveBodyEditConfirmed = false } = {}) {
   return {
     decision: report.decision,
     parentIssue: report.parentIssue,
     childCount: report.childCount,
     canRecord: report.canRecord,
     ...(report.reason ? { reason: report.reason } : {}),
+    ...(report.unassessedChildIssues ? { unassessedChildIssues: report.unassessedChildIssues } : {}),
     criteria: report.criteria.map(criterion => ({
       index: criterion.index,
       status: criterion.status,
@@ -753,11 +770,20 @@ function publicSummary(report, { recorded = false, wouldChange = false } = {}) {
     })),
     recorded,
     wouldChange,
+    ...(wouldChange ? {
+      writeSafety: { ...BODY_WRITE_SAFETY, exclusiveBodyEditConfirmed },
+    } : {}),
   };
 }
 
-/** Preview by default. `write: true` is an explicit caller authorization to update the issue body only. */
-export async function recordParentAcceptance(client, assessment, { write = false } = {}) {
+/** Preview by default; body writes require explicit authorization and an exclusive-editor assertion. */
+export async function recordParentAcceptance(client, assessment, { write = false, exclusiveBodyEditConfirmed = false } = {}) {
+  if (write && exclusiveBodyEditConfirmed !== true) {
+    return publicSummary({
+      decision: 'unable_to_assess', parentIssue: assessment?.parentIssue,
+      canRecord: false, reason: 'exclusive_body_edit_confirmation_required', criteria: [],
+    });
+  }
   if (!isIssueNumber(assessment?.parentIssue)) {
     return publicSummary({
       decision: 'unable_to_assess', parentIssue: undefined, childCount: undefined,
@@ -813,27 +839,33 @@ export async function recordParentAcceptance(client, assessment, { write = false
     error.uncertainWrite = true;
     throw error;
   }
-  return publicSummary(report, { recorded: true, wouldChange: true });
+  return publicSummary(report, {
+    recorded: true,
+    wouldChange: true,
+    exclusiveBodyEditConfirmed,
+  });
 }
 
-function parseArguments(args) {
+export function parseArguments(args) {
   const positional = [];
   let write = false;
+  let confirmExclusiveBodyEdit = false;
   for (const argument of args) {
     if (argument === '--write' && !write) write = true;
+    else if (argument === '--confirm-exclusive-body-edit' && !confirmExclusiveBodyEdit) confirmExclusiveBodyEdit = true;
     else if (argument.startsWith('--') || positional.length >= 2) {
-      throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
+      throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write --confirm-exclusive-body-edit]');
     } else positional.push(argument);
   }
   if (positional.length !== 2 || !/^[1-9]\d*$/.test(positional[0] ?? '')
-    || !Number.isSafeInteger(Number(positional[0]))) {
-    throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
+    || !Number.isSafeInteger(Number(positional[0])) || (confirmExclusiveBodyEdit && !write)) {
+    throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write --confirm-exclusive-body-edit]');
   }
-  return { issueNumber: Number(positional[0]), assessmentFile: positional[1], write };
+  return { issueNumber: Number(positional[0]), assessmentFile: positional[1], write, confirmExclusiveBodyEdit };
 }
 
 export async function main(args = process.argv.slice(2), client = null, output = process.stdout) {
-  const { issueNumber, assessmentFile, write } = parseArguments(args);
+  const { issueNumber, assessmentFile, write, confirmExclusiveBodyEdit } = parseArguments(args);
   let assessment;
   try {
     assessment = JSON.parse(readFileSync(assessmentFile, 'utf8'));
@@ -844,7 +876,10 @@ export async function main(args = process.argv.slice(2), client = null, output =
     throw new Error('Assessment issue does not match the selected issue.');
   }
   const github = client ?? createAcceptanceGitHubClient(runReviewedHelper, { writeEnabled: write });
-  const result = await recordParentAcceptance(github, assessment, { write });
+  const result = await recordParentAcceptance(github, assessment, {
+    write,
+    exclusiveBodyEditConfirmed: confirmExclusiveBodyEdit,
+  });
   output.write(`${JSON.stringify(result)}\n`);
   return result.canRecord ? 0 : 2;
 }

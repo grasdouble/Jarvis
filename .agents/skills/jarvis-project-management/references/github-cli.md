@@ -153,7 +153,7 @@ node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/g
 
 Do not run the PATCH for a routine status check, an ineligible/ambiguous result, or without explicit user closure authorization. The second read must confirm `state: closed` and `state_reason: completed`; a concurrent child/body edit can race the close, so reconcile the latest state rather than claiming an atomic guarantee. Use the reviewed helper path from a trusted checkout and follow network recovery; never fall back to plain `gh` credentials.
 
-For explicit acceptance recording, use the dedicated assessment helper's preview by default and pass `--write` only when the user explicitly authorized recording the parent checklist. The script updates no issue state; an eligible structural result still does not authorize closing.
+For explicit acceptance recording, use the dedicated assessment helper's preview by default and pass `--write --confirm-exclusive-body-edit` only when the user explicitly authorized recording and the caller confirms no other editor is changing the issue body. GitHub does not provide conditional writes for this body-update endpoint: exact readback confirms the new body is current but cannot prove a concurrent body edit was not overwritten between read and PATCH. Do not write without an exclusive edit window; inspect and reconcile the saved body after writing. The script updates no issue state; an eligible structural result still does not authorize closing.
 
 Reference: [sub-issues REST API](https://docs.github.com/en/rest/issues/sub-issues).
 
