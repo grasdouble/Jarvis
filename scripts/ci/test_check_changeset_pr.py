@@ -17,6 +17,16 @@ class ChangesetsVersionPrTests(unittest.TestCase):
             root, base = self.make_version_pr(Path(temporary))
             self.assertTrue(is_changesets_version_pr(base, root))
 
+    def test_version_output_with_consumed_empty_changesets_is_recognized(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary), include_empty=True)
+            self.assertTrue(is_changesets_version_pr(base, root))
+
+    def test_version_output_with_malformed_changeset_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary), include_malformed=True)
+            self.assertFalse(is_changesets_version_pr(base, root))
+
     def test_version_output_with_source_changes_is_not_exempt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, base = self.make_version_pr(Path(temporary))
@@ -92,7 +102,9 @@ class ChangesetsVersionPrTests(unittest.TestCase):
             self.assertFalse(is_changesets_version_pr(base, root))
 
     @classmethod
-    def make_version_pr(cls, root: Path) -> tuple[Path, str]:
+    def make_version_pr(
+        cls, root: Path, include_empty: bool = False, include_malformed: bool = False
+    ) -> tuple[Path, str]:
         (root / ".changeset").mkdir()
         (root / "packages/api").mkdir(parents=True)
         (root / "packages/other").mkdir()
@@ -133,6 +145,15 @@ class ChangesetsVersionPrTests(unittest.TestCase):
         (root / ".changeset/release.md").write_text(
             "---\n'@fixture/api': patch\n---\nRelease fixture.\n", encoding="utf-8"
         )
+        if include_empty:
+            for name in ("empty-one.md", "empty-two.md"):
+                (root / ".changeset" / name).write_text(
+                    "---\n---\nNo package release.\n", encoding="utf-8"
+                )
+        if include_malformed:
+            (root / ".changeset/malformed.md").write_text(
+                "---\n- invalid\n---\nUnsupported Changeset shape.\n", encoding="utf-8"
+            )
         cls.git(root, "init", "--quiet", "--initial-branch=main")
         cls.git(root, "config", "user.name", "Changeset CI test")
         cls.git(root, "config", "user.email", "ci-test@example.invalid")
@@ -145,6 +166,11 @@ class ChangesetsVersionPrTests(unittest.TestCase):
         (root / "packages/api/package.json").write_text(json.dumps(before), encoding="utf-8")
         (root / "packages/api/CHANGELOG.md").write_text("# @fixture/api\n\n## 1.0.1\n\n- Release fixture.\n", encoding="utf-8")
         (root / ".changeset/release.md").unlink()
+        if include_empty:
+            for name in ("empty-one.md", "empty-two.md"):
+                (root / ".changeset" / name).unlink()
+        if include_malformed:
+            (root / ".changeset/malformed.md").unlink()
         cls.git(root, "add", "-A")
         cls.git(root, "commit", "--quiet", "-m", "generated version PR")
         return root, base

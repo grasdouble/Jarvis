@@ -29,14 +29,18 @@ DEPENDENCY_FIELDS = {
 }
 BUMP_ORDER = {"patch": 0, "minor": 1, "major": 2}
 STABLE_VERSION = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+# Changesets accepts empty no-release entries with adjacent frontmatter delimiters.
+EMPTY_CHANGESET = re.compile(r"\A---[ \t]*\r?\n---[ \t]*(?:\r?\n|\Z)")
 
 
 def _changeset_bumps(text: str) -> dict[str, str] | None:
     match = FRONTMATTER.match(text)
     if not match:
-        return None
+        return {} if EMPTY_CHANGESET.match(text) else None
     parsed = yaml.safe_load(match.group(1))
-    if not isinstance(parsed, dict) or not parsed or any(
+    if parsed is None and not match.group(1).strip():
+        return {}
+    if not isinstance(parsed, dict) or any(
         not isinstance(name, str) or not isinstance(bump, str) or bump not in BUMP_ORDER
         for name, bump in parsed.items()
     ):
@@ -187,6 +191,8 @@ def is_changesets_version_pr(base_sha: str, root: Path) -> bool:
         parsed = _changeset_bumps(_git(root, "show", f"{base_sha}:{path.as_posix()}"))
         if parsed is None:
             return False
+        if not parsed:
+            continue
         for name, bump in parsed.items():
             if name not in target_bumps or BUMP_ORDER[bump] > BUMP_ORDER[target_bumps[name]]:
                 target_bumps[name] = bump

@@ -80,6 +80,10 @@ def exercise() -> None:
         (root / ".changeset/release.md").write_text(
             "---\n'@fixture/api': patch\n---\nRelease fixture.\n", encoding="utf-8"
         )
+        for name in ("empty-one.md", "empty-two.md"):
+            (root / ".changeset" / name).write_text(
+                "---\n---\nNo package release.\n", encoding="utf-8"
+            )
         os.symlink(REPO_ROOT / "node_modules", root / "node_modules", target_is_directory=True)
 
         run(["pnpm", "install", "--offline", "--lockfile-only"], root, expect_success=True)
