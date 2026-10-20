@@ -115,6 +115,22 @@ test('ignores checkbox-shaped text inside block quotes and code fences', () => {
   assert.deepEqual(parseAcceptanceCriteria(body), { valid: true, total: 1, unchecked: 0 });
 });
 
+test('does not treat HTML comment markers inside inline code spans as comments', () => {
+  const body = [
+    '## Acceptance criteria',
+    '- [x] literal `<!--` in code',
+    '- [ ] visibly unchecked criterion',
+    '- [x] literal `-->` in code',
+  ].join('\n');
+  assert.deepEqual(parseAcceptanceCriteria(body), {
+    valid: false,
+    total: 3,
+    unchecked: 1,
+    reason: 'criteria_unchecked',
+  });
+  assert.equal(evaluateParent(parent({ body }), [child(11), child(12)]).eligible, false);
+});
+
 test('does not accept hidden HTML comments, indented code, or an unclosed fence as checklist evidence', () => {
   assert.equal(parseAcceptanceCriteria('## Acceptance criteria\n<!--\n- [x] hidden\n-->').valid, false);
   assert.equal(parseAcceptanceCriteria('## Acceptance criteria\n    - [x] code example').valid, false);
@@ -176,6 +192,38 @@ test('a child completion event re-evaluates and closes its native parent', async
   });
   await runIssueEvent({ action: 'closed', issue: { number: 11 } }, client, () => {});
   assert.deepEqual(client.calls.closeIssue, [10]);
+});
+
+test('JV-032 is excluded from body-edit and child-event parent closure', async () => {
+  const legacyParent = {
+    ...parent(),
+    number: 32,
+  };
+  const issues = new Map([
+    [32, legacyParent],
+    [33, child(33)],
+  ]);
+  const client = makeClient({
+    issues,
+    parents: { 33: { number: 32 } },
+    children: { 32: [child(33), child(34)] },
+  });
+  const diagnostics = [];
+
+  await runIssueEvent(
+    { action: 'edited', changes: { body: { from: 'old body' } }, issue: { number: 32 } },
+    client,
+    (entry) => diagnostics.push(entry),
+  );
+  await runIssueEvent(
+    { action: 'closed', issue: { number: 33 } },
+    client,
+    (entry) => diagnostics.push(entry),
+  );
+
+  assert.deepEqual(client.calls.closeIssue, []);
+  assert.ok(diagnostics.some((entry) => entry.reason === 'excluded_issue'));
+  assert.ok(diagnostics.some((entry) => entry.reason === 'excluded_parent'));
 });
 
 test('reopened or uncompleted children keep the parent open', async () => {

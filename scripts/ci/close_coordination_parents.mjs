@@ -8,6 +8,7 @@ const REPOSITORY_PATH = '/repos/grasdouble/Jarvis';
 const MAX_PAGES = 100;
 const STATE_REASONS = new Set([null, 'completed', 'reopened', 'not_planned', 'duplicate']);
 const ACTIONS = new Set(['edited', 'closed', 'reopened']);
+const EXCLUDED_PARENT_ISSUES = new Set([32]);
 
 export class GitHubApiError extends Error {
   constructor(operation, status = null, reason = 'request_failed') {
@@ -176,6 +177,7 @@ function visibleMarkdownLines(body) {
   const visible = [];
   let fence = null;
   let inComment = false;
+  let inlineCodeLength = 0;
 
   for (const line of body.split(/\r?\n/)) {
     if (fence) {
@@ -185,39 +187,77 @@ function visibleMarkdownLines(body) {
       continue;
     }
 
-    let remaining = line;
+    if (!inComment && inlineCodeLength === 0) {
+      const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
+        fence = { character: opening[1][0], length: opening[1].length };
+        visible.push(null);
+        continue;
+      }
+    }
+
+    const startsInsideCode = inlineCodeLength > 0;
+    let cursor = 0;
     let cleaned = '';
-    while (remaining.length > 0) {
+    while (cursor < line.length) {
       if (inComment) {
-        const closingComment = remaining.indexOf('-->');
-        if (closingComment < 0) {
-          remaining = '';
-          break;
-        }
-        remaining = remaining.slice(closingComment + 3);
+        const closingComment = line.indexOf('-->', cursor);
+        if (closingComment < 0) break;
+        cursor = closingComment + 3;
         inComment = false;
         continue;
       }
-      const openingComment = remaining.indexOf('<!--');
-      if (openingComment < 0) {
-        cleaned += remaining;
-        remaining = '';
-        break;
+
+      if (inlineCodeLength > 0) {
+        if (line[cursor] === '`') {
+          let runEnd = cursor + 1;
+          while (line[runEnd] === '`') runEnd += 1;
+          if (runEnd - cursor === inlineCodeLength) {
+            cleaned += line.slice(cursor, runEnd);
+            cursor = runEnd;
+            inlineCodeLength = 0;
+            continue;
+          }
+        }
+        cleaned += line[cursor];
+        cursor += 1;
+        continue;
       }
-      cleaned += remaining.slice(0, openingComment);
-      remaining = remaining.slice(openingComment + 4);
-      inComment = true;
+
+      if (line.startsWith('<!--', cursor)) {
+        cursor += 4;
+        inComment = true;
+        continue;
+      }
+      if (line[cursor] === '`') {
+        let runEnd = cursor + 1;
+        while (line[runEnd] === '`') runEnd += 1;
+        let precedingBackslashes = 0;
+        for (let index = cursor - 1; index >= 0 && line[index] === '\\'; index -= 1) {
+          precedingBackslashes += 1;
+        }
+        if (precedingBackslashes % 2 === 0) {
+          inlineCodeLength = runEnd - cursor;
+          cleaned += line.slice(cursor, runEnd);
+          cursor = runEnd;
+          continue;
+        }
+        cleaned += line.slice(cursor, runEnd);
+        cursor = runEnd;
+        continue;
+      }
+
+      cleaned += line[cursor];
+      cursor += 1;
     }
 
-    const opening = cleaned.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
-      fence = { character: opening[1][0], length: opening[1].length };
+    if (startsInsideCode) {
       visible.push(null);
       continue;
     }
     visible.push(cleaned);
   }
-  return { lines: visible, malformed: fence !== null || inComment };
+  return { lines: visible, malformed: fence !== null || inComment || inlineCodeLength > 0 };
 }
 
 function parseHeading(line) {
@@ -365,6 +405,10 @@ export async function runIssueEvent(event, client, report = () => {}) {
     emit(report, 'skipped', 'irrelevant_event', null);
     return;
   }
+  if (EXCLUDED_PARENT_ISSUES.has(eventIssue.number)) {
+    emit(report, 'skipped', 'excluded_issue', eventIssue.number);
+    return;
+  }
   if (eventIssue.pull_request) {
     emit(report, 'skipped', 'pull_request_event', eventIssue.number);
     return;
@@ -397,6 +441,10 @@ export async function runIssueEvent(event, client, report = () => {}) {
   }
 
   for (const number of candidates) {
+    if (EXCLUDED_PARENT_ISSUES.has(number)) {
+      emit(report, 'skipped', 'excluded_parent', number);
+      continue;
+    }
     const initial = await checkCurrentParent(client, number);
     if (!initial.eligible) {
       emit(report, 'skipped', initial.reason, number, {
