@@ -28,6 +28,15 @@ test('repeated cursors fail closed rather than loop or silently truncate',async(
 test('unexpected Issue field identity stops before any write',async()=>{
   await assert.rejects(harness({wrongField:true}).load(),/field/i);
 });
+test('rate-limit failures are safe to retry while service failures remain ambiguous',async()=>{
+  for(const [type,safeToRetry] of [['RATE_LIMITED',true],['SERVICE_UNAVAILABLE',false]]){
+    const adapter=createMetadataApi({api:async()=>({errors:[{type}]})});
+    await assert.rejects(adapter.load(),error=>{
+      assert.equal(error.retryable,true);assert.equal(error.safeToRetry,safeToRetry);
+      assert.equal(error.ambiguous,!safeToRetry);return true;
+    });
+  }
+});
 test('writes require fresh scope evidence and use only the next proven mutation',async()=>{
   const h=harness();
   await assert.rejects(h.apply({kind:'add',number:92,pullRequestId:'PR_test'}),/proof|snapshot/i);

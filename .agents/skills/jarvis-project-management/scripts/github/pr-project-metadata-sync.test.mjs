@@ -35,6 +35,58 @@ test('preview never invokes effects',async()=>{
   const h=harness();const r=await synchronizeMetadata({...h});
   assert.equal(r.mode,'preview');assert.equal(r.pending,1);assert.equal(h.effects.length,0);
 });
+test('preview identifies each PR and every observed-to-expected destination change',async()=>{
+  const h=harness();const r=await synchronizeMetadata({...h});
+  assert.deepEqual(r.pendingChanges,[{
+    number:92,projectItemId:null,
+    source:{issueNumber:91,issueUrl:'https://github.com/grasdouble/Jarvis/issues/91',milestoneId:'M_test',milestoneNumber:1},
+    changes:{
+      projectMembership:{before:false,after:true},
+      milestone:{before:null,after:1},
+      issue:{before:null,after:'JV-091 · https://github.com/grasdouble/Jarvis/issues/91'},
+    },
+  }]);
+});
+test('an applied ambiguous effect with stale immediate readback is not replayed and final verification can converge',async()=>{
+  const h=harness();let writes=0,staleReads=1;
+  const apply=async effect=>{
+    writes++;await h.apply(effect);
+    if(writes===1)throw Object.assign(new Error('ambiguous timeout'),{retryable:true,ambiguous:true});
+  };
+  const load=async()=>{
+    if(writes===1&&staleReads-->0)return fixture();
+    return h.load();
+  };
+  const result=await synchronizeMetadata({...h,load,apply,write:true,pause:async()=>{}});
+  assert.equal(h.effects.filter(effect=>effect.kind==='add').length,1);
+  assert.equal(result.mode,'synchronized');assert.equal(result.pending,0);
+  assert.equal(result.attemptedWrites,3);assert.deepEqual(result.diagnostics,[]);
+});
+test('a persistent no-progress readback stops after one mutation and reports its exact delta',async()=>{
+  const h=harness();
+  const result=await synchronizeMetadata({...h,write:true,pause:async()=>{},apply:async effect=>{h.effects.push(effect);}});
+  assert.equal(h.effects.length,1);assert.equal(result.mode,'incomplete');assert.equal(result.pending,1);
+  assert.deepEqual(result.pendingChanges[0].changes.projectMembership,{before:false,after:true});
+  assert.deepEqual(result.diagnostics,[{
+    number:92,code:'no_progress',severity:'error',effect:'add',
+    source:{issueNumber:91,issueUrl:'https://github.com/grasdouble/Jarvis/issues/91',milestoneId:'M_test',milestoneNumber:1},
+    observed:{projectMembership:false},expected:{projectMembership:true},
+    outcome:'no_error_response',
+  }]);
+});
+test('a final planner error is not counted as a verified PR',async()=>{
+  const h=harness();const pr=h.state.pullRequests[0];
+  pr.issues=[];pr.projectItemId='ITEM_test';
+  pr.issueText='JV-091 · https://github.com/grasdouble/Jarvis/issues/91';
+  let reads=0;
+  const result=await synchronizeMetadata({...h,write:true,load:async()=>{
+    const snapshot=await h.load();
+    if(reads++>0)snapshot.pullRequests[0].issueText='manual value';
+    return snapshot;
+  }});
+  assert.equal(result.pending,0);assert.equal(result.verifiedPRs,0);
+  assert.ok(result.diagnostics.some(diagnostic=>diagnostic.code==='manual_issue_text'));
+});
 test('lost response after an applied add is reconciled without a duplicate add',async()=>{
   const h=harness();let lost=true;
   const apply=async op=>{await h.apply(op);if(op.kind==='add'&&lost){lost=false;throw Object.assign(new Error('timeout'),{retryable:true});}};
@@ -43,19 +95,21 @@ test('lost response after an applied add is reconciled without a duplicate add',
 });
 test('a transient failure before effect retries only the missing step',async()=>{
   const h=harness();let calls=0;
-  const apply=async op=>{if(calls++===0)throw Object.assign(new Error('timeout'),{retryable:true});await h.apply(op);};
+  const apply=async op=>{if(calls++===0)throw Object.assign(new Error('rate limited'),{retryable:true,safeToRetry:true});await h.apply(op);};
   const r=await synchronizeMetadata({...h,apply,write:true});
   assert.equal(r.pending,0);assert.equal(calls,4);
 });
 test('repeated transient failures stop after three attempts and reread before retry',async()=>{
   const h=harness();let attempts=0,reads=0;
-  await assert.rejects(synchronizeMetadata({...h,write:true,load:async()=>{reads++;return h.load();},apply:async()=>{attempts++;throw Object.assign(new Error('timeout'),{retryable:true});}}),/limit|exhausted/i);
+  const result=await synchronizeMetadata({...h,write:true,pause:async()=>{},load:async()=>{reads++;return h.load();},apply:async()=>{attempts++;throw Object.assign(new Error('rate limited'),{retryable:true,safeToRetry:true});}});
   assert.equal(attempts,3);assert.ok(reads>=4);
+  assert.equal(result.mode,'incomplete');assert.equal(result.diagnostics[0].outcome,'confirmed_not_applied');
 });
 test('permanent failure records a reread but never repeats the mutation',async()=>{
   const h=harness();let attempts=0,reads=0;
-  await assert.rejects(synchronizeMetadata({...h,write:true,load:async()=>{reads++;return h.load();},apply:async()=>{attempts++;throw new Error('denied');}}),/failed|denied/i);
+  const result=await synchronizeMetadata({...h,write:true,load:async()=>{reads++;return h.load();},apply:async()=>{attempts++;throw new Error('denied');}});
   assert.equal(attempts,1);assert.ok(reads>=3);
+  assert.equal(result.mode,'incomplete');assert.equal(result.diagnostics[0].outcome,'permanent_failure');
 });
 test('changed native issue milestone stops before any destination mutation',async()=>{
   const h=harness();let reads=0;

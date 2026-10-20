@@ -11,7 +11,8 @@ test('CI rejects candidate refs, fork contexts, owner-token fallback and unrelat
   for(const override of [{GITHUB_REF:'refs/heads/candidate'},{GITHUB_REPOSITORY:'attacker/Jarvis'},{GITHUB_WORKFLOW_REF:'grasdouble/Jarvis/.github/workflows/other.yml@refs/heads/main'},{GH_TOKEN:''},{GITHUB_EVENT_NAME:'pull_request'}])assert.throws(()=>assertCiContext({...trusted(),...override}));
 });
 test('transport diagnostics discard raw secrets and distinguish transient failures',()=>{
-  const e=requestError({stderr:'HTTP 503 synthetic-secret'});assert.equal(e.retryable,true);assert.ok(!e.message.includes('synthetic-secret'));
+  const e=requestError({stderr:'HTTP 503 synthetic-secret'});assert.equal(e.retryable,true);assert.equal(e.safeToRetry,false);assert.equal(e.ambiguous,true);assert.ok(!e.message.includes('synthetic-secret'));
+  const limited=requestError({stderr:'HTTP 429 synthetic-secret'});assert.equal(limited.retryable,true);assert.equal(limited.safeToRetry,true);assert.equal(limited.ambiguous,false);
   assert.equal(requestError({stderr:'HTTP 403 synthetic-secret'}).retryable,false);
 });
 

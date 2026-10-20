@@ -39,8 +39,10 @@ export function requestError(error) {
   if (network) return network;
   // Inspect error classification internally; never emit raw stderr, headers, tokens or response bodies.
   const diagnostic=String(error.stderr??'');
-  const retryable=error.code==='ETIMEDOUT'||/HTTP (429|502|503|504)|API rate limit exceeded|resource limit/i.test(diagnostic);
-  return Object.assign(new Error('GitHub request failed; inspect permissions or service availability.'),{retryable});
+  const safeToRetry=/HTTP 429|API rate limit exceeded|rate.?limit exceeded|resource limit/i.test(diagnostic);
+  const ambiguous=error.code==='ETIMEDOUT'||/HTTP (502|503|504)/i.test(diagnostic);
+  return Object.assign(new Error('GitHub request failed; inspect permissions or service availability.'),
+    {retryable:safeToRetry||ambiguous,safeToRetry,ambiguous});
 }
 export async function main(args=process.argv.slice(2),env=process.env) {
   const options=parseOptions(args);

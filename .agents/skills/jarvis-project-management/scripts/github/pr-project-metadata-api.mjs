@@ -31,8 +31,12 @@ export function createMetadataApi({api}) {
   const proofs=new Map();
   async function graphql(query,variables={},write=false) {
     const response=await api({method:'POST',path:'graphql',body:{query,variables},write});
-    if(response.errors?.length)throw Object.assign(new Error('GitHub GraphQL request failed.'),
-      {retryable:response.errors.every(e=>['RATE_LIMITED','SERVICE_UNAVAILABLE'].includes(e.type))});
+    if(response.errors?.length){
+      const retryable=response.errors.every(e=>['RATE_LIMITED','SERVICE_UNAVAILABLE'].includes(e.type));
+      const safeToRetry=retryable&&response.errors.every(e=>e.type==='RATE_LIMITED');
+      throw Object.assign(new Error('GitHub GraphQL request failed.'),
+        {retryable,safeToRetry,ambiguous:retryable&&!safeToRetry});
+    }
     if(!response.data)throw new Error('Missing GitHub GraphQL data.');
     return response.data;
   }
