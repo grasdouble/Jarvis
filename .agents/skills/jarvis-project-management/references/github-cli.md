@@ -140,7 +140,7 @@ gh api --method POST "repos/$task_repo/issues/$task_parent_number/sub_issues" \
 
 The parent lookup returns 404 when no parent exists; distinguish this from inaccessible content. Recheck the child list and parent after linking. Add each child to the project and set its appropriate status separately. Add actual blocking dependencies using the dependency recipes above; parent links do not create them. Do not auto-close the parent from a partial child PR.
 
-After confirming a child PR has merged, or when the user asks for an issue-state check, use the read-only [`check-coordination-parent.mjs`](bundled-scripts.md#command-entry-points) helper to inspect the native parent and all paginated children. A status check reports eligibility only and never closes an issue. It requires all native children to be `CLOSED` / `COMPLETED` and every item in one non-empty parent `Acceptance criteria` section checked; incomplete/ambiguous inputs fail closed. JV-032 (#32) is excluded. If the user separately instructs closure, rerun the check immediately before the authorized write, require `eligible_to_close`, then verify the saved issue state:
+After confirming a child PR has merged, or when the user asks for an issue-state check, use the read-only [`check-coordination-parent.mjs`](bundled-scripts.md#command-entry-points) helper to inspect the native parent and all paginated children. Its `eligible_to_close` result is structural only: every child is `CLOSED` / `COMPLETED` and every item in one non-empty parent `Acceptance criteria` section is checked. It does not establish that evidence supports those boxes. On an explicit parent-acceptance validation/recording request, follow the evidence-mapping procedure in [`jarvis-project-management`](../SKILL.md#check-coordination-parent-acceptance-on-demand); a status/readiness-only request remains read-only. JV-032 is not specially excluded. If the user separately instructs closure, rerun the structural check immediately before the authorized close, require `eligible_to_close`, then verify the saved issue state:
 
 ```bash
 node .agents/skills/jarvis-project-management/scripts/github/check-coordination-parent.mjs "$task_child_number"
@@ -152,6 +152,8 @@ node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/g
 ```
 
 Do not run the PATCH for a routine status check, an ineligible/ambiguous result, or without explicit user closure authorization. The second read must confirm `state: closed` and `state_reason: completed`; a concurrent child/body edit can race the close, so reconcile the latest state rather than claiming an atomic guarantee. Use the reviewed helper path from a trusted checkout and follow network recovery; never fall back to plain `gh` credentials.
+
+For explicit acceptance recording, use the dedicated assessment helper's preview by default and pass `--write` only when the user explicitly authorized recording the parent checklist. The script updates no issue state; an eligible structural result still does not authorize closing.
 
 Reference: [sub-issues REST API](https://docs.github.com/en/rest/issues/sub-issues).
 

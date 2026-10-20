@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-/** On-demand, read-only coordination-parent eligibility check. */
+/** On-demand, read-only structural coordination-parent eligibility check. */
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { appNetworkError, NETWORK_EXIT_CODE } from './gh-app.mjs';
+import { parseAcceptanceCriteria } from './coordination-parent-acceptance.mjs';
+
+export { parseAcceptanceCriteria };
 
 const REPOSITORY = 'grasdouble/Jarvis';
 const REPOSITORY_PATH = 'repos/grasdouble/Jarvis';
-const EXCLUDED_ISSUES = new Set([32]);
 const API_HELPER = fileURLToPath(new URL('./gh-app.mjs', import.meta.url));
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -42,93 +44,6 @@ function validIssue(issue, { requireBody = false } = {}) {
     && (!requireBody || typeof issue.body === 'string');
 }
 
-function visibleMarkdownLines(body) {
-  const lines = [];
-  let fence = null;
-  for (const line of body.split(/\r?\n/)) {
-    if (fence) {
-      const closing = new RegExp(`^ {0,3}${fence.character}{${fence.length},}[ \\t]*$`);
-      if (closing.test(line)) fence = null;
-      lines.push(null);
-      continue;
-    }
-    const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
-      fence = { character: opening[1][0], length: opening[1].length };
-      lines.push(null);
-      continue;
-    }
-    lines.push(line);
-  }
-  return { lines, malformed: fence !== null };
-}
-
-function heading(line) {
-  const match = line?.match(/^ {0,3}(#{1,6})(?:[ \t]+|$)(.*?)\s*$/);
-  if (!match) return null;
-  return {
-    level: match[1].length,
-    title: match[2].replace(/[ \t]+#+[ \t]*$/, '').trim(),
-  };
-}
-
-export function parseAcceptanceCriteria(body) {
-  if (typeof body !== 'string') {
-    return { valid: false, total: 0, unchecked: 0, reason: 'criteria_malformed' };
-  }
-  const { lines, malformed: malformedFence } = visibleMarkdownLines(body);
-  if (malformedFence || lines.some(line => line !== null && (line.includes('<!--') || line.includes('-->')))) {
-    return { valid: false, total: 0, unchecked: 0, reason: 'criteria_malformed' };
-  }
-
-  const sections = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const item = heading(lines[index]);
-    if (item?.title.toLowerCase() === 'acceptance criteria') sections.push({ index, level: item.level });
-  }
-  if (sections.length === 0) return { valid: false, total: 0, unchecked: 0, reason: 'criteria_missing' };
-  if (sections.length !== 1) return { valid: false, total: 0, unchecked: 0, reason: 'criteria_ambiguous' };
-
-  const [{ index: start, level }] = sections;
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    const item = heading(lines[index]);
-    if (item && item.level <= level) {
-      end = index;
-      break;
-    }
-  }
-
-  let total = 0;
-  let unchecked = 0;
-  let malformed = false;
-  const task = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\[([^\]]*)\](?:[ \t]+(.*?))?\s*$/;
-  for (const line of lines.slice(start + 1, end)) {
-    if (line === null) continue;
-    if (line.includes('<') || line.includes('>') || /^\s*>.*\[[ xX]?\]/.test(line)) {
-      malformed = true;
-      continue;
-    }
-    const match = line.match(task);
-    if (!match) continue;
-    const indentation = match[1];
-    const marker = match[2];
-    const description = match[3]?.trim() ?? '';
-    if (indentation.includes('\t') || indentation.length >= 4
-      || (marker !== ' ' && marker.toLowerCase() !== 'x') || description === '') {
-      malformed = true;
-      continue;
-    }
-    total += 1;
-    if (marker === ' ') unchecked += 1;
-  }
-
-  if (malformed) return { valid: false, total, unchecked, reason: 'criteria_malformed' };
-  if (total === 0) return { valid: false, total, unchecked, reason: 'criteria_empty' };
-  if (unchecked > 0) return { valid: false, total, unchecked, reason: 'criteria_unchecked' };
-  return { valid: true, total, unchecked: 0 };
-}
-
 function issueSummaryTotal(issue) {
   const summary = issue?.sub_issues_summary ?? issue?.subIssuesSummary;
   return isObject(summary) && Number.isSafeInteger(summary.total) && summary.total >= 0
@@ -147,7 +62,6 @@ export function evaluateCoordinationParent({ issue, parent, childPages }) {
   if (!validIssue(issue) || !validReasonForState(issue)) {
     return { decision: 'unable_to_assess', reason: 'invalid_issue_data' };
   }
-  if (EXCLUDED_ISSUES.has(issue.number)) return { decision: 'excluded', issue: issue.number };
 
   let target = parent;
   if (target === null) {
@@ -159,7 +73,6 @@ export function evaluateCoordinationParent({ issue, parent, childPages }) {
   if (!validIssue(target, { requireBody: true }) || !validReasonForState(target)) {
     return { decision: 'unable_to_assess', issue: issue.number, reason: 'invalid_parent_data' };
   }
-  if (EXCLUDED_ISSUES.has(target.number)) return { decision: 'excluded', issue: issue.number, parent: target.number };
   if (parent !== null && target.number === issue.number) {
     return { decision: 'unable_to_assess', issue: issue.number, reason: 'invalid_parent_relationship' };
   }
@@ -283,7 +196,6 @@ function loadGitHubClient() {
 
 export async function checkIssue(client, number) {
   if (!isIssueNumber(number)) return { decision: 'unable_to_assess', reason: 'invalid_issue_number' };
-  if (EXCLUDED_ISSUES.has(number)) return { decision: 'excluded', issue: number };
   const issue = await client.getIssue(number);
   if (!validIssue(issue) || !validReasonForState(issue)) {
     return { decision: 'unable_to_assess', issue: number, reason: 'invalid_issue_data' };
@@ -295,7 +207,6 @@ export async function checkIssue(client, number) {
     if (!isIssueNumber(parentNumber) || parentNumber === number) {
       return { decision: 'unable_to_assess', issue: number, reason: 'invalid_parent_relationship' };
     }
-    if (EXCLUDED_ISSUES.has(parentNumber)) return { decision: 'excluded', issue: number, parent: parentNumber };
     parent = await client.getIssue(parentNumber);
   } else {
     const childCount = issueSummaryTotal(issue);

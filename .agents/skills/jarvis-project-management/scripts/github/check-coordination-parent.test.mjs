@@ -230,17 +230,27 @@ test('a status check can assess the selected coordination parent itself', async 
   assert.deepEqual(client.calls.listSubIssuePages, [10]);
 });
 
-test('JV-032 and children whose native parent is JV-032 are excluded', async () => {
-  const direct = makeClient();
-  assert.deepEqual(await checkIssue(direct, 32), { decision: 'excluded', issue: 32 });
-  assert.deepEqual(direct.calls, { getIssue: [], getParentNumber: [], listSubIssuePages: [] });
+test('checks JV-032 and its native children using synthetic data without a special exclusion', async () => {
+  const parent = issue(32);
+  const direct = makeClient({
+    issues: new Map([[32, parent]]),
+    pages: { 32: acceptedPages },
+  });
+  assert.equal((await checkIssue(direct, 32)).decision, 'eligible_to_close');
+  assert.deepEqual(direct.calls, {
+    getIssue: [32], getParentNumber: [32], listSubIssuePages: [32],
+  });
 
   const childClient = makeClient({
-    issues: new Map([[33, child(33)]]),
+    issues: new Map([[33, child(33)], [32, parent]]),
     parents: { 33: 32 },
+    pages: { 32: acceptedPages.map(page => page.map(item => item.number === 11 ? child(33) : item)) },
   });
-  assert.deepEqual(await checkIssue(childClient, 33), { decision: 'excluded', issue: 33, parent: 32 });
-  assert.deepEqual(childClient.calls, { getIssue: [33], getParentNumber: [33], listSubIssuePages: [] });
+  const childResult = await checkIssue(childClient, 33);
+  assert.equal(childResult.decision, 'eligible_to_close');
+  assert.deepEqual(childClient.calls, {
+    getIssue: [33, 32], getParentNumber: [33], listSubIssuePages: [32],
+  });
 });
 
 test('malformed or unavailable API data yields no eligible result', async () => {
