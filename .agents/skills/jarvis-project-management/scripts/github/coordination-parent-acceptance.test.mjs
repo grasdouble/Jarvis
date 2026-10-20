@@ -215,6 +215,40 @@ test('maps individual criteria to complete child and integrated evidence outcome
   assert.match(nextBody, /The required child is still open\./);
 });
 
+test('one pull request and its checks cannot be reassigned to another child', () => {
+  const input = assessment();
+  const integration = input.criteria[1].outcomes[0];
+  integration.evidence = [
+    ...evidence('https://github.com/grasdouble/Jarvis/pull/111', 'Reused PR falsely labeled as child 12', 'pull_request', 'merged', 12),
+    ...evidence('https://github.com/grasdouble/Jarvis/actions/runs/211', 'Reused checks falsely labeled as child 12', 'workflow_run', 'success', 12, 'b'.repeat(40)),
+    ...integration.evidence.filter(item => item.childIssue !== 12 && item.childIssue !== undefined),
+    ...integration.evidence.filter(item => item.childIssue === undefined),
+  ];
+  const result = assessParentAcceptance({ parent: parent(), childPages: children, assessment: input });
+  assert.equal(result.canRecord, false);
+  assert.equal(result.reason, 'pull_request_child_mapping_conflict');
+  assert.deepEqual(result.conflictingPullRequestNumbers, [111]);
+  assert.equal(result.criteria[0].status, 'unable_to_assess');
+  assert.equal(result.criteria[0].reason, 'pull_request_child_mapping_conflict');
+  assert.equal(result.criteria[1].status, 'unable_to_assess');
+  assert.equal(result.criteria[1].reason, 'pull_request_child_mapping_conflict');
+  assert.throws(() => updateAcceptanceBody(body, result), /incomplete/);
+});
+
+test('one child PR may support multiple criteria when its child mapping stays consistent', () => {
+  const input = assessment();
+  const integration = input.criteria[1].outcomes[0];
+  integration.evidence = [
+    ...integration.evidence.filter(item => item.childIssue !== 11),
+    ...evidence('https://github.com/grasdouble/Jarvis/pull/111', 'Same child 11 delivery PR', 'pull_request', 'merged', 11),
+    ...evidence('https://github.com/grasdouble/Jarvis/actions/runs/211', 'Same child 11 checks', 'workflow_run', 'success', 11, 'b'.repeat(40)),
+  ];
+  const result = assessParentAcceptance({ parent: parent(), childPages: children, assessment: input });
+  assert.equal(result.canRecord, true);
+  assert.equal(result.criteria[0].status, 'validated');
+  assert.equal(result.criteria[1].status, 'validated');
+});
+
 test('records an evidence block when Acceptance criteria is final and is idempotent', () => {
   const bareBody = '## Acceptance criteria\n- [ ] Direct behavior is proven.';
   const bareParent = parent({ body: bareBody, sub_issues_summary: { total: 1 } });

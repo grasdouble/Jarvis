@@ -426,6 +426,49 @@ function validateOutcome(outcome, childMap) {
   };
 }
 
+function pullRequestNumber(urlValue) {
+  try {
+    const match = new URL(urlValue).pathname.toLowerCase().match(/^\/grasdouble\/jarvis\/pull\/(\d+)(?:\/|$)/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function pullRequestMappingConflicts(criteria) {
+  const childByPullRequest = new Map();
+  const conflicts = new Set();
+  for (const criterion of criteria) {
+    for (const outcome of criterion.outcomes) {
+      for (const source of outcome.evidence) {
+        if (source.sourceType !== 'pull_request' || source.childIssue === undefined) continue;
+        const number = pullRequestNumber(source.url);
+        if (number === null) continue;
+        const existingChild = childByPullRequest.get(number);
+        if (existingChild !== undefined && existingChild !== source.childIssue) conflicts.add(number);
+        else childByPullRequest.set(number, source.childIssue);
+      }
+    }
+  }
+  return conflicts;
+}
+
+function markConflictingPullRequestCriteria(criteria, conflicts) {
+  return criteria.map(criterion => {
+    let affected = false;
+    const outcomes = criterion.outcomes.map(outcome => {
+      const conflict = outcome.evidence.some(source => source.sourceType === 'pull_request'
+        && conflicts.has(pullRequestNumber(source.url)));
+      if (!conflict) return outcome;
+      affected = true;
+      return { ...outcome, status: 'unable_to_assess', reason: 'pull_request_child_mapping_conflict' };
+    });
+    return affected
+      ? { ...criterion, status: 'unable_to_assess', reason: 'pull_request_child_mapping_conflict', outcomes }
+      : criterion;
+  });
+}
+
 function assessedCriterion(item, entry, childMap) {
   if (!entry) {
     return {
@@ -548,7 +591,21 @@ export function assessParentAcceptance({ parent, childPages, assessment }) {
     }
     entries.set(entry.index, entry);
   }
-  const criteria = checklist.items.map(item => assessedCriterion(item, entries.get(item.index), inventory.children));
+  let criteria = checklist.items.map(item => assessedCriterion(item, entries.get(item.index), inventory.children));
+  const conflictingPullRequestNumbers = pullRequestMappingConflicts(criteria);
+  if (conflictingPullRequestNumbers.size > 0) {
+    criteria = markConflictingPullRequestCriteria(criteria, conflictingPullRequestNumbers);
+    return {
+      decision: 'unable_to_assess',
+      parentIssue: parent.number,
+      childCount: inventory.children.size,
+      sectionLevel: checklist.sectionLevel,
+      canRecord: false,
+      reason: 'pull_request_child_mapping_conflict',
+      conflictingPullRequestNumbers: [...conflictingPullRequestNumbers].sort((left, right) => left - right),
+      criteria,
+    };
+  }
   const assessedChildIssues = new Set(criteria.flatMap(criterion => criterion.outcomes.flatMap(outcome => outcome.childIssues)));
   const unassessedChildIssues = [...inventory.children.keys()].filter(number => !assessedChildIssues.has(number));
   if (unassessedChildIssues.length > 0) {
@@ -748,6 +805,7 @@ function publicSummary(report, { recorded = false, wouldChange = false, exclusiv
     canRecord: report.canRecord,
     ...(report.reason ? { reason: report.reason } : {}),
     ...(report.unassessedChildIssues ? { unassessedChildIssues: report.unassessedChildIssues } : {}),
+    ...(report.conflictingPullRequestNumbers ? { conflictingPullRequestNumbers: report.conflictingPullRequestNumbers } : {}),
     criteria: report.criteria.map(criterion => ({
       index: criterion.index,
       status: criterion.status,
