@@ -425,6 +425,7 @@ export async function commitChangeset({ api, repository, headSha, headBranch, pl
   if (!/^[0-9a-f]{40}$/i.test(headSha)) throw new Error('Expected PR head SHA is invalid.');
   const branchPath = encodeRefPath(headBranch);
   const refPath = `repos/${repository}/git/ref/heads/${branchPath}`;
+  const updateRefPath = `repos/${repository}/git/refs/heads/${branchPath}`;
   const currentRef = await api.request('GET', refPath);
   if (currentRef?.object?.type !== 'commit' || currentRef.object.sha !== headSha) {
     throw new Error('Dependabot branch head changed; refusing a stale Changeset write.');
@@ -450,7 +451,7 @@ export async function commitChangeset({ api, repository, headSha, headBranch, pl
     parents: [headSha],
   });
   if (typeof commit?.sha !== 'string') throw new Error('GitHub did not create the Changeset commit.');
-  await api.request('PATCH', refPath, { sha: commit.sha, force: false });
+  await api.request('PATCH', updateRefPath, { sha: commit.sha, force: false });
   return { changed: true, commitSha: commit.sha };
 }
 
