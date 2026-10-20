@@ -230,7 +230,7 @@ test('creates one commit parented to the verified head and updates the branch wi
       if (method === 'POST' && path.endsWith('/git/blobs')) return { sha: 'blob-sha' };
       if (method === 'POST' && path.endsWith('/git/trees')) return { sha: 'new-tree' };
       if (method === 'POST' && path.endsWith('/git/commits')) return { sha: 'commit-sha' };
-      if (method === 'PATCH' && path.includes('/git/ref/')) return { object: { sha: 'commit-sha' } };
+      if (method === 'PATCH' && path.includes('/git/refs/')) return { object: { sha: 'commit-sha' } };
       throw new Error(`Unexpected request ${method} ${path}`);
     },
   };
@@ -261,7 +261,10 @@ test('creates one commit parented to the verified head and updates the branch wi
     type: 'blob',
     sha: 'blob-sha',
   }]);
+  const refRead = requests.find((request) => request.method === 'GET' && request.path.includes('/git/ref/'));
+  assert.equal(refRead.path, `repos/${repo}/git/ref/heads/dependabot/npm_and_yarn/example-2.0.0`);
   const refUpdate = requests.find((request) => request.method === 'PATCH');
+  assert.equal(refUpdate.path, `repos/${repo}/git/refs/heads/dependabot/npm_and_yarn/example-2.0.0`);
   assert.equal(refUpdate.body.force, false);
 });
 
@@ -306,7 +309,7 @@ test('does not retry or force an update when the branch advances between ref rea
       if (method === 'POST' && endpoint.endsWith('/git/blobs')) return { sha: 'blob-sha' };
       if (method === 'POST' && endpoint.endsWith('/git/trees')) return { sha: 'new-tree' };
       if (method === 'POST' && endpoint.endsWith('/git/commits')) return { sha: 'commit-sha' };
-      if (method === 'PATCH' && endpoint.includes('/git/ref/')) {
+      if (method === 'PATCH' && endpoint.includes('/git/refs/')) {
         assert.equal(body.force, false);
         throw new Error('GitHub rejected the non-fast-forward ref update (HTTP 422).');
       }
