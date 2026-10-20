@@ -179,11 +179,13 @@ export function verifyDependabotRun({ run, pullRequest, repository, workflowPath
   const head = pullRequest.head || {};
   const base = pullRequest.base || {};
   if (Number(runPullRequest.number) !== Number(pullRequest.number)) return false;
-  if (run.head_branch !== head.ref || runPullRequest.head?.sha !== head.sha) return false;
+  if (run.head_branch !== head.ref || runPullRequest.head?.sha !== head.sha
+      || runPullRequest.base?.sha !== base.sha) return false;
   if (pullRequest.state !== 'open' || pullRequest.user?.login !== 'dependabot[bot]') return false;
   if (base.repo?.full_name !== repository || head.repo?.full_name !== repository) return false;
   if (base.ref !== 'main' || !isSafeDependabotBranch(head.ref)) return false;
   return typeof head.sha === 'string' && /^[0-9a-f]{40}$/i.test(head.sha)
+    && typeof runPullRequest.base?.sha === 'string' && /^[0-9a-f]{40}$/i.test(runPullRequest.base.sha)
     && typeof base.sha === 'string' && /^[0-9a-f]{40}$/i.test(base.sha);
 }
 

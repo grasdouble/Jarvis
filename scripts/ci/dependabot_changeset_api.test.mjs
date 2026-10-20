@@ -153,7 +153,7 @@ test('accepts only the expected completed Dependabot PR signal and current trust
     head_repository: { full_name: repo },
     head_branch: 'dependabot/npm_and_yarn/example-2.0.0',
     head_sha: 'a'.repeat(40),
-    pull_requests: [{ number: 42, head: { sha: 'a'.repeat(40) } }],
+    pull_requests: [{ number: 42, base: { sha: 'b'.repeat(40) }, head: { sha: 'a'.repeat(40) } }],
   };
   const pr = {
     number: 42,
@@ -168,6 +168,24 @@ test('accepts only the expected completed Dependabot PR signal and current trust
   };
 
   assert.equal(verifyDependabotRun({ run, pullRequest: pr, repository: repo, workflowPath }), true);
+  assert.equal(verifyDependabotRun({
+    run: { ...run, pull_requests: [{ ...run.pull_requests[0], base: { sha: 'c'.repeat(40) } }] },
+    pullRequest: pr,
+    repository: repo,
+    workflowPath,
+  }), false);
+  assert.equal(verifyDependabotRun({
+    run: { ...run, pull_requests: [{ number: 42, head: { sha: 'a'.repeat(40) } }] },
+    pullRequest: pr,
+    repository: repo,
+    workflowPath,
+  }), false);
+  assert.equal(verifyDependabotRun({
+    run: { ...run, pull_requests: [{ ...run.pull_requests[0], base: { sha: 'not-a-sha' } }] },
+    pullRequest: pr,
+    repository: repo,
+    workflowPath,
+  }), false);
   assert.equal(verifyDependabotRun({
     run: { ...run, pull_requests: [{ number: 42, head: { sha: 'b'.repeat(40) } }] },
     pullRequest: pr,
@@ -325,7 +343,7 @@ test('plans only from the successful signal, current PR API facts, changed-path 
     head_repository: { full_name: repo },
     head_branch: 'dependabot/npm_and_yarn/example-2.0.0',
     head_sha: sha,
-    pull_requests: [{ number: 42, head: { sha } }],
+    pull_requests: [{ number: 42, base: { sha: 'd'.repeat(40) }, head: { sha } }],
   };
   const pullRequest = {
     number: 42,
@@ -381,7 +399,7 @@ test('skips a stale workflow_run whose signaled PR head no longer matches the cu
     repository: { full_name: repo },
     head_repository: { full_name: repo },
     head_branch: 'dependabot/npm_and_yarn/example-2.0.0',
-    pull_requests: [{ number: 42, head: { sha: runHead } }],
+    pull_requests: [{ number: 42, base: { sha: '1'.repeat(40) }, head: { sha: runHead } }],
   };
   const pullRequest = {
     number: 42,
