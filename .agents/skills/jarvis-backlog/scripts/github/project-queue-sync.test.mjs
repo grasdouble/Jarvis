@@ -2,6 +2,27 @@ import { appNetworkError } from './gh-app.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { synchronizeQueue, queueRequestError } from './project-queue-sync.mjs';
+import { refreshAfterQueue } from './queue-refresh-finalize.mjs';
+
+test('best-effort main refresh failure cannot turn a successful queue write into failure', async () => {
+  let queueSucceeded = false;
+  const result = await synchronizeQueue({...fixture(), write:true});
+  queueSucceeded = result.mode === 'updated' || result.mode === 'unchanged';
+  const output = await refreshAfterQueue(result, async()=>{throw new Error('synthetic refresh failure');});
+  assert.equal(queueSucceeded, true);
+  assert.match(output, /mainRefresh.*skipped/);
+});
+
+test('main refresh runs after updated or unchanged queue success, but not after queue failure', async () => {
+  for (const mode of ['updated', 'unchanged']) {
+    let calls=0;
+    const result=await refreshAfterQueue({mode},async()=>{calls++;return 'refreshed';});
+    assert.equal(result,'refreshed'); assert.equal(calls,1);
+  }
+  let calls=0;
+  assert.equal(await refreshAfterQueue({mode:'failed'},async()=>{calls++;}),null);
+  assert.equal(calls,0);
+});
 
 function fixture(count = 12) {
   const state = { projectId:'project', fieldId:'rank', issues:[], items:[] };

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { synchronizeQueue, queueRequestError } from './project-queue-sync.mjs';
 import { NETWORK_EXIT_CODE } from './gh-app.mjs';
+import { refreshAfterQueue } from './queue-refresh-finalize.mjs';
 
 const args = process.argv.slice(2);
 if (args.some(x => x !== '--write')) throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/sync-project-queue.mjs [--write]');
@@ -77,7 +78,13 @@ function writeBatch(snapshot,batch) {
   graphql(`mutation{${mutations.join('\n')}}`,true);
 }
 try {
-  console.log(JSON.stringify(await synchronizeQueue({load,writeBatch,write}),null,2));
+  const result = await synchronizeQueue({load,writeBatch,write});
+  console.log(JSON.stringify(result,null,2));
+  if (write && (result.mode === 'updated' || result.mode === 'unchanged')) {
+    const refresh = await refreshAfterQueue(result, () => execFileSync(process.execPath, [helper, '--refresh-main'],
+      {encoding:'utf8', stdio:['ignore','pipe','pipe'], maxBuffer:1024*1024}));
+    process.stdout.write(refresh);
+  }
 } catch (error) {
   console.error(error.message);
   process.exitCode=error.networkFailure?NETWORK_EXIT_CODE:1;
