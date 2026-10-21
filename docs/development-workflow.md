@@ -53,16 +53,22 @@ Documentation-only changes use links, consistency, and diff checks. Pure configu
 
 ## Run repository checks locally
 
-The repository configuration validator and its Python unit checks require the pinned PyYAML dependency. Create an isolated environment with CPython 3.9–3.14, install the hash-verified validation requirements, and run the same checks used by CI:
+The repository configuration validator and its Python unit checks require the pinned PyYAML dependency. Bootstrap an isolated environment with CPython 3.9–3.14 from the existing hash-verified requirements, then run the same checks used by CI:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-ci.txt
+python3 scripts/ci/bootstrap_validation_env.py "$PWD" --python python3.14
 .venv/bin/python scripts/ci/check_repository.py
 .venv/bin/python -m unittest discover -s scripts/ci -p 'test_*.py'
 ```
 
-The requirements file retains the Ubuntu CI wheel hash and includes verified macOS ARM64 and x86_64 wheels for CPython 3.9–3.14. The `.venv/` directory is ignored by Git. Do not install the validator dependency into the system Python.
+The helper reads requirements only from its own trusted checkout and installs with `--require-hashes --only-binary=:all:`. When preparing another checkout, invoke the helper from a reviewed trusted checkout and pass the target checkout path; never run a candidate PR's copy as a trusted setup tool or use its requirements as the trusted source. The `.venv/` is local to each target worktree/reviewer workspace, ignored by Git, and must be prepared separately after a fresh checkout/session. If trusted main does not yet contain the helper, follow the manual hash-verified setup below as a temporary fallback, inspecting `.github/requirements-ci.txt` from trusted base first:
+
+```bash
+python3.14 -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements-ci.txt
+```
+
+The requirements file retains the Ubuntu CI wheel hash and includes verified macOS ARM64 and x86_64 wheels for CPython 3.9–3.14. Do not install the validator dependency into the system Python.
 
 ## Slice issues into reviewable deliveries
 
