@@ -4,7 +4,7 @@ This is a contributor procedure for authorized JARVIS issue delivery and project
 
 ## Responsibilities and status
 
-`jarvis-issue-delivery` detects a blocker, describes retained work and resumption conditions, and verifies the eventual resolution. `jarvis-project-management` maintains the issue comments, real native blocking links, project status, and Next up refresh. One agent may apply both skills without starting another agent or chat. Routine transition records belong to the already authorized issue workflow; read-only review does not authorize posting.
+`jarvis-delivery` detects a blocker, describes retained work and resumption conditions, and verifies the eventual resolution. `jarvis-backlog` maintains the issue comments, real native blocking links, project status, and Next up refresh. One agent may apply both skills without starting another agent or chat. Routine transition records belong to the already authorized issue workflow; read-only review does not authorize posting.
 
 Use Blocked when a selected or active issue cannot progress without a specific prerequisite, decision, access, or external technical resolution. Future work awaiting its planned prerequisites can remain Backlog. Continue independent authorized preparation when possible. Ordinary implementation difficulty or normal CI/reviewer waiting does not by itself require a Blocked transition; use In Progress or In Review as appropriate.
 
@@ -81,4 +81,4 @@ Replace all illustrative fields before posting. The opening timestamp and episod
 - Next status / resumption owner: Ready by default, or verified active/review state.
 ```
 
-Use the [project-management CLI reference](../.agents/skills/jarvis-project-management/references/github-cli.md#blocker-comments-and-transition-recovery) for App-authenticated comment posting, pagination, status changes, and reconciliation. GitHub CLI command support and the [comments REST API](https://docs.github.com/en/rest/issues/comments) were checked on October 16, 2026.
+Use the [project-management CLI reference](../.agents/skills/jarvis-backlog/references/github-cli.md#blocker-comments-and-transition-recovery) for App-authenticated comment posting, pagination, status changes, and reconciliation. GitHub CLI command support and the [comments REST API](https://docs.github.com/en/rest/issues/comments) were checked on October 16, 2026.

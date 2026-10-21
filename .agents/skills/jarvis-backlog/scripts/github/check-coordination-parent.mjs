@@ -253,13 +253,13 @@ export async function checkIssue(client, number) {
 
 function parseIssueNumber(raw) {
   if (!/^[1-9]\d*$/.test(raw ?? '') || !Number.isSafeInteger(Number(raw))) {
-    throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/check-coordination-parent.mjs ISSUE_NUMBER');
+    throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/check-coordination-parent.mjs ISSUE_NUMBER');
   }
   return Number(raw);
 }
 
 export async function main(args = process.argv.slice(2), client = loadGitHubClient()) {
-  if (args.length !== 1) throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/check-coordination-parent.mjs ISSUE_NUMBER');
+  if (args.length !== 1) throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/check-coordination-parent.mjs ISSUE_NUMBER');
   const result = await checkIssue(client, parseIssueNumber(args[0]));
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result.decision === 'unable_to_assess' ? 2 : 0;

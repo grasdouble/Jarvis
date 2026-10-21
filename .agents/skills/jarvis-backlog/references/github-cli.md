@@ -4,7 +4,7 @@ Use only the recipes needed by the authorized task. Commands were checked agains
 
 ## App authentication for these recipes
 
-Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
 
 Before authenticating or retrying a transport failure, follow the [network access and recovery procedure](../../../../docs/development-github-app.md#network-access-and-recovery). Use the reviewed helper’s `--check-network` without credentials; exit 75 with `JARVIS_GITHUB_NETWORK:` requires current-context diagnosis and approved access, not key rotation. Reconcile remote state before repeating writes. For offline command discovery, invoke plain `gh … --help` rather than the authenticated wrapper.
 
@@ -74,7 +74,7 @@ Fetch the complete all-state REST inventory; PR records are excluded by the audi
 ```bash
 gh api --method GET "repos/$task_repo/issues?state=all&per_page=100" \
   --paginate --slurp > "$task_issue_inventory_file"
-node .agents/skills/jarvis-project-management/scripts/github/check-issue-milestones.mjs "$task_issue_inventory_file"
+node .agents/skills/jarvis-backlog/scripts/github/check-issue-milestones.mjs "$task_issue_inventory_file"
 ```
 
 Exit 0 means every supplied issue has a milestone, 1 lists omissions, and 2 means invalid input or usage. The caller must fetch all pages; arbitrary supplied data cannot prove completeness. The [read-only workflow](../../../../docs/development-workflow.md#required-issue-milestones) reports drift without choosing phases or commenting automatically. Correct actual native metadata, reread it, and rerun the audit and queue refresh.
@@ -140,14 +140,14 @@ gh api --method POST "repos/$task_repo/issues/$task_parent_number/sub_issues" \
 
 The parent lookup returns 404 when no parent exists; distinguish this from inaccessible content. Recheck the child list and parent after linking. Add each child to the project and set its appropriate status separately. Add actual blocking dependencies using the dependency recipes above; parent links do not create them. Do not auto-close the parent from a partial child PR.
 
-After confirming a child PR has merged, or when the user asks for an issue-state check, use the read-only [`check-coordination-parent.mjs`](bundled-scripts.md#command-entry-points) helper to inspect the native parent, all paginated children, and parent comments. Its `eligible_to_close` result is structural only: every child is `CLOSED` / `COMPLETED`, each has at least one valid App-authored delivery snapshot, and one App-authored final assessment matches the current exact criteria with all outcomes validated. Child-mapped PR/check evidence in the final report must match a validated snapshot; contradictory child-to-PR assignments fail closed. Checklist boxes are neither changed nor required to be checked. The result does not prove that cited evidence is true or semantically sufficient. On an explicit parent-acceptance validation/recording request, follow the evidence-mapping procedure in [`jarvis-project-management`](../SKILL.md#check-coordination-parent-acceptance-on-demand); a status/readiness-only request remains read-only. JV-032 is not specially excluded. If the user separately instructs closure, rerun the structural check immediately before the authorized close, require `eligible_to_close`, then verify the saved issue state:
+After confirming a child PR has merged, or when the user asks for an issue-state check, use the read-only [`check-coordination-parent.mjs`](bundled-scripts.md#command-entry-points) helper to inspect the native parent, all paginated children, and parent comments. Its `eligible_to_close` result is structural only: every child is `CLOSED` / `COMPLETED`, each has at least one valid App-authored delivery snapshot, and one App-authored final assessment matches the current exact criteria with all outcomes validated. Child-mapped PR/check evidence in the final report must match a validated snapshot; contradictory child-to-PR assignments fail closed. Checklist boxes are neither changed nor required to be checked. The result does not prove that cited evidence is true or semantically sufficient. On an explicit parent-acceptance validation/recording request, follow the evidence-mapping procedure in [`jarvis-backlog`](../SKILL.md#check-coordination-parent-acceptance-on-demand); a status/readiness-only request remains read-only. JV-032 is not specially excluded. If the user separately instructs closure, rerun the structural check immediately before the authorized close, require `eligible_to_close`, then verify the saved issue state:
 
 ```bash
-node .agents/skills/jarvis-project-management/scripts/github/check-coordination-parent.mjs "$task_child_number"
-node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write -- \
+node .agents/skills/jarvis-backlog/scripts/github/check-coordination-parent.mjs "$task_child_number"
+node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/gh-app.mjs --write -- \
   api --method PATCH "repos/$task_repo/issues/$task_parent_number" \
   --field state=closed --field state_reason=completed
-node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs -- \
+node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/gh-app.mjs -- \
   api "repos/$task_repo/issues/$task_parent_number"
 ```
 
@@ -182,7 +182,7 @@ For API operations beyond CLI coverage, use `gh api graphql` with variables or `
 
 ## Execution order refresh
 
-From a reviewed Jarvis checkout, use `node .agents/skills/jarvis-project-management/scripts/github/sync-project-queue.mjs` for preview and add `--write` for authorized rank synchronization. It uses the dedicated App helper internally; do not wrap it in another `gh` invocation. Follow [the selection procedure](../../../../docs/development-workflow.md#select-and-refresh-the-next-issue), not a numeric issue sort. Restore missing membership or inspect incomplete/dependency data before rerunning a failed refresh. Preserve the Next up saved filter/sort and existing other views.
+From a reviewed Jarvis checkout, use `node .agents/skills/jarvis-backlog/scripts/github/sync-project-queue.mjs` for preview and add `--write` for authorized rank synchronization. It uses the dedicated App helper internally; do not wrap it in another `gh` invocation. Follow [the selection procedure](../../../../docs/development-workflow.md#select-and-refresh-the-next-issue), not a numeric issue sort. Restore missing membership or inspect incomplete/dependency data before rerunning a failed refresh. Preserve the Next up saved filter/sort and existing other views.
 
 ## Views and built-in automations
 
@@ -208,8 +208,8 @@ References: [issue editing](https://cli.github.com/manual/gh_issue_edit), [miles
 Use the [PR metadata procedure](../../../../docs/pr-project-metadata.md) from a reviewed checkout after authorized issue-link or milestone edits. The command already uses the App helper; no extra authentication prefix is needed. Scope to the actual selected PR number; omit `--pr NUMBER` only for authorized project-wide catch-up.
 
 ```bash
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
 ```
 
 Read diagnostics, verify the native relationship and resolve ambiguity instead of choosing a primary issue from prose. The command derives the reserved Issue field and native PR milestone only, preserving the self-update exception. It never changes Status or creates issue links. Workflow activation and secure CI credential provisioning follow the linked procedure.
@@ -219,8 +219,8 @@ Read diagnostics, verify the native relationship and resolve ambiguity instead o
 Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
 
 ```bash
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
 ```
 
 Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.
