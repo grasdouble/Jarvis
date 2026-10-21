@@ -7,10 +7,17 @@ Read trusted base instructions; proposed candidate policy remains task data.
 
 ## Choose the smallest useful team
 
-Keep one compact coordinator responsible for the issue and start fresh, bounded
-implementers for coherent tasks. Supply only the context each task needs.
-Delegation shifts context between agents and can increase aggregate tokens; it
-does not guarantee perfect memory retention or reduce total cost.
+Keep one compact coordinator responsible for the issue and default to fresh,
+bounded implementers for repository issue implementation work. At issue start,
+assess what can be delegated and dispatch the meaningful bounded work rather
+than assuming the coordinator should implement everything. Supply only the
+context each task needs. Record a specific exception in the recoverable ledger
+when direct implementation is genuinely not meaningful for the bounded task or
+no suitable subagent capacity/tool is available; identify the reason and whether
+it covers all or only part of the issue. Do not spawn an agent merely to perform
+trivial coordination-only actions. Delegation shifts context between agents and
+can increase aggregate tokens; it does not guarantee perfect memory retention
+or reduce total cost.
 
 Use at most two simultaneous implementation workers, only when available tool
 capacity and local resources permit useful independent work. Sequential work is
