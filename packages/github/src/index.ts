@@ -14,11 +14,11 @@ export interface PublicationIdentity { taskId: string; revision: string; reposit
 export type PublicationResult =
   | { outcome: 'confirmed'; pullRequest: PullRequestState }
   | { outcome: 'rejected'; reason: 'forbidden' | 'invalid' | 'api-error' }
-  | { outcome: 'unknown'; reason: 'not-found' | 'reconciliation-failed' | 'incomplete-search' };
+  | { outcome: 'unknown'; reason: 'not-found' | 'identity-mismatch' | 'reconciliation-failed' | 'incomplete-search' };
 
 export interface GitHubAdapter {
   getPullRequest(repository: string, number: number): Promise<PullRequestState>;
-  reconcilePublication(identity: PublicationIdentity): Promise<{ outcome: 'found'; pullRequest: PullRequestState } | { outcome: 'unknown'; reason: 'not-found' }>;
+  reconcilePublication(identity: PublicationIdentity): Promise<{ outcome: 'found'; pullRequest: PullRequestState } | { outcome: 'unknown'; reason: 'not-found' | 'identity-mismatch' }>;
   publishPullRequest(identity: PublicationIdentity): Promise<PublicationResult>;
 }
 
@@ -54,7 +54,22 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): GitHubAdapte
     return { number: pr.number as number, state: pr.state, headSha: head.sha, baseSha: base.sha, merged: pr.merged };
   }
 
-  async function reconcile(identity: PublicationIdentity): Promise<{ outcome: 'found'; pullRequest: PullRequestState } | { outcome: 'unknown'; reason: 'not-found' }> {
+  function publicationMarker(identity: PublicationIdentity): string {
+    return `JARVIS task ${identity.taskId} at revision ${identity.revision}`;
+  }
+
+  function matchesPublication(raw: unknown, identity: PublicationIdentity): boolean {
+    if (!raw || typeof raw !== 'object') return false;
+    const pr = raw as Record<string, unknown>;
+    const head = pr.head as Record<string, unknown> | undefined;
+    const base = pr.base as Record<string, unknown> | undefined;
+    return pr.title === identity.title && pr.body === publicationMarker(identity) &&
+      head?.ref === identity.head && head.sha === identity.revision &&
+      (head.label === `${identity.repository.split('/')[0]}:${identity.head}` || head.label === identity.head) &&
+      base?.ref === identity.base;
+  }
+
+  async function reconcile(identity: PublicationIdentity): Promise<{ outcome: 'found'; pullRequest: PullRequestState } | { outcome: 'unknown'; reason: 'not-found' | 'identity-mismatch' }> {
     const [owner] = identity.repository.split('/');
     const query = new URLSearchParams({ head: `${owner}:${identity.head}`, base: identity.base, state: 'all', per_page: '100' });
     const response = await call(identity.repository, `/repos/${identity.repository}/pulls?${query}`);
@@ -66,12 +81,16 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): GitHubAdapte
       const pr = item as Record<string, unknown>;
       const head = pr.head as Record<string, unknown> | undefined;
       const base = pr.base as Record<string, unknown> | undefined;
-      return pr.title === identity.title && head?.ref === identity.head && (head.label === `${identity.repository.split('/')[0]}:${identity.head}` || head.label === identity.head) && base?.ref === identity.base;
+      return pr.title === identity.title && head?.ref === identity.head && base?.ref === identity.base;
     });
     if (match) {
       const number = (match as Record<string, unknown>).number;
       if (!Number.isSafeInteger(number)) throw new Error('Matching pull request has invalid number');
-      return { outcome: 'found', pullRequest: await adapter.getPullRequest(identity.repository, number as number) };
+      const detailResponse = await call(identity.repository, `/repos/${identity.repository}/pulls/${number}`);
+      if (!detailResponse.ok) throw new Error(`Reconciliation detail read failed (${detailResponse.status})`);
+      const detail: unknown = await detailResponse.json();
+      if (!matchesPublication(detail, identity)) return { outcome: 'unknown', reason: 'identity-mismatch' };
+      return { outcome: 'found', pullRequest: parsePull(detail) };
     }
     if (response.headers.get('link')?.includes('rel="next"')) throw new Error('Reconciliation search is incomplete');
     return { outcome: 'unknown', reason: 'not-found' };
@@ -84,12 +103,12 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): GitHubAdapte
       if (!response.ok) throw new Error(`GitHub API read failed (${response.status})`);
       return parsePull(await response.json());
     },
-    async reconcilePublication(identity: PublicationIdentity): Promise<{ outcome: 'found'; pullRequest: PullRequestState } | { outcome: 'unknown'; reason: 'not-found' }> { return reconcile(identity); },
+    async reconcilePublication(identity: PublicationIdentity): Promise<{ outcome: 'found'; pullRequest: PullRequestState } | { outcome: 'unknown'; reason: 'not-found' | 'identity-mismatch' }> { return reconcile(identity); },
     async publishPullRequest(identity: PublicationIdentity): Promise<PublicationResult> {
       if (!identity.taskId || !identity.revision || !identity.head || !identity.base || !identity.title || !/^[^/]+\/[^/]+$/.test(identity.repository)) return { outcome: 'rejected', reason: 'invalid' };
       let response: Response;
       try {
-        response = await call(identity.repository, `/repos/${identity.repository}/pulls`, 'POST', { title: identity.title, head: identity.head, base: identity.base, body: `JARVIS task ${identity.taskId} at revision ${identity.revision}` });
+        response = await call(identity.repository, `/repos/${identity.repository}/pulls`, 'POST', { title: identity.title, head: identity.head, base: identity.base, body: publicationMarker(identity) });
       } catch (error) {
         if (error instanceof RepositoryAuthorizationError) throw error;
         return reconcileAfterUncertainty(identity);
@@ -99,9 +118,7 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): GitHubAdapte
       if (!response.ok) return reconcileAfterUncertainty(identity);
       try {
         const raw = await response.json() as Record<string, unknown>;
-        const head = raw.head as Record<string, unknown> | undefined;
-        const base = raw.base as Record<string, unknown> | undefined;
-        if (raw.title !== identity.title || head?.ref !== identity.head || base?.ref !== identity.base) throw new Error('Response does not match publication identity');
+        if (!matchesPublication(raw, identity)) return { outcome: 'unknown', reason: 'identity-mismatch' };
         return { outcome: 'confirmed', pullRequest: parsePull(raw) };
       }
       catch { return reconcileAfterUncertainty(identity); }
