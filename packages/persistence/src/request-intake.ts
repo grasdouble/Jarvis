@@ -27,9 +27,9 @@ async function queueAuthorized(client: SqlClient, value: RequestRecord): Promise
       !value.policyHash || !value.profileHash) throw new Error("AUTHORIZED_REQUEST_BINDING_INCOMPLETE");
   const { rows } = await client.query<{ id: string }>(`
     INSERT INTO jarvis.tasks (request_id, project_id, repository_id, mode, profile_hash, policy_hash, config_version, state, dedupe_key)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $1::text)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
     ON CONFLICT (request_id) DO NOTHING RETURNING id
-  `, [value.id, value.projectId, value.repositoryId, value.mode, value.profileHash, value.policyHash, value.configVersion]);
+  `, [value.id, value.projectId, value.repositoryId, value.mode, value.profileHash, value.policyHash, value.configVersion, value.id]);
   const task = rows[0];
   if (!task) throw new Error("Authorized request task was not created.");
   const eventId = `request:${value.id}`;
@@ -39,9 +39,9 @@ async function queueAuthorized(client: SqlClient, value: RequestRecord): Promise
   `, [task.id, eventId]);
   await client.query(`
     INSERT INTO jarvis.outbox (aggregate_id, event_type, payload, dedupe_key)
-    VALUES ($1, 'queue.task.queued', jsonb_build_object('taskId', $1::text, 'eventId', $2), $3)
+    VALUES ($1, 'queue.task.queued', jsonb_build_object('taskId', $4::text, 'eventId', $2::text), $3)
     ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
-  `, [task.id, eventId, `queue:${task.id}:queued:0`]);
+  `, [task.id, eventId, `queue:${task.id}:queued:0`, task.id]);
 }
 
 export class PostgresRequestIntakeStore implements RequestIntakeStore {

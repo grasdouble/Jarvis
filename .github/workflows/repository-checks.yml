@@ -19,6 +19,25 @@ jobs:
     name: Repository configuration
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      POSTGRES_USER: jarvis_ci
+      POSTGRES_PASSWORD: jarvis_ci_fake_password
+      POSTGRES_DB: jarvis_issue8_ci
+      JARVIS_TEST_DATABASE_URL: postgres://jarvis_ci:jarvis_ci_fake_password@localhost:5432/jarvis_issue8_ci
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+        env:
+          POSTGRES_USER: jarvis_ci
+          POSTGRES_PASSWORD: jarvis_ci_fake_password
+          POSTGRES_DB: jarvis_issue8_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jarvis_ci -d jarvis_issue8_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -55,6 +74,8 @@ jobs:
         run: python3 scripts/ci/check_changeset_pr.py "$BASE_SHA"
       - name: Test the sandbox-manager contracts
         run: pnpm --filter @jarvis/sandbox-manager test
+      - name: Test PostgreSQL persistence against the ephemeral database
+        run: pnpm --filter @jarvis/persistence test
       - name: Test contributor GitHub tooling without real credentials
         run: node --test .agents/skills/jarvis-backlog/scripts/github/*.test.mjs
 
