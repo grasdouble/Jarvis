@@ -12,6 +12,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
 }, async () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 3 });
   let client;
+  let fixtureCommitted = false;
   try {
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
     assert.match(database.name, /^jarvis_issue8_/);
@@ -71,13 +72,12 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       "00000000-0000-4000-8000-000000000006", "00000000-0000-4000-8000-000000000005",
       "00000000-0000-4000-8000-000000000003",
     ]);
+    await client.query("COMMIT");
+    client.release();
+    client = undefined;
+    fixtureCommitted = true;
 
-    const transactionPool = {
-      async connect() {
-        return { query: (text, values) => client.query(text, values), release() {} };
-      },
-    };
-    const transactionPersistence = new PostgresPersistence(transactionPool);
+    const transactionPersistence = new PostgresPersistence(pool);
     const input = {
       taskId: "00000000-0000-4000-8000-000000000005",
       attemptId: "00000000-0000-4000-8000-000000000006",
@@ -104,6 +104,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       CheckpointRejectedError,
     );
 
+    client = await pool.connect();
+    await client.query("BEGIN");
     await assert.rejects(
       client.query("UPDATE jarvis.task_checkpoints SET step = 'mutated' WHERE id = $1", [saved.id]),
       /immutable record/,
@@ -113,6 +115,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await client.query("ROLLBACK").catch(() => undefined);
       client.release();
     }
+    if (fixtureCommitted) await pool.query("TRUNCATE jarvis.installations CASCADE");
     await pool.end();
   }
 });
