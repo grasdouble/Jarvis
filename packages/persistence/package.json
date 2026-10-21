@@ -3,5 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" }
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm run build && node --test src/*.test.mjs test/*.integration.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "pg": "8.16.3"
+  }
 }
