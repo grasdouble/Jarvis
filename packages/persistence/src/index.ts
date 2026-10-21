@@ -285,7 +285,7 @@ export class PostgresPersistence {
                       WHERE revoked.project_id = approval.project_id
                         AND revoked.skill_id = approval.skill_id
                         AND revoked.revision_digest = approval.revision_digest
-                        AND (revoked.decided_at, revoked.id) > (approval.decided_at, approval.id)
+                        AND revoked.decision_order > approval.decision_order
                     )
                 )
               )
@@ -365,7 +365,7 @@ export class PostgresPersistence {
                   WHERE newer.project_id = approval.project_id
                     AND newer.skill_id = approval.skill_id
                     AND newer.revision_digest = approval.revision_digest
-                    AND (newer.decided_at, newer.id) > (approval.decided_at, approval.id)
+                    AND newer.decision_order > approval.decision_order
                 )
             )
           )

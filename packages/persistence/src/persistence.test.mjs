@@ -50,6 +50,7 @@ test("checkpoint writes require the current lease and current project and skill 
 
 test("migrations enforce repository-scoped identity and hide secrets from task state", async () => {
   const migration = await readFile(new URL("../migrations/001_initial.sql", import.meta.url), "utf8");
+  const approvalOrderingMigration = await readFile(new URL("../migrations/002_skill_approval_order.sql", import.meta.url), "utf8");
   assert.match(migration, /CREATE TABLE projects/i);
   assert.match(migration, /UNIQUE\s*\(id, repository_id\)/i);
   assert.match(migration, /FOREIGN KEY\s*\([^)]*repository_id[^)]*\)\s*REFERENCES/i);
@@ -58,6 +59,8 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   assert.match(migration, /CREATE TABLE task_checkpoints/i);
   assert.match(migration, /CREATE TABLE project_skill_approvals/i);
   assert.match(migration, /project_skill_approvals_serialize/i);
+  assert.match(approvalOrderingMigration, /skill_approval_order\s*=\s*skill_approval_order\s*\+\s*1/i);
+  assert.match(approvalOrderingMigration, /decision_order_unique/i);
 });
 
 test("migration runner serializes concurrent callers and records applied versions", async () => {
@@ -99,7 +102,7 @@ test("expired consent is rechecked when loading a checkpoint for recovery", asyn
   assert.match(sql, /p\.state = 'active'/);
   assert.match(sql, /c\.state_json ->> 'policyHash' = t\.policy_hash/);
   assert.match(sql, /jsonb_to_recordset\(c\.skill_requirements\)/);
-  assert.match(sql, /newer\.decided_at/i);
+  assert.match(sql, /newer\.decision_order/i);
 });
 
 test("untrusted or oversized checkpoint content is rejected before database access", async () => {
@@ -183,5 +186,5 @@ test("stale leases and revoked skills cannot save a checkpoint", async () => {
   assert.match(sql, /a\.lease_until > now\(\)/);
   assert.match(sql, /p\.state = 'active'/);
   assert.match(sql, /approval\.skill_id = required\.skill_id/);
-  assert.match(sql, /revoked\.decided_at, revoked\.id/);
+  assert.match(sql, /revoked\.decision_order > approval\.decision_order/);
 });

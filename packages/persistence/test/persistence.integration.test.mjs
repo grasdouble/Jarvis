@@ -12,6 +12,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
 }, async () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 3 });
   let client;
+  let lockClient;
   let fixtureCommitted = false;
   try {
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
@@ -21,7 +22,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order"]);
+    lockClient = await pool.connect();
+    await lockClient.query("SELECT pg_advisory_lock($1)", [0x4a385445]);
     await pool.query(`
       DO $$
       DECLARE table_name text; row_count bigint;
@@ -60,7 +63,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await client.query(`
       INSERT INTO jarvis.project_skills (project_id, repository_id, skill_id, revision_digest)
       VALUES ($1, 3001, 'plan', $2)`, ["00000000-0000-4000-8000-000000000003", "d".repeat(64)]);
-    await pool.query(`
+    await client.query(`
       INSERT INTO jarvis.project_skill_approvals
         (project_id, repository_id, skill_id, revision_digest, decision, actor_id, config_version)
       VALUES ($1, 3001, 'plan', $2, 'approved', 'owner-a', 1)`, [
@@ -107,10 +110,10 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     assert.equal(saved.stateDigest.length, 64);
     assert.equal((await transactionPersistence.loadLatestCheckpoint({ taskId: input.taskId, projectId: input.projectId })).id, saved.id);
 
-    await client.query(`
+    await pool.query(`
       INSERT INTO jarvis.project_skill_approvals
         (project_id, repository_id, skill_id, revision_digest, decision, actor_id, config_version, decided_at)
-      VALUES ($1, 3001, 'plan', $2, 'revoked', 'owner-a', 1, now() + interval '1 second')`, [
+      VALUES ($1, 3001, 'plan', $2, 'revoked', 'owner-a', 1, '2000-01-01T00:00:00Z')`, [
       input.projectId, "d".repeat(64),
     ]);
     assert.equal(await transactionPersistence.loadLatestCheckpoint({ taskId: input.taskId, projectId: input.projectId }), null);
@@ -119,6 +122,23 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       CheckpointRejectedError,
     );
 
+    await pool.query(`
+      INSERT INTO jarvis.project_skill_approvals
+        (project_id, repository_id, skill_id, revision_digest, decision, actor_id, config_version, decided_at)
+      VALUES ($1, 3001, 'plan', $2, 'approved', 'owner-a', 1, '2000-01-01T00:00:00Z')`, [
+      input.projectId, "d".repeat(64),
+    ]);
+    assert.equal((await transactionPersistence.loadLatestCheckpoint({ taskId: input.taskId, projectId: input.projectId })).id, saved.id,
+      "a later approval with an equal timestamp must supersede the revocation");
+    await pool.query(`
+      INSERT INTO jarvis.project_skill_approvals
+        (project_id, repository_id, skill_id, revision_digest, decision, actor_id, config_version, decided_at)
+      VALUES ($1, 3001, 'plan', $2, 'revoked', 'owner-a', 1, '2000-01-01T00:00:00Z')`, [
+      input.projectId, "d".repeat(64),
+    ]);
+    assert.equal(await transactionPersistence.loadLatestCheckpoint({ taskId: input.taskId, projectId: input.projectId }), null,
+      "a later revocation with an equal timestamp must supersede the approval");
+
     client = await pool.connect();
     await client.query("BEGIN");
     await assert.rejects(
@@ -126,11 +146,67 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       /immutable record/,
     );
   } finally {
-    if (client) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      client.release();
+    try {
+      if (client) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        client.release();
+      }
+      if (fixtureCommitted) {
+        client = await pool.connect();
+        let cleanupCommitted = false;
+        try {
+          await client.query("BEGIN");
+          await client.query(`
+            DO $$
+            DECLARE table_name text; row_count bigint; expected_count bigint;
+            BEGIN
+              FOR table_name IN
+                SELECT tablename FROM pg_tables
+                WHERE schemaname = 'jarvis' AND tablename <> 'schema_migrations'
+                ORDER BY tablename
+              LOOP
+                EXECUTE format('LOCK TABLE jarvis.%I IN ACCESS EXCLUSIVE MODE', table_name);
+              END LOOP;
+              FOR table_name IN
+                SELECT tablename FROM pg_tables
+                WHERE schemaname = 'jarvis' AND tablename <> 'schema_migrations'
+              LOOP
+                EXECUTE format('SELECT count(*) FROM jarvis.%I', table_name) INTO row_count;
+                expected_count := CASE table_name
+                  WHEN 'installations' THEN 1
+                  WHEN 'policies' THEN 1
+                  WHEN 'projects' THEN 1
+                  WHEN 'project_config_versions' THEN 1
+                  WHEN 'project_skills' THEN 1
+                  WHEN 'project_skill_approvals' THEN 4
+                  WHEN 'requests' THEN 1
+                  WHEN 'tasks' THEN 1
+                  WHEN 'task_attempts' THEN 1
+                  WHEN 'task_checkpoints' THEN 1
+                  ELSE 0
+                END;
+                IF row_count <> expected_count THEN
+                  RAISE EXCEPTION 'refusing fixture cleanup: jarvis.% contains % rows; expected %',
+                    table_name, row_count, expected_count;
+                END IF;
+              END LOOP;
+            END $$
+          `);
+          await client.query("TRUNCATE jarvis.installations, jarvis.policies CASCADE");
+          await client.query("COMMIT");
+          cleanupCommitted = true;
+        } finally {
+          if (!cleanupCommitted) await client.query("ROLLBACK").catch(() => undefined);
+          client.release();
+          client = undefined;
+        }
+      }
+    } finally {
+      if (lockClient) {
+        await lockClient.query("SELECT pg_advisory_unlock($1)", [0x4a385445]).catch(() => undefined);
+        lockClient.release();
+      }
+      await pool.end();
     }
-    if (fixtureCommitted) await pool.query("TRUNCATE jarvis.policies, jarvis.installations CASCADE");
-    await pool.end();
   }
 });
