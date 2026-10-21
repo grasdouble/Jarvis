@@ -794,6 +794,34 @@ function inspectCommentPlan(report, parent, childPages, comments) {
     }
   }
 
+  const childByPullRequest = new Map();
+  const conflictingPullRequestNumbers = new Set();
+  const registerPullRequests = (childIssue, sources) => {
+    for (const source of sources) {
+      if (source.sourceType !== 'pull_request') continue;
+      const number = pullRequestNumber(source.url);
+      if (number === null) continue;
+      const priorChild = childByPullRequest.get(number);
+      if (priorChild !== undefined && priorChild !== childIssue) conflictingPullRequestNumbers.add(number);
+      else childByPullRequest.set(number, childIssue);
+    }
+  };
+  for (const [childIssue, records] of recordsByChild) {
+    for (const record of records) registerPullRequests(childIssue, record.payload.evidence);
+  }
+  for (const [childIssue, delivery] of payloads) {
+    registerPullRequests(childIssue, delivery.payload.evidence);
+  }
+  if (conflictingPullRequestNumbers.size > 0) {
+    return {
+      valid: false,
+      reason: 'pull_request_child_mapping_conflict',
+      conflictingPullRequestNumbers: [...conflictingPullRequestNumbers].sort((left, right) => left - right),
+      childDelivery,
+      children,
+    };
+  }
+
   const deliveryEvidenceKey = source => [source.sourceType, source.url, source.status,
     source.revision ?? '', source.reviewedRevision ?? '', source.childIssue ?? ''].join('|');
   for (const criterion of report.criteria) {
@@ -879,6 +907,10 @@ function inspectCommentPlan(report, parent, childPages, comments) {
   };
 }
 
+function mayRecordChildDelivery(report) {
+  return report.canRecord || report.reason === 'child_outcome_coverage_incomplete';
+}
+
 function publicSummary(report, plan, { decision, reason, finalRecorded = false } = {}) {
   return {
     decision: decision ?? report.decision,
@@ -949,7 +981,7 @@ export async function recordParentAcceptance(client, assessment, { write = false
   if (!isIssueNumber(assessment?.parentIssue)) return incompleteResult(assessment, 'invalid_assessment_data');
   let snapshot = await readParentSnapshot(client, assessment.parentIssue);
   let report = assessParentAcceptance({ parent: snapshot.parent, childPages: snapshot.childPages, assessment });
-  if (!report.canRecord) return publicSummary(report, null);
+  if (!mayRecordChildDelivery(report)) return publicSummary(report, null);
   if (String(snapshot.parent.state).toLowerCase() !== 'open') {
     return publicSummary({ ...report, canRecord: false, reason: 'parent_not_open' }, null);
   }
@@ -967,7 +999,7 @@ export async function recordParentAcceptance(client, assessment, { write = false
   snapshot = await readParentSnapshot(client, assessment.parentIssue);
   if (snapshot.parent.body !== initialBody) return incompleteResult(assessment, 'parent_changed_before_recording');
   report = assessParentAcceptance({ parent: snapshot.parent, childPages: snapshot.childPages, assessment });
-  if (!report.canRecord) return publicSummary(report, null);
+  if (!mayRecordChildDelivery(report)) return publicSummary(report, null);
   plan = inspectCommentPlan(report, snapshot.parent, snapshot.childPages, snapshot.comments);
   if (!plan.valid) return publicSummary({ ...report, canRecord: false, reason: plan.reason }, plan);
 
@@ -995,10 +1027,23 @@ export async function recordParentAcceptance(client, assessment, { write = false
     }, { decision: 'unable_to_assess', reason: 'parent_changed_before_final_assessment' });
   }
   report = assessParentAcceptance({ parent: snapshot.parent, childPages: snapshot.childPages, assessment });
-  if (!report.canRecord) return publicSummary(report, null);
+  if (!mayRecordChildDelivery(report)) return publicSummary(report, {
+    ...plan,
+    childDelivery: { ...plan.childDelivery, recorded },
+    finalBody: null,
+    finalExisting: false,
+  });
   plan = inspectCommentPlan(report, snapshot.parent, snapshot.childPages, snapshot.comments);
   plan.childDelivery.recorded = recorded;
   if (!plan.valid) return publicSummary({ ...report, canRecord: false, reason: plan.reason }, plan);
+  if (!report.canRecord) {
+    return publicSummary(report, {
+      ...plan,
+      childDelivery: { ...plan.childDelivery, recorded },
+      finalBody: null,
+      finalExisting: false,
+    });
+  }
   if (String(snapshot.parent.state).toLowerCase() !== 'open') {
     return publicSummary({ ...report, canRecord: false, reason: 'parent_not_open' }, plan);
   }

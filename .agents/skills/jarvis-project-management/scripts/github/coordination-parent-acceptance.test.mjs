@@ -8,6 +8,7 @@ import {
   parseAcceptanceCriteria,
   recordParentAcceptance,
 } from './coordination-parent-acceptance.mjs';
+import { renderChildDeliveryComment } from './coordination-parent-comments.mjs';
 
 const repositoryUrl = 'https://api.github.com/repos/grasdouble/Jarvis';
 const body = `## Outcome
@@ -575,6 +576,62 @@ test('accepts child-associated supplemental evidence without requiring it in the
   const replay = await recordParentAcceptance(client, input, { write: true });
   assert.equal(replay.decision, 'accepted');
   assert.equal(client.comments.length, 4);
+});
+
+test('blocks final writes before mutation when historical snapshots conflict on PR ownership', async () => {
+  const completeChildren = [[child(11), child(12), child(13)]];
+  const client = fakeClient(parent(), completeChildren);
+  const historicalSnapshot = (childIssue, reviewedRevision) => renderChildDeliveryComment({
+    schemaVersion: 2,
+    parentIssue: 10,
+    childIssue,
+    state: 'closed',
+    stateReason: 'completed',
+    evidenceStatus: 'not_yet_validated',
+    reason: 'current_head_check_missing',
+    evidence: evidence(
+      'https://github.com/grasdouble/Jarvis/pull/999',
+      `Historical child ${childIssue} PR evidence`,
+      'pull_request',
+      'merged',
+      childIssue,
+      'a'.repeat(40),
+      reviewedRevision,
+    ),
+  });
+  client.comments.push(
+    { body: historicalSnapshot(11, 'b'.repeat(40)), user: { login: 'jarvis-development-grasdouble[bot]' } },
+    { body: historicalSnapshot(12, 'c'.repeat(40)), user: { login: 'jarvis-development-grasdouble[bot]' } },
+  );
+
+  const result = await recordParentAcceptance(client, allValidatedAssessment(), { write: true });
+  assert.equal(result.decision, 'assessed');
+  assert.equal(result.canRecord, false);
+  assert.equal(result.reason, 'pull_request_child_mapping_conflict');
+  assert.equal(client.comments.length, 2);
+  assert.equal(client.comments.some(comment => comment.body.includes('coordination-parent-final:v1:10')), false);
+  assert.deepEqual(client.calls.createIssueComment, []);
+});
+
+test('records completed-child evidence when another native child is unmapped from every criterion', async () => {
+  const completeChildren = [[child(11), child(12), child(13)]];
+  const input = allValidatedAssessment();
+  input.criteria[2].outcomes = [];
+  const client = fakeClient(parent(), completeChildren);
+
+  const result = await recordParentAcceptance(client, input, { write: true });
+  assert.equal(result.decision, 'unable_to_assess');
+  assert.equal(result.reason, 'child_outcome_coverage_incomplete');
+  assert.equal(result.canRecord, false);
+  assert.deepEqual(result.unassessedChildIssues, [13]);
+  assert.deepEqual(result.childDelivery.recorded, [11, 12, 13]);
+  assert.equal(result.finalAssessment.recorded, false);
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:')).length, 3);
+  const unmappedChildComment = client.comments.find(comment =>
+    comment.body.includes('coordination-parent-delivery:v2:10:13:'));
+  assert.match(unmappedChildComment.body, /Evidence status: \*\*not yet validated\*\*/);
+  assert.match(unmappedChildComment.body, /delivery_evidence_missing/);
+  assert.equal(client.comments.some(comment => comment.body.includes('coordination-parent-final:v1:10')), false);
 });
 
 test('the GitHub adapter lists comments read-only and exposes only append-comment writes', () => {
