@@ -5,7 +5,7 @@ description: Resolve missing, mismatched, or ambiguous JARVIS contributor-reques
 
 # JARVIS request router
 
-Use this lightweight fallback when a contributor-session request lacks a tag, has a mismatched tag, or remains ambiguous. For a supplied matching tag, invoke the skill with the aligned ID directly instead of routing through this meta-skill. The canonical registry and full contract are in [jarvis-request-routing.md](../../../docs/jarvis-request-routing.md). Read the registry from that source; do not maintain a second copy.
+Use this lightweight fallback when a contributor-session request lacks a tag, has a mismatched tag, or remains ambiguous. For a supplied matching tag, invoke the skill with the aligned ID directly instead of routing through this meta-skill. The canonical registry and full contract are in [jarvis-request-routing.md](../../../docs/jarvis-request-routing.md). Read the registry from that source; do not maintain a second copy. Follow its [coordinator and specialist delegation contract](../../../docs/jarvis-request-routing.md#orchestration-and-delegation) for tagged requests.
 
 ## Decide before routing
 
@@ -16,15 +16,17 @@ Use this lightweight fallback when a contributor-session request lacks a tag, ha
 
 ## Dispatch one appropriate downstream skill
 
-| Tag | Downstream route |
+| Tag | Main-session coordinator and specialist subagent |
 | --- | --- |
-| `@jarvis-info` | Directly invoke `jarvis-info`; repository explanation, read-only. |
-| `@jarvis-status` | Directly invoke `jarvis-status`; current GitHub status, read-only, disclose inaccessible/stale/incomplete sources. |
-| `@jarvis-plan` | Directly invoke `jarvis-plan`; read-only governance assessment and options. |
-| `@jarvis-delivery` | Directly invoke `jarvis-delivery`; follow full issue intake and delivery gates. |
-| `@jarvis-review` | Directly invoke `jarvis-review`. If part of a current delivery, `jarvis-delivery` coordinates it; otherwise use a fresh independent reviewer context. Never create a delivery issue just to review. |
-| `@jarvis-backlog` | Directly invoke `jarvis-backlog`; perform only the requested authorized project-management work, not implementation by implication. |
-| `@jarvis-tags` | `jarvis-tags` only; return the canonical list, with no repository inspection or workflow. |
+| `@jarvis-info` | Main session coordinates `jarvis-info`; delegate substantive repository explanation to a bounded info specialist. |
+| `@jarvis-status` | Main session coordinates `jarvis-status` and obtains any authorized credentialed GitHub data; delegate bounded analysis of sanitized returned data and non-credentialed research to a status specialist, disclosing inaccessible/stale/incomplete sources. |
+| `@jarvis-plan` | Main session coordinates `jarvis-plan`; delegate substantive governance assessment to a bounded planning specialist; remain read-only. |
+| `@jarvis-delivery` | Main session coordinates `jarvis-delivery`; delegate bounded implementation work to an appropriate implementation specialist under the full issue intake and delivery gates. |
+| `@jarvis-review` | Main session coordinates `jarvis-review`; delegate review to a fresh independent review specialist. If part of a current delivery, `jarvis-delivery` coordinates it. Never create a delivery issue just to review. |
+| `@jarvis-backlog` | Main session coordinates `jarvis-backlog` and performs any authorized credentialed GitHub reads or writes; delegate bounded analysis of sanitized returned data and non-credentialed research to a backlog specialist, not mutations or implementation by implication. |
+| `@jarvis-tags` | `jarvis-tags` only; exact registry-only response. Do not spawn a worker or start another workflow. |
+
+Give each specialist only the minimum sanitized context needed for its assignment; provide no credentials and no extra tools or permissions. The main session integrates the specialist's evidence and answers the user. Credentialed GitHub reads, all GitHub writes, commits, and publication are performed and owned by the primary coordinator under the selected skill and actual authorization. The coordinator may delegate analysis of sanitized data returned from credentialed reads, but does not pass credentials or authenticated access. In particular, status/backlog specialists may analyze sanitized returned data, not perform authenticated reads or mutations. Delegation is within the selected workflow, not a second workflow, and never changes the skill's authority or gates. Clarification-only turns do not spawn workers. If suitable worker capacity/tooling is unavailable, state that explicitly; direct handling without a worker cannot be called delegated. Continue directly only where the selected skill and user authorization permit.
 
 ## Review boundary
 
