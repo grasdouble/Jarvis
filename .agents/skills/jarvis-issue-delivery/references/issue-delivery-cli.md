@@ -56,6 +56,15 @@ git -C "$task_worktree_path" branch --show-current
 git -C "$task_worktree_path" log -1 --oneline
 ```
 
+After creating or recovering the issue worktree, bootstrap its local validation environment before running project checks. Invoke the helper only from a trusted, reviewed base/main checkout—not from an unmerged candidate—and pass the issue worktree as its target. It creates a local `.venv` using the repository's pinned requirements, supports CPython 3.9–3.14, installs hash-pinned binary-only packages, and does not install into the system Python.
+
+```bash
+python3 /absolute/trusted/main/scripts/ci/bootstrap_validation_env.py \
+  /absolute/issue/worktree --python python3.14
+```
+
+If the trusted checkout predates this helper, use the documented manual setup as a transitional fallback; do not run an unmerged candidate copy as the bootstrap tool.
+
 Use the project-management status recipe to set the issue to `In Progress` when work starts. An incomplete draft remains `In Progress` or becomes `Blocked` with a concrete reason. For blocking, material blocker updates, and verified resumption, use the [shared lifecycle](../../../../docs/blocker-lifecycle.md) and [project-management comment commands](../../jarvis-project-management/references/github-cli.md#blocker-comments-and-transition-recovery). Preserve the worktree and PR, record evidence before changing status, and reread after partial/ambiguous writes.
 
 ## Discover and run relevant checks
