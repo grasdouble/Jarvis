@@ -20,7 +20,12 @@ function createPool(results = []) {
 test("checkpoint writes require the current lease and current project and skill consent", async () => {
   assert.equal(typeof persistenceModule.PostgresPersistence, "function");
   const { PostgresPersistence } = persistenceModule;
-  const pool = createPool([{ rows: [{ id: "checkpoint-1" }], rowCount: 1 }]);
+  const pool = createPool([
+    { rows: [], rowCount: 0 },
+    { rows: [], rowCount: 1 },
+    { rows: [{ id: "checkpoint-1" }], rowCount: 1 },
+    { rows: [], rowCount: 0 },
+  ]);
   const persistence = new PostgresPersistence(pool);
 
   await persistence.saveCheckpoint({
@@ -39,7 +44,8 @@ test("checkpoint writes require the current lease and current project and skill 
   assert.match(sql, /project_id\s*=\s*\$4/i);
   assert.match(sql, /revoked_at\s+IS\s+NULL/i);
   assert.match(sql, /revision_digest/i);
-  assert.deepEqual(pool.calls.at(-1).values.slice(0, 4), ["task-1", "attempt-1", 4, "project-1"]);
+  assert.deepEqual(pool.calls[2].values.slice(0, 4), ["task-1", "attempt-1", 4, "project-1"]);
+  assert.match(pool.calls[1].text, /FOR SHARE/i);
 });
 
 test("migrations enforce repository-scoped identity and hide secrets from task state", async () => {
@@ -51,6 +57,7 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   assert.doesNotMatch(migration, /provider_session|private_key|access_token/i);
   assert.match(migration, /CREATE TABLE task_checkpoints/i);
   assert.match(migration, /CREATE TABLE project_skill_approvals/i);
+  assert.match(migration, /project_skill_approvals_serialize/i);
 });
 
 test("migration runner serializes concurrent callers and records applied versions", async () => {
@@ -153,7 +160,12 @@ test("recovery rejects persisted checkpoint state whose digest no longer matches
 });
 
 test("stale leases and revoked skills cannot save a checkpoint", async () => {
-  const pool = createPool([{ rows: [], rowCount: 0 }]);
+  const pool = createPool([
+    { rows: [], rowCount: 0 },
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 0 },
+    { rows: [], rowCount: 0 },
+  ]);
   const persistence = new persistenceModule.PostgresPersistence(pool);
 
   await assert.rejects(persistence.saveCheckpoint({
@@ -167,7 +179,7 @@ test("stale leases and revoked skills cannot save a checkpoint", async () => {
     requiredSkills: [{ skillId: "plan", revisionDigest: "b".repeat(64) }],
   }), CheckpointRejectedError);
 
-  const sql = pool.calls[0].text;
+  const sql = pool.calls.map(({ text }) => text).join("\n");
   assert.match(sql, /a\.lease_until > now\(\)/);
   assert.match(sql, /p\.state = 'active'/);
   assert.match(sql, /approval\.skill_id = required\.skill_id/);

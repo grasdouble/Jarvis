@@ -80,6 +80,22 @@ CREATE TABLE project_skill_approvals (
 CREATE INDEX project_skill_approvals_current ON project_skill_approvals
   (project_id, skill_id, revision_digest, decided_at DESC);
 
+CREATE FUNCTION jarvis.serialize_skill_approval() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- Checkpoint saves hold SHARE on the same project row through their commit.
+  -- This makes consent changes and checkpoint authorization serializable.
+  PERFORM 1 FROM jarvis.projects WHERE id = NEW.project_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'project not found for skill approval';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER project_skill_approvals_serialize
+  BEFORE INSERT ON project_skill_approvals
+  FOR EACH ROW EXECUTE FUNCTION jarvis.serialize_skill_approval();
+
 CREATE TABLE requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_id text NOT NULL,

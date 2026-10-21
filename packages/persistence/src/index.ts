@@ -239,7 +239,14 @@ export class PostgresPersistence {
     const stateDigest = digest(encodedState);
     const client = await this.pool.connect();
     let rows: SavedCheckpoint[];
+    let transactionStarted = false;
     try {
+      await client.query("BEGIN");
+      transactionStarted = true;
+      // Approval inserts take an UPDATE lock on this project row. Acquire the
+      // matching SHARE lock in a separate statement so a waiter gets a fresh
+      // READ COMMITTED snapshot for the authorization query below.
+      await client.query("SELECT id FROM jarvis.projects WHERE id = $1 FOR SHARE", [input.projectId]);
       ({ rows } = await client.query<SavedCheckpoint>(`
           WITH eligible AS MATERIALIZED (
             SELECT t.id AS task_id, a.id AS attempt_id, t.project_id, t.repository_id, a.lease_epoch,
@@ -307,6 +314,11 @@ export class PostgresPersistence {
             revision_digest: revisionDigest,
           }))),
         ]));
+      await client.query("COMMIT");
+      transactionStarted = false;
+    } catch (error) {
+      if (transactionStarted) await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
     } finally {
       client.release();
     }
