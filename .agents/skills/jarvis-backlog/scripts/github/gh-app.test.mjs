@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { APP, assertGrant, childEnvironment, jwt, loadKey, parseArguments, permissions } from './gh-app.mjs';
+import { APP, assertGrant, childEnvironment, jwt, loadKey, parseArguments, permissions, refreshMain } from './gh-app.mjs';
 
 test('JWT has the expected identity, RS256 signature, and bounded validity', () => {
   const {privateKey, publicKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
@@ -51,6 +51,50 @@ test('Git push requires explicit write mode; credential and extension commands a
   assert.throws(() => parseArguments(['--git-push']));
   assert.throws(() => parseArguments(['--', 'auth', 'token']));
   assert.throws(() => parseArguments(['--', 'extension', 'exec', 'untrusted']));
+});
+
+const primary = '/repo';
+const primaryCommon = '/repo/.git';
+const targetSha = 'a'.repeat(40);
+function fakeGit({worktree = `worktree ${primary}\nHEAD ${'b'.repeat(40)}\nbranch refs/heads/main`, dirty = '', ancestor = true} = {}) {
+  return async args => {
+    if (args[0] === 'worktree') return worktree;
+    if (args[2] === 'status') return dirty;
+    if (args[2] === 'merge-base') return ancestor;
+    throw new Error(`Unexpected synthetic git command: ${args.join(' ')}`);
+  };
+}
+test('main refresh fast-forwards only a clean primary main to the exact API SHA', async () => {
+  let fetched = 0, merged = 0, cleaned = 0;
+  const result = await refreshMain({target:targetSha, commonGitDir:primaryCommon, git:fakeGit(),
+    fetchMain:async(_path, ref)=>{fetched++; assert.match(ref,/^refs\/jarvis\/main-refresh\//); return targetSha;},
+    cleanupMain:async()=>{cleaned++;}, fastForward:async(_path, sha)=>{merged++; return sha===targetSha;}});
+  assert.deepEqual(result, {status:'updated', sha:targetSha});
+  assert.equal(fetched, 1); assert.equal(merged, 1); assert.equal(cleaned,1);
+});
+test('main refresh skips when main is absent or exists only in a linked worktree', async () => {
+  for (const worktree of ['', `worktree /repo/linked\nbranch refs/heads/main`]) {
+    let fetched = false;
+    const result = await refreshMain({target:targetSha, commonGitDir:primaryCommon, git:fakeGit({worktree}),
+      fetchMain:async()=>{fetched=true;return targetSha;}, cleanupMain:async()=>{}, fastForward:async()=>true});
+    assert.equal(result.status, 'skipped'); assert.equal(fetched, false);
+  }
+});
+test('main refresh skips dirty worktree, SHA mismatch, non-fast-forward and fetch failure without merging', async () => {
+  const cases = [
+    {git:fakeGit({dirty:' M tracked'}), fetchMain:async()=>targetSha, cleanupExpected:0},
+    {git:fakeGit(), fetchMain:async()=> 'c'.repeat(40), cleanupExpected:1},
+    {git:fakeGit({ancestor:false}), fetchMain:async()=>targetSha, cleanupExpected:1},
+    {git:fakeGit(), fetchMain:async()=>{throw new Error('synthetic fetch failure');}, cleanupExpected:1},
+  ];
+  for (const item of cases) {
+    let merged = false, cleaned = 0;
+    const result=await refreshMain({target:targetSha,commonGitDir:primaryCommon,...item,
+      cleanupMain:async()=>{cleaned++;}, fastForward:async()=>{merged=true;return true;}});
+    assert.equal(result.status,'skipped');
+    assert.equal(merged,false);
+    assert.equal(cleaned,item.cleanupExpected);
+  }
 });
 
 test('child environment replaces personal credentials and removes trace/config injection', () => {

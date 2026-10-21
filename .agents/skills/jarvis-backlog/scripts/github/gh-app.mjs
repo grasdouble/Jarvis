@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Local development authentication only; never distribute this into review sandboxes.
-import { createSign } from 'node:crypto';
+import { createSign, randomUUID } from 'node:crypto';
 import { lstat, readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -146,6 +146,7 @@ export function parseArguments(input) {
   const write = args[0] === '--write';
   if (write) args.shift();
   if (!write && args.length === 1 && args[0] === '--check-network') return {write: false, mode: 'network'};
+  if (!write && args.length === 1 && args[0] === '--refresh-main') return {write: false, mode: 'refresh-main'};
   if (args.length === 1 && args[0] === '--verify') return {write, mode: 'verify'};
   if (args.length === 1 && args[0] === '--git-push' && write) return {write, mode: 'push'};
   if (args.shift() !== '--' || !['api', 'issue', 'label', 'pr', 'project', 'repo', 'run', 'workflow'].includes(args[0])) {
@@ -158,6 +159,28 @@ function git(args, options = {}) {
   const result = spawnSync('git', args, {encoding: 'utf8', ...options});
   if (result.status !== 0) throw new Error('Git operation failed; inspect the local branch and worktree.');
   return result.stdout.trim();
+}
+
+export async function refreshMain({target, commonGitDir, git: runGit, fetchMain, cleanupMain, fastForward, tempRef = () => `refs/jarvis/main-refresh/${randomUUID()}`}) {
+  if (!/^[0-9a-f]{40}$/i.test(target ?? '')) return {status:'skipped', reason:'GitHub main ref did not contain a valid commit SHA.'};
+  const primary = path.dirname(commonGitDir);
+  const worktrees = (await runGit(['worktree', 'list', '--porcelain'])).split('\n\n');
+  const main = worktrees.find(entry => entry.split('\n').includes(`worktree ${primary}`));
+  if (!main || !main.split('\n').includes('branch refs/heads/main')) return {status:'skipped', reason:'Primary repository worktree is not on local main.'};
+  if (await runGit(['-C', primary, 'status', '--porcelain'])) return {status:'skipped', reason:'Primary main worktree is not clean.'};
+  const ref = tempRef();
+  let fetched, fetchError;
+  try { fetched = await fetchMain(primary, ref); }
+  catch { fetchError = true; }
+  try { await cleanupMain(primary, ref); }
+  catch { return {status:'skipped', reason:'Temporary fetch ref cleanup failed; inspect local refs before continuing.'}; }
+  if (fetchError) return {status:'skipped', reason:'App-authenticated fetch failed.'};
+  if (fetched.toLowerCase() !== target.toLowerCase()) return {status:'skipped', reason:'Fetched main SHA does not match GitHub API target.'};
+  if (!(await runGit(['-C', primary, 'merge-base', '--is-ancestor', 'HEAD', target], {allowFailure:true})))
+    return {status:'skipped', reason:'Local main cannot fast-forward to GitHub main.'};
+  if (await runGit(['-C', primary, 'status', '--porcelain'])) return {status:'skipped', reason:'Primary main worktree became dirty.'};
+  if (!(await fastForward(primary, target))) return {status:'skipped', reason:'Fast-forward update failed.'};
+  return {status:'updated', sha:target};
 }
 
 async function run(options) {
@@ -185,6 +208,41 @@ async function run(options) {
     }
     temporary = await mkdtemp(path.join(tmpdir(), 'jarvis-gh-'));
     const environment = childEnvironment(grant.token, temporary);
+    if (options.mode === 'refresh-main') {
+      try {
+        const response = await api(`/repos/${APP.repository}/git/ref/heads/main`, grant.token);
+        const target = response.object?.sha;
+        const commonGitDir = git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
+        const askpass = path.join(temporary, 'askpass.sh');
+        await writeFile(askpass, '#!/bin/sh\ncase "$1" in\n  *Username*) printf "%s\\n" "x-access-token" ;;\n  *Password*) printf "%s\\n" "$GH_TOKEN" ;;\n  *) exit 1 ;;\nesac\n', {mode: 0o700});
+        const gitEnvironment = {...environment, HOME: temporary, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ASKPASS: askpass};
+        const remote = `https://github.com/${APP.repository}.git`;
+        const result = await refreshMain({target, commonGitDir,
+          git: async (args, {allowFailure = false} = {}) => {
+            const child = spawnSync('git', args, {encoding:'utf8', ...(args[0] === '-C' ? {env:gitEnvironment} : {})});
+            if (child.status !== 0 && !allowFailure) throw new Error('Git operation failed.');
+            return allowFailure ? child.status === 0 : child.stdout.trim();
+          },
+          fetchMain: async (directory, ref) => {
+            const root = path.dirname(commonGitDir);
+            if (await (async()=>{const out=spawnSync('git',['-C',root,'ls-remote','--get-url',remote],{encoding:'utf8',env:gitEnvironment});return out.status===0&&out.stdout.trim()===remote;})() !== true)
+              throw new Error('Git configuration rewrites the HTTPS destination.');
+            const fetched = spawnSync('git', ['-C', directory, '-c', 'credential.helper=', 'fetch', '--no-write-fetch-head', '--no-tags', remote, `refs/heads/main:${ref}`], {encoding:'utf8', env:gitEnvironment});
+            if (fetched.status !== 0) throw new Error('App-authenticated fetch failed.');
+            return spawnSync('git', ['-C', directory, 'rev-parse', ref], {encoding:'utf8', env:gitEnvironment}).stdout.trim();
+          },
+          cleanupMain: async (_directory, ref) => {
+            const cleanup = spawnSync('git', ['-C', path.dirname(commonGitDir), 'update-ref', '-d', ref], {encoding:'utf8', env:gitEnvironment});
+            if (cleanup.status !== 0) throw new Error('Temporary ref cleanup failed.');
+          },
+          fastForward: async (directory, sha) => spawnSync('git', ['-C', directory, 'merge', '--ff-only', sha], {stdio:'ignore', env:gitEnvironment}).status === 0});
+        console.log(JSON.stringify({mainRefresh:result.status, ...(result.sha ? {sha:result.sha} : {}), ...(result.reason ? {reason:result.reason} : {})}));
+      } catch (error) {
+        console.log(JSON.stringify({mainRefresh:'skipped', reason:error.message.startsWith('Skip') ? error.message.slice(6) : error.message}));
+        return 0;
+      }
+      return 0;
+    }
     if (options.mode === 'push') {
       const repository = await api(`/repos/${APP.repository}`, grant.token);
       const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);

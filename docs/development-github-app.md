@@ -129,6 +129,10 @@ Each command requests a new token, revokes it on exit when possible, and removes
 
 This is a **trusted local convenience launcher**, not a Mac isolation boundary or independent credential broker. The same macOS user can still read the key, personal SSH credentials, and other files; the child can read its own token. Do not run untrusted code with it. A separately isolated development agent needs a trusted broker outside its environment. Production OpenCode sandboxes receive neither the key nor these development tokens.
 
+## Safe local `main` refresh
+
+After a successful write-mode Next up queue refresh, the queue synchronizer attempts `gh-app.mjs --refresh-main`. It obtains the `main` commit SHA from GitHub's API and fetches `refs/heads/main` over HTTPS using the repository-scoped App token (never `gh`'s or Git's ambient credentials). Fetch uses a unique temporary ref and `--no-write-fetch-head`; the temporary ref is deleted on every fetch outcome before deciding whether to update. It updates the primary repository's local `main` worktree only when it is checked out and clean, the fetched SHA exactly matches the API SHA, and the local commit is an ancestor of that target. The update is `git merge --ff-only`; no reset, force operation, or branch checkout is used. Missing/dirty main, fetch/API failures, SHA mismatch, and non-fast-forward state are reported as a skip; queue refresh remains successful. This convenience step is not a substitute for each issue's exact-SHA base verification.
+
 ## Rotation and troubleshooting
 
 Generate a new key as owner, place it with mode `600`, select it with `JARVIS_GITHUB_APP_KEY_FILE`, and verify an authorized operation. Then revoke the old key in GitHub and remove old local copies according to the owner's retention policy. Revoke known exposed installation tokens too; deleting a PEM alone does not invalidate already issued tokens. Ordinary rotation does not require reinstalling the App.
