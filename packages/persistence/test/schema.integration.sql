@@ -13,6 +13,15 @@ DO $$ BEGIN
   IF has_table_privilege('jarvis_app', 'jarvis.audit_events', 'DELETE') THEN
     RAISE EXCEPTION 'core app role must not delete audit records';
   END IF;
+  IF NOT has_table_privilege('jarvis_app', 'jarvis.queue_entries', 'INSERT')
+     OR NOT has_table_privilege('jarvis_app', 'jarvis.queue_entries', 'UPDATE')
+     OR has_table_privilege('jarvis_app', 'jarvis.queue_entries', 'DELETE') THEN
+    RAISE EXCEPTION 'core app queue privileges must allow transitions but not deletion';
+  END IF;
+  IF has_table_privilege('jarvis_agent', 'jarvis.queue_entries', 'SELECT')
+     OR has_table_privilege('jarvis_agent', 'jarvis.outbox', 'INSERT') THEN
+    RAISE EXCEPTION 'agent role must not access queue or outbox state';
+  END IF;
 END $$;
 
 INSERT INTO jarvis.audit_events (actor, action, resource, details_hash)

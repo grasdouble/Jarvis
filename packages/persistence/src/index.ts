@@ -384,3 +384,5 @@ export class PostgresPersistence {
     }
   }
 }
+
+export { PostgresQueueStore } from "./queue.js";
