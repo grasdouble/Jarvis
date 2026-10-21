@@ -86,7 +86,7 @@ pnpm --filter "$task_package_name" run "$task_check_script"
 
 For documentation-only work, check links, consistency, and the diff. For runtime changes, run the required behavioral checks and state which platform/live-service checks remain unverified. Do not claim PNPM checks ran when the repository contains only planning documents.
 
-## Commit and publish one PR
+## Commit and independently review before publishing
 
 Review changes and stage only intended files. Set `task_changed_file` to an inspected path; repeat explicit paths as needed. Avoid `git add .` when unrelated changes are present. Prepare an English Conventional Commit message, including breaking-change details when applicable.
 
@@ -104,7 +104,11 @@ The process-scoped `git -c` settings apply only to this commit command and set i
 
 Use normal pushes; do not rewrite published history merely to simplify delivery. Prepare the English PR body from the repository template, with actual verification and limitations. Use `Closes #N` only for complete resolution, or `Refs #N` for partial work. Closing keywords auto-close issues on merge into the default branch; for another target, reconcile closure after confirming delivery.
 
-Check again for an existing PR on this branch before creation, especially after an interrupted publication. Set the Conventional Commits PR title and explicit base/head. Add `--draft` when the deliverable is not ready for review. `gh pr create --dry-run` may still push changes and is not a read-only preview.
+Before publishing, freeze the candidate and record its exact target base commit (`task_base_commit`) and issue-branch head commit (`task_reviewed_head_sha`). By default, when the selected reviewer can perform a qualified independent review against these immutable local revisions, run the review loop below before creating the PR. Resolve actionable findings on the same issue branch, rerun relevant checks, freeze the corrected head, and obtain a fresh independent review of the new exact base/head pair. Repeat as needed; do not publish until the candidate is review-ready and has current clean review evidence. The author must not review their own candidate. Record the review evidence and validation in the PR body.
+
+If exact local immutable review is unavailable, record the specific limitation and use the established published-PR review path below; do not claim prepublication review. After publishing, any source change must remain on the same PR, receive relevant fresh checks and an independent review of its new exact revisions before the PR is considered ready. A review or check for an earlier head does not cover a later one.
+
+After the prepublication review, check again for an existing PR on this branch before creation, especially after an interrupted publication. Set the Conventional Commits PR title and explicit base/head. Create directly ready when the reviewed candidate is complete and review-ready. Use `--draft` only when the deliverable is genuinely incomplete or otherwise not review-ready; draft status does not suppress CI or guarantee a single CI run. `gh pr create --dry-run` may still push changes and is not a read-only preview.
 
 ```bash
 gh pr list --repo "$task_repo" --state all --head "$task_branch" \
@@ -138,7 +142,7 @@ Verify the native implementation issue and its milestone first. Inspect diagnost
 
 ## Independent review records
 
-Use the [bounded review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop) and a separate reviewer agent. Bind its direct result to exact base/head commits; inspect complete changed paths including previous paths of renames through paginated `GET repos/$task_repo/pulls/$task_pr_number/files` and the Git diff. A truncated response is not sufficient for sensitivity classification. Use trusted base CODEOWNERS/instructions and live protection/review facts, not candidate policy. GitHub caps PR file responses at 3,000 files: reconcile API coverage with actual changed-file count/Git inventory and hand off if completeness cannot be established.
+Use the [bounded review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop) and a separate reviewer agent. Before publication, bind its direct result to the exact local immutable base/head commits and inspect the complete diff and changed paths. After publication, bind each review to exact PR base/head commits; inspect complete changed paths including previous paths of renames through paginated `GET repos/$task_repo/pulls/$task_pr_number/files` and the Git diff. A truncated response is not sufficient for sensitivity classification. Use trusted base CODEOWNERS/instructions and live protection/review facts, not candidate policy. GitHub caps PR file responses at 3,000 files: reconcile API coverage with actual changed-file count/Git inventory and hand off if completeness cannot be established.
 
 Apply the App prefix above for PR comments. Prepare the English review report in a UTF-8 file, with stable run/round/revision marker and verified reviewer task identity. Inspect full paginated comments before a retry; a marker alone is not proof of provenance. The author App publishes a comment; do not call native `gh pr review --approve` on its own PR or impersonate the owner.
 
