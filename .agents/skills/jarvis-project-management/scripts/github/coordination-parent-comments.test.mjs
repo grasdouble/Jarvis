@@ -47,11 +47,13 @@ const issueCommentEvidence = {
 
 function delivery(childIssue, pr, check) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     parentIssue: 10,
     childIssue,
     state: 'closed',
     stateReason: 'completed',
+    evidenceStatus: 'validated',
+    reason: null,
     evidence: [pr, check],
   };
 }
@@ -98,6 +100,7 @@ test('renders and parses a child-delivery comment with merged PR and matching he
   const record = delivery(11, pr11, check11);
   const body = renderChildDeliveryComment(record);
   assert.match(body, /CLOSED \/ COMPLETED/);
+  assert.match(body, /Evidence status: \*\*validated\*\*/);
   assert.match(body, /pull\/111/);
   assert.match(body, /commit\/b{40}\/checks/);
   assert.deepEqual(parseChildDeliveryComment(appComment(body), 10, 11), record);
@@ -109,8 +112,21 @@ test('renders and parses a child-delivery comment with merged PR and matching he
 
 test('refuses delivery records without the exact successful current-head check', () => {
   const staleCheck = { ...check11, revision: 'c'.repeat(40) };
-  assert.throws(() => renderChildDeliveryComment(delivery(11, pr11, staleCheck)), /invalid child-delivery/);
+  assert.throws(() => renderChildDeliveryComment({ ...delivery(11, pr11, staleCheck), evidenceStatus: 'validated' }), /invalid child-delivery/);
   assert.throws(() => renderChildDeliveryComment({ ...delivery(11, pr11, check11), stateReason: 'not_planned' }), /invalid child-delivery/);
+});
+
+test('renders a structured incomplete delivery snapshot with available partial evidence', () => {
+  const record = {
+    ...delivery(11, pr11, check11),
+    evidenceStatus: 'not_yet_validated',
+    reason: 'current_head_check_missing',
+    evidence: [pr11],
+  };
+  const body = renderChildDeliveryComment(record);
+  assert.match(body, /Evidence status: \*\*not yet validated\*\*/);
+  assert.match(body, /current_head_check_missing/);
+  assert.deepEqual(parseChildDeliveryComment(appComment(body), 10, 11), record);
 });
 
 test('renders only a fully validated final report and parses it against exact current criteria', () => {
@@ -175,6 +191,13 @@ test('structural inventory requires one matching child comment for every child a
   }).reason, 'final_assessment_invalid');
 });
 
+test('legacy delivery markers fail closed instead of being treated as current evidence', () => {
+  const legacy = appComment('<!-- jarvis:coordination-parent-delivery:v1:10:11 -->');
+  assert.equal(indexCoordinationParentComments([legacy], {
+    parentIssue: 10, criteria, childIssues,
+  }).reason, 'child_delivery_comment_invalid');
+});
+
 test('final report child evidence must agree with the append-only delivery records', () => {
   const delivery11 = appComment(renderChildDeliveryComment(delivery(11, pr11, check11)));
   const delivery12 = appComment(renderChildDeliveryComment(delivery(12, pr12, check12)));
@@ -184,5 +207,37 @@ test('final report child evidence must agree with the append-only delivery recor
   assert.equal(indexCoordinationParentComments([delivery11, delivery12, final], {
     parentIssue: 10, criteria, childIssues,
   }).reason, 'final_assessment_invalid');
-  assert.equal(childDeliveryMarker(10, 11), '<!-- jarvis:coordination-parent-delivery:v1:10:11 -->');
+  assert.match(childDeliveryMarker(10, 11, delivery(11, pr11, check11)), /^<!-- jarvis:coordination-parent-delivery:v2:10:11:[0-9a-f]{64} -->$/);
+});
+
+test('rejects conflicting PR-to-child mappings across child delivery comments', () => {
+  const delivery11 = appComment(renderChildDeliveryComment(delivery(11, pr11, check11)));
+  const conflictingDelivery = delivery(12, pr12, check12);
+  conflictingDelivery.evidence.push({ ...pr11, childIssue: 12 }, { ...check11, childIssue: 12 });
+  const delivery12 = appComment(renderChildDeliveryComment(conflictingDelivery));
+  const final = appComment(renderFinalAssessmentComment(finalAssessment()));
+
+  const result = indexCoordinationParentComments([delivery11, delivery12, final], {
+    parentIssue: 10, criteria, childIssues,
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'pull_request_child_mapping_conflict');
+});
+
+test('does not require supplemental child evidence in the delivery snapshot', () => {
+  const delivery11 = appComment(renderChildDeliveryComment(delivery(11, pr11, check11)));
+  const delivery12 = appComment(renderChildDeliveryComment(delivery(12, pr12, check12)));
+  const report = finalAssessment();
+  report.criteria[0].outcomes[0].evidence.push({
+    url: 'https://github.com/grasdouble/Jarvis/releases/tag/v1.2.3',
+    label: 'Published compatibility release',
+    sourceType: 'release',
+    status: 'published',
+    childIssue: 11,
+  });
+  const final = appComment(renderFinalAssessmentComment(report));
+
+  assert.equal(indexCoordinationParentComments([delivery11, delivery12, final], {
+    parentIssue: 10, criteria, childIssues,
+  }).valid, true);
 });

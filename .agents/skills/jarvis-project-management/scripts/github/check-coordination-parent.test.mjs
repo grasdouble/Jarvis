@@ -48,11 +48,13 @@ function deliveryComment(parentNumber, childNumber) {
   const mergeRevision = childNumber === 12 ? 'c'.repeat(40) : 'a'.repeat(40);
   const reviewedRevision = childNumber === 12 ? 'd'.repeat(40) : 'b'.repeat(40);
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     parentIssue: parentNumber,
     childIssue: childNumber,
     state: 'closed',
     stateReason: 'completed',
+    evidenceStatus: 'validated',
+    reason: null,
     evidence: [
       {
         url: `https://github.com/grasdouble/Jarvis/pull/${100 + childNumber}`,

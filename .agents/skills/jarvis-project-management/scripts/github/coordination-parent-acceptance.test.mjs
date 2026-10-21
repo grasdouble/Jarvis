@@ -118,18 +118,20 @@ const allValidatedAssessment = () => {
 function fakeClient(issue = parent(), childPages = children) {
   const calls = { getIssue: [], listSubIssuePages: [], listIssueComments: [], createIssueComment: [] };
   let current = structuredClone(issue);
+  let currentChildren = structuredClone(childPages);
   const comments = [];
   return {
     calls,
     comments,
     setIssue(next) { current = structuredClone(next); },
+    setChildren(next) { currentChildren = structuredClone(next); },
     async getIssue(number) {
       calls.getIssue.push(number);
       return structuredClone(current);
     },
     async listSubIssuePages(number) {
       calls.listSubIssuePages.push(number);
-      return structuredClone(childPages);
+      return structuredClone(currentChildren);
     },
     async listIssueComments(number) {
       calls.listIssueComments.push(number);
@@ -458,7 +460,27 @@ test('reconciles a lost comment acknowledgement by reading back the idempotency 
   const result = await recordParentAcceptance(client, allValidatedAssessment(), { write: true });
   assert.equal(result.decision, 'accepted');
   assert.equal(client.comments.length, 4);
-  assert.equal(new Set(client.comments.map(comment => comment.body.match(/coordination-parent-(?:delivery|final):v1:[^ ]+/)?.[0])).size, 4);
+  assert.equal(new Set(client.comments.map(comment => comment.body.match(/coordination-parent-delivery:v2:10:\d+:[0-9a-f]{64}|coordination-parent-final:v1:10/)?.[0])).size, 4);
+});
+
+test('does not report acceptance when a child reopens during final-comment creation', async () => {
+  const completeChildren = [[child(11), child(12), child(13)]];
+  const client = fakeClient(parent(), completeChildren);
+  const createComment = client.createIssueComment.bind(client);
+  client.createIssueComment = async (...args) => {
+    await createComment(...args);
+    if (args[1].includes('coordination-parent-final:v1:10')) {
+      client.setChildren([[child(11, { state: 'open', state_reason: null }), child(12), child(13)]]);
+    }
+  };
+
+  const result = await recordParentAcceptance(client, allValidatedAssessment(), { write: true });
+  assert.notEqual(result.decision, 'accepted');
+  assert.equal(result.finalAssessment.recorded, true);
+  assert.equal(result.finalAssessment.eligible, false);
+  assert.equal(result.finalAssessment.reason, 'children_changed_after_final_assessment');
+  assert.equal(result.criteria.every(criterion => criterion.status === 'validated'), false);
+  assert.equal(client.comments.some(comment => comment.body.includes('coordination-parent-final:v1:10')), true);
 });
 
 test('does not publish a final assessment if the parent changes while child comments are appended', async () => {
@@ -477,7 +499,7 @@ test('does not publish a final assessment if the parent changes while child comm
   const result = await recordParentAcceptance(client, allValidatedAssessment(), { write: true });
   assert.equal(result.decision, 'unable_to_assess');
   assert.equal(result.reason, 'parent_changed_before_final_assessment');
-  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v1:10:')).length, 3);
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:')).length, 3);
   assert.equal(client.comments.some(comment => comment.body.includes('coordination-parent-final:v1:10')), false);
   assert.equal((await client.getIssue(10)).body, `${body}\nAn owner-authored concurrent note.`);
 });
@@ -493,10 +515,10 @@ test('never posts a final assessment when any criterion or integrated outcome is
   assert.equal(result.finalAssessment.reason, 'criteria_not_validated');
   assert.equal(result.finalAssessment.recorded, false);
   assert.equal(client.comments.some(comment => comment.body.includes('coordination-parent-final:v1:10')), false);
-  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v1:10:')).length, 3);
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:')).length, 3);
 });
 
-test('a completed child without mapped merged PR/current-head checks gets no delivery comment', async () => {
+test('a completed child without sufficient delivery evidence gets an append-only incomplete record', async () => {
   const completeChildren = [[child(11), child(12), child(13)]];
   const input = allValidatedAssessment();
   input.criteria[2].outcomes[0].evidence = [];
@@ -506,7 +528,53 @@ test('a completed child without mapped merged PR/current-head checks gets no del
   const result = await recordParentAcceptance(client, input, { write: true });
   assert.equal(result.childDelivery.missingEvidence.includes(13), true);
   assert.equal(result.finalAssessment.recorded, false);
-  assert.equal(client.comments.some(comment => comment.body.includes('delivery:v1:10:13')), false);
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:13:')).length, 1);
+  assert.match(client.comments.find(comment => comment.body.includes('coordination-parent-delivery:v2:10:13:')).body, /Evidence status: \*\*not yet validated\*\*/);
+  assert.match(client.comments.find(comment => comment.body.includes('coordination-parent-delivery:v2:10:13:')).body, /delivery_evidence_missing/);
+  const replay = await recordParentAcceptance(client, input, { write: true });
+  assert.deepEqual(replay.childDelivery.recorded, []);
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:13:')).length, 1);
+});
+
+test('appends a new idempotent child evidence snapshot when missing delivery evidence is later supplied', async () => {
+  const completeChildren = [[child(11), child(12), child(13)]];
+  const input = allValidatedAssessment();
+  input.criteria[2].outcomes[0].evidence = [];
+  input.criteria[2].outcomes[0].status = 'not_yet_validated';
+  input.criteria[2].outcomes[0].rationale = 'No delivery evidence exists yet.';
+  const client = fakeClient(parent(), completeChildren);
+
+  const incomplete = await recordParentAcceptance(client, input, { write: true });
+  assert.equal(incomplete.decision, 'delivery_evidence_incomplete');
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:13:')).length, 1);
+
+  const complete = await recordParentAcceptance(client, allValidatedAssessment(), { write: true });
+  assert.equal(complete.decision, 'accepted');
+  assert.equal(client.comments.filter(comment => comment.body.includes('coordination-parent-delivery:v2:10:13:')).length, 2);
+  assert.equal(client.comments.at(-1).body.includes('coordination-parent-final:v1:10'), true);
+
+  const replay = await recordParentAcceptance(client, allValidatedAssessment(), { write: true });
+  assert.equal(replay.decision, 'accepted');
+  assert.equal(client.comments.length, 5);
+});
+
+test('accepts child-associated supplemental evidence without requiring it in the delivery comment', async () => {
+  const completeChildren = [[child(11), child(12), child(13)]];
+  const input = allValidatedAssessment();
+  input.criteria[0].outcomes[0].evidence.push({
+    url: 'https://github.com/grasdouble/Jarvis/releases/tag/v1.2.3',
+    label: 'Published compatibility release',
+    sourceType: 'release',
+    status: 'published',
+    childIssue: 11,
+  });
+  const client = fakeClient(parent(), completeChildren);
+  const result = await recordParentAcceptance(client, input, { write: true });
+  assert.equal(result.decision, 'accepted');
+  assert.equal(result.finalAssessment.recorded, true);
+  const replay = await recordParentAcceptance(client, input, { write: true });
+  assert.equal(replay.decision, 'accepted');
+  assert.equal(client.comments.length, 4);
 });
 
 test('the GitHub adapter lists comments read-only and exposes only append-comment writes', () => {

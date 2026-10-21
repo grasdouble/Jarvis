@@ -1,7 +1,18 @@
+import { createHash } from 'node:crypto';
+
 const APP_AUTHOR = 'jarvis-development-grasdouble[bot]';
 const DATA_LINE = /^<!-- jarvis:coordination-parent-data:v1:([A-Za-z0-9_-]+) -->$/;
-const DELIVERY_MARKER = parentIssue => `<!-- jarvis:coordination-parent-delivery:v1:${parentIssue}:`;
+const DELIVERY_MARKER = parentIssue => `<!-- jarvis:coordination-parent-delivery:v2:${parentIssue}:`;
+const LEGACY_DELIVERY_MARKER = parentIssue => `<!-- jarvis:coordination-parent-delivery:v1:${parentIssue}:`;
 const FINAL_MARKER = parentIssue => `<!-- jarvis:coordination-parent-final:v1:${parentIssue} -->`;
+const DELIVERY_EVIDENCE_STATUSES = new Set(['validated', 'not_yet_validated']);
+const DELIVERY_EVIDENCE_REASONS = new Set([
+  'delivery_evidence_missing',
+  'delivery_pr_missing',
+  'delivery_pr_not_merged',
+  'delivery_evidence_not_successful',
+  'current_head_check_missing',
+]);
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isIssueNumber = value => Number.isSafeInteger(value) && value > 0;
 const isSha = value => typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value);
@@ -61,29 +72,48 @@ function pullRequestNumber(urlValue) {
   }
 }
 
-function validDeliveryEvidence(evidence, childIssue) {
-  if (!Array.isArray(evidence) || evidence.length === 0) return false;
+function deliveryEvidenceDigest(payload) {
+  const canonical = {
+    schemaVersion: payload.schemaVersion,
+    parentIssue: payload.parentIssue,
+    childIssue: payload.childIssue,
+    state: payload.state,
+    stateReason: payload.stateReason,
+    evidenceStatus: payload.evidenceStatus,
+    reason: payload.reason ?? null,
+    evidence: payload.evidence,
+  };
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+function validDeliveryEvidence(evidence, childIssue, evidenceStatus, reason) {
+  if (!Array.isArray(evidence) || !DELIVERY_EVIDENCE_STATUSES.has(evidenceStatus)) return false;
+  if (evidenceStatus === 'validated' && reason !== null && reason !== undefined) return false;
+  if (evidenceStatus === 'not_yet_validated' && !DELIVERY_EVIDENCE_REASONS.has(reason)) return false;
   const pullRequests = evidence.filter(item => item?.sourceType === 'pull_request');
   const checks = evidence.filter(item => ['workflow_run', 'check_run'].includes(item?.sourceType));
-  if (pullRequests.length === 0 || pullRequests.length + checks.length !== evidence.length) return false;
+  if (pullRequests.length + checks.length !== evidence.length) return false;
   const pullRequestNumbers = new Set();
   for (const pr of pullRequests) {
     const number = pullRequestNumber(pr.url);
     if (!validJarvisUrl(pr.url) || number === null || pullRequestNumbers.has(number)
-      || pr.status !== 'merged' || pr.childIssue !== childIssue
+      || !['merged', 'open', 'closed'].includes(pr.status) || pr.childIssue !== childIssue
       || !isSha(pr.revision) || !isSha(pr.reviewedRevision) || typeof pr.label !== 'string' || !pr.label.trim()) return false;
     pullRequestNumbers.add(number);
-    if (!checks.some(check => check.status === 'success'
+    if (evidenceStatus === 'validated' && (pr.status !== 'merged' || !checks.some(check => check.status === 'success'
       && check.childIssue === childIssue
-      && check.revision?.toLowerCase() === pr.reviewedRevision.toLowerCase())) return false;
+      && check.revision?.toLowerCase() === pr.reviewedRevision.toLowerCase()))) return false;
   }
   for (const check of checks) {
-    if (!validJarvisUrl(check.url) || check.status !== 'success' || check.childIssue !== childIssue
+    if (!validJarvisUrl(check.url) || !['success', 'failure', 'skipped', 'in_progress'].includes(check.status)
+      || check.childIssue !== childIssue
       || !isSha(check.revision) || typeof check.label !== 'string' || !check.label.trim()) return false;
     if (check.sourceType === 'workflow_run' && !/^\/grasdouble\/jarvis\/actions\/runs\/\d+$/.test(new URL(check.url).pathname.toLowerCase())) return false;
     if (check.sourceType === 'check_run'
       && !new RegExp(`^/grasdouble/jarvis/commit/${check.revision.toLowerCase()}(?:/checks)?$`).test(new URL(check.url).pathname.toLowerCase())) return false;
   }
+  if (evidenceStatus === 'validated' && (pullRequests.length === 0
+    || evidence.some(item => item.status !== (item.sourceType === 'pull_request' ? 'merged' : 'success')))) return false;
   return true;
 }
 
@@ -97,8 +127,20 @@ function renderEvidence(evidence) {
   });
 }
 
-export function childDeliveryMarker(parentIssue, childIssue) {
-  return `<!-- jarvis:coordination-parent-delivery:v1:${parentIssue}:${childIssue} -->`;
+export function childDeliveryMarker(parentIssue, childIssue, payload) {
+  if (!isIssueNumber(parentIssue) || !isIssueNumber(childIssue)
+    || payload?.parentIssue !== parentIssue || payload?.childIssue !== childIssue) {
+    throw new Error('A matching delivery payload is required to derive its marker.');
+  }
+  return `${DELIVERY_MARKER(parentIssue)}${childIssue}:${deliveryEvidenceDigest(payload)} -->`;
+}
+
+export function childDeliveryMarkerPrefix(parentIssue, childIssue) {
+  return `${DELIVERY_MARKER(parentIssue)}${childIssue}:`;
+}
+
+export function legacyChildDeliveryMarkerPrefix(parentIssue) {
+  return LEGACY_DELIVERY_MARKER(parentIssue);
 }
 
 export function finalAssessmentMarker(parentIssue) {
@@ -106,35 +148,42 @@ export function finalAssessmentMarker(parentIssue) {
 }
 
 export function renderChildDeliveryComment(payload) {
-  const { parentIssue, childIssue, evidence } = payload ?? {};
+  const { parentIssue, childIssue, evidence, evidenceStatus, reason } = payload ?? {};
   if (!isIssueNumber(parentIssue) || !isIssueNumber(childIssue)
-    || payload?.schemaVersion !== 1 || payload.state !== 'closed' || payload.stateReason !== 'completed'
-    || !validDeliveryEvidence(evidence, childIssue)) {
+    || payload?.schemaVersion !== 2 || payload.state !== 'closed' || payload.stateReason !== 'completed'
+    || !validDeliveryEvidence(evidence, childIssue, evidenceStatus, reason)) {
     throw new Error('Cannot render an invalid child-delivery record.');
   }
   const normalized = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     parentIssue,
     childIssue,
     state: 'closed',
     stateReason: 'completed',
+    evidenceStatus,
+    reason: reason ?? null,
     evidence,
   };
   return [
-    childDeliveryMarker(parentIssue, childIssue),
+    childDeliveryMarker(parentIssue, childIssue, normalized),
     `<!-- jarvis:coordination-parent-data:v1:${encodePayload(normalized)} -->`,
     `## Child delivery evidence — #${childIssue}`,
     `Parent: #${parentIssue}. Child state: **CLOSED / COMPLETED**.`,
+    `Evidence status: **${evidenceStatus === 'validated' ? 'validated' : 'not yet validated'}**${reason ? `; reason: \`${reason}\`` : ''}.`,
     '',
-    ...renderEvidence(evidence),
+    ...(evidence.length > 0 ? renderEvidence(evidence) : ['No linked pull request or check evidence was supplied.']),
   ].join('\n');
 }
 
 export function parseChildDeliveryComment(comment, parentIssue, childIssue) {
-  const payload = decodePayload(comment, childDeliveryMarker(parentIssue, childIssue));
-  if (!isObject(payload) || payload.schemaVersion !== 1 || payload.parentIssue !== parentIssue
+  const markerPrefix = childDeliveryMarkerPrefix(parentIssue, childIssue);
+  const markers = commentLines(comment).filter(line => line.startsWith(markerPrefix));
+  if (markers.length !== 1 || !/^<!-- jarvis:coordination-parent-delivery:v2:\d+:\d+:[0-9a-f]{64} -->$/.test(markers[0])) return null;
+  const payload = decodePayload(comment, markers[0]);
+  if (!isObject(payload) || payload.schemaVersion !== 2 || payload.parentIssue !== parentIssue
     || payload.childIssue !== childIssue || payload.state !== 'closed' || payload.stateReason !== 'completed'
-    || !validDeliveryEvidence(payload.evidence, childIssue)) return null;
+    || !validDeliveryEvidence(payload.evidence, childIssue, payload.evidenceStatus, payload.reason)) return null;
+  if (markers[0] !== childDeliveryMarker(parentIssue, childIssue, payload)) return null;
   if (comment.body !== renderChildDeliveryComment(payload)) return null;
   return payload;
 }
@@ -311,18 +360,29 @@ export function parseFinalAssessmentComment(comment, { parentIssue, criteria, ch
 export function indexCoordinationParentComments(comments, { parentIssue, criteria, childIssues }) {
   if (!Array.isArray(comments)) return { valid: false, reason: 'invalid_comment_inventory' };
   const deliveries = new Map();
+  const markerByChild = new Map();
   const finals = [];
   for (const comment of comments) {
     const lines = commentLines(comment);
-    const deliveryLine = lines.find(line => line.startsWith(DELIVERY_MARKER(parentIssue)));
-    if (deliveryLine) {
-      const match = deliveryLine.match(/^<!-- jarvis:coordination-parent-delivery:v1:(\d+):(\d+) -->$/);
+    if (lines.some(line => line.startsWith(LEGACY_DELIVERY_MARKER(parentIssue)))) {
+      return { valid: false, reason: 'child_delivery_comment_invalid', deliveries };
+    }
+    const deliveryLines = lines.filter(line => line.startsWith(DELIVERY_MARKER(parentIssue)));
+    if (deliveryLines.length > 0) {
+      if (deliveryLines.length !== 1) return { valid: false, reason: 'child_delivery_comment_invalid', deliveries };
+      const deliveryLine = deliveryLines[0];
+      const match = deliveryLine.match(/^<!-- jarvis:coordination-parent-delivery:v2:(\d+):(\d+):([0-9a-f]{64}) -->$/);
       if (!match) return { valid: false, reason: 'child_delivery_comment_invalid' };
       const childIssue = Number(match[2]);
       if (!childIssues.includes(childIssue)) return { valid: false, reason: 'child_delivery_comment_invalid' };
       const parsed = parseChildDeliveryComment(comment, parentIssue, childIssue);
+      if (!parsed) return { valid: false, reason: 'child_delivery_comment_invalid', deliveries };
+      const markers = markerByChild.get(childIssue) ?? new Set();
+      if (markers.has(deliveryLine)) return { valid: false, reason: 'child_delivery_comment_invalid', deliveries };
+      markers.add(deliveryLine);
+      markerByChild.set(childIssue, markers);
       const existing = deliveries.get(childIssue) ?? [];
-      existing.push(parsed);
+      existing.push({ ...parsed, marker: deliveryLine });
       deliveries.set(childIssue, existing);
       continue;
     }
@@ -331,7 +391,20 @@ export function indexCoordinationParentComments(comments, { parentIssue, criteri
   for (const childIssue of childIssues) {
     const records = deliveries.get(childIssue) ?? [];
     if (records.length === 0) return { valid: false, reason: 'child_delivery_comment_missing', deliveries };
-    if (records.length !== 1 || records[0] === null) return { valid: false, reason: 'child_delivery_comment_invalid', deliveries };
+  }
+  const childByPullRequest = new Map();
+  for (const [childIssue, records] of deliveries) {
+    for (const record of records) {
+      for (const source of record.evidence) {
+        if (source.sourceType !== 'pull_request') continue;
+        const number = pullRequestNumber(source.url);
+        const priorChild = childByPullRequest.get(number);
+        if (priorChild !== undefined && priorChild !== childIssue) {
+          return { valid: false, reason: 'pull_request_child_mapping_conflict', deliveries };
+        }
+        childByPullRequest.set(number, childIssue);
+      }
+    }
   }
   if (finals.length === 0) return { valid: false, reason: 'final_assessment_missing', deliveries };
   if (finals.length !== 1) return { valid: false, reason: 'final_assessment_invalid', deliveries };
@@ -341,9 +414,12 @@ export function indexCoordinationParentComments(comments, { parentIssue, criteri
   for (const criterion of assessment.criteria) {
     for (const outcome of criterion.outcomes) {
       for (const source of outcome.evidence) {
-        if (source.childIssue === undefined) continue;
-        const delivery = deliveries.get(source.childIssue)?.[0];
-        if (!delivery.evidence.some(item => evidenceKey(item) === evidenceKey(source))) {
+        if (source.childIssue === undefined
+          || !['pull_request', 'workflow_run', 'check_run'].includes(source.sourceType)) continue;
+        const deliveryRecords = deliveries.get(source.childIssue) ?? [];
+        const matchingDelivery = deliveryRecords.some(delivery => delivery.evidenceStatus === 'validated'
+          && delivery.evidence.some(item => evidenceKey(item) === evidenceKey(source)));
+        if (!matchingDelivery) {
           return { valid: false, reason: 'final_assessment_invalid', deliveries };
         }
       }

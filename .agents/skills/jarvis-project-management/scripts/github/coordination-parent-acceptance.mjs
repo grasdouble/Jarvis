@@ -9,6 +9,7 @@ import {
   childDeliveryMarker,
   finalAssessmentMarker,
   indexCoordinationParentComments,
+  legacyChildDeliveryMarkerPrefix,
   parseChildDeliveryComment,
   parseFinalAssessmentComment,
   renderChildDeliveryComment,
@@ -696,24 +697,28 @@ function deliveryPayloadForChild(report, child) {
     || String(child.state_reason ?? child.stateReason ?? '').toLowerCase() !== 'completed') return null;
   const sources = report.criteria.flatMap(criterion => criterion.outcomes.flatMap(outcome => outcome.evidence))
     .filter(source => source.childIssue === child.number);
-  const pullRequests = uniqueEvidence(sources.filter(source =>
-    source.sourceType === 'pull_request' && source.status === 'merged'));
-  if (pullRequests.length === 0) return null;
-  const checks = uniqueEvidence(sources.filter(source => ['workflow_run', 'check_run'].includes(source.sourceType)
-    && source.status === 'success'));
-  const currentChecks = [];
-  for (const pr of pullRequests) {
-    const matching = checks.filter(check => check.revision.toLowerCase() === pr.reviewedRevision.toLowerCase());
-    if (matching.length === 0) return null;
-    currentChecks.push(...matching);
+  const evidence = uniqueEvidence(sources.filter(source =>
+    ['pull_request', 'workflow_run', 'check_run'].includes(source.sourceType)));
+  const pullRequests = evidence.filter(source => source.sourceType === 'pull_request');
+  const checks = evidence.filter(source => ['workflow_run', 'check_run'].includes(source.sourceType));
+  let reason = null;
+  if (evidence.length === 0) reason = 'delivery_evidence_missing';
+  else if (pullRequests.length === 0) reason = 'delivery_pr_missing';
+  else if (pullRequests.some(pr => pr.status !== 'merged')) reason = 'delivery_pr_not_merged';
+  else if (evidence.some(source => source.status !== (source.sourceType === 'pull_request' ? 'merged' : 'success'))) {
+    reason = 'delivery_evidence_not_successful';
+  } else if (pullRequests.some(pr => !checks.some(check =>
+    check.revision.toLowerCase() === pr.reviewedRevision.toLowerCase()))) {
+    reason = 'current_head_check_missing';
   }
-  const evidence = uniqueEvidence([...pullRequests, ...currentChecks]);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     parentIssue: report.parentIssue,
     childIssue: child.number,
     state: 'closed',
     stateReason: 'completed',
+    evidenceStatus: reason === null ? 'validated' : 'not_yet_validated',
+    reason,
     evidence,
   };
 }
@@ -747,43 +752,45 @@ function inspectCommentPlan(report, parent, childPages, comments) {
   const children = childPages.flat();
   const childDelivery = { pending: [], existing: [], missingEvidence: [], recorded: [] };
   const payloads = new Map();
-  const prefix = `<!-- jarvis:coordination-parent-delivery:v1:${parent.number}:`;
   const expectedChildren = new Set(children.map(child => child.number));
+  const recordsByChild = new Map();
   for (const comment of comments) {
     for (const line of typeof comment?.body === 'string' ? comment.body.split(/\r?\n/) : []) {
-      if (!line.startsWith(prefix)) continue;
-      const match = line.match(/^<!-- jarvis:coordination-parent-delivery:v1:(\d+):(\d+) -->$/);
+      if (line.startsWith(legacyChildDeliveryMarkerPrefix(parent.number))) {
+        return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
+      }
+      if (!line.startsWith(`<!-- jarvis:coordination-parent-delivery:v2:${parent.number}:`)) continue;
+      const match = line.match(/^<!-- jarvis:coordination-parent-delivery:v2:(\d+):(\d+):([0-9a-f]{64}) -->$/);
       if (!match || !expectedChildren.has(Number(match[2]))) {
         return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
       }
+      const childIssue = Number(match[2]);
+      const parsed = parseChildDeliveryComment(comment, parent.number, childIssue);
+      if (!parsed) {
+        return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
+      }
+      const records = recordsByChild.get(childIssue) ?? [];
+      if (records.some(record => record.marker === line)) {
+        return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
+      }
+      records.push({ marker: line, payload: parsed });
+      recordsByChild.set(childIssue, records);
     }
   }
 
   for (const child of children) {
     const payload = deliveryPayloadForChild(report, child);
-    const marker = childDeliveryMarker(parent.number, child.number);
-    const existing = issueCommentsWithMarker(comments, marker);
-    if (existing.length > 1) return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
-    if (existing.length === 1) {
-      const parsed = parseChildDeliveryComment(existing[0], parent.number, child.number);
-      if (!parsed) {
-        return { valid: false, reason: 'child_delivery_comment_conflict', childDelivery, children };
-      }
-      payloads.set(child.number, { payload: parsed, body: existing[0].body });
-      childDelivery.existing.push(child.number);
-      continue;
-    }
-    if (payload) {
-      try {
-        const expectedBody = renderChildDeliveryComment(payload);
-        payloads.set(child.number, { payload, body: expectedBody });
-        childDelivery.pending.push(child.number);
-      } catch {
-        childDelivery.missingEvidence.push(child.number);
-      }
-    } else if (String(child.state).toLowerCase() === 'closed'
-      && String(child.state_reason ?? child.stateReason ?? '').toLowerCase() === 'completed') {
-      childDelivery.missingEvidence.push(child.number);
+    const records = recordsByChild.get(child.number) ?? [];
+    if (records.length > 0) childDelivery.existing.push(child.number);
+    if (!payload) continue;
+    try {
+      const expectedBody = renderChildDeliveryComment(payload);
+      payloads.set(child.number, { payload, body: expectedBody });
+      const marker = childDeliveryMarker(parent.number, child.number, payload);
+      if (!records.some(record => record.marker === marker)) childDelivery.pending.push(child.number);
+      if (payload.evidenceStatus !== 'validated') childDelivery.missingEvidence.push(child.number);
+    } catch {
+      return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
     }
   }
 
@@ -793,6 +800,9 @@ function inspectCommentPlan(report, parent, childPages, comments) {
     for (const outcome of criterion.outcomes) {
       for (const source of outcome.evidence) {
         if (!source.childIssue || !['pull_request', 'workflow_run', 'check_run'].includes(source.sourceType)) continue;
+        const child = children.find(item => item.number === source.childIssue);
+        if (!child || String(child.state).toLowerCase() !== 'closed'
+          || String(child.state_reason ?? child.stateReason ?? '').toLowerCase() !== 'completed') continue;
         const delivery = payloads.get(source.childIssue)?.payload;
         if (!delivery?.evidence.some(item => deliveryEvidenceKey(item) === deliveryEvidenceKey(source))) {
           return { valid: false, reason: 'child_delivery_comment_evidence_mismatch', childDelivery, children };
@@ -804,7 +814,20 @@ function inspectCommentPlan(report, parent, childPages, comments) {
   const incompleteChildren = children.filter(child => String(child.state).toLowerCase() !== 'closed'
     || String(child.state_reason ?? child.stateReason ?? '').toLowerCase() !== 'completed')
     .map(child => child.number);
-  const missingDelivery = children.filter(child => !payloads.has(child.number)).map(child => child.number);
+  const missingDelivery = children.filter(child => {
+    const completed = String(child.state).toLowerCase() === 'closed'
+      && String(child.state_reason ?? child.stateReason ?? '').toLowerCase() === 'completed';
+    if (!completed) return false;
+    const payload = payloads.get(child.number)?.payload;
+    if (!payload) return true;
+    const expectedMarker = childDeliveryMarker(parent.number, child.number, payload);
+    return !(recordsByChild.get(child.number) ?? []).some(record => record.marker === expectedMarker);
+  }).map(child => child.number);
+  const incompleteDelivery = children.filter(child => {
+    const completed = String(child.state).toLowerCase() === 'closed'
+      && String(child.state_reason ?? child.stateReason ?? '').toLowerCase() === 'completed';
+    return completed && payloads.get(child.number)?.payload.evidenceStatus !== 'validated';
+  }).map(child => child.number);
   const allCriteriaValidated = report.criteria.every(criterion => criterion.status === 'validated');
   let finalBody = null;
   let finalExisting = false;
@@ -814,7 +837,8 @@ function inspectCommentPlan(report, parent, childPages, comments) {
     return { valid: false, reason: 'final_assessment_conflict', childDelivery, children };
   }
   if (incompleteChildren.length > 0) finalReason = 'children_incomplete';
-  else if (missingDelivery.length > 0) finalReason = 'child_delivery_evidence_missing';
+  else if (missingDelivery.length > 0) finalReason = 'child_delivery_comment_missing';
+  else if (incompleteDelivery.length > 0) finalReason = 'child_delivery_evidence_incomplete';
   else if (!allCriteriaValidated) finalReason = 'criteria_not_validated';
   if (finalComments.length === 1 && finalReason) {
     return { valid: false, reason: 'final_assessment_conflict', childDelivery, children };
@@ -830,6 +854,12 @@ function inspectCommentPlan(report, parent, childPages, comments) {
       if (!parsed || finalComments[0].body !== finalBody) {
         return { valid: false, reason: 'final_assessment_conflict', childDelivery, children };
       }
+      const indexed = indexCoordinationParentComments(comments, {
+        parentIssue: parent.number,
+        criteria: parseAcceptanceChecklist(parent.body).items,
+        childIssues: children.map(child => child.number),
+      });
+      if (!indexed.valid) return { valid: false, reason: indexed.reason, childDelivery, children };
       finalExisting = true;
     }
   }
@@ -840,6 +870,7 @@ function inspectCommentPlan(report, parent, childPages, comments) {
     payloads,
     incompleteChildren,
     missingDelivery,
+    incompleteDelivery,
     allCriteriaValidated,
     childDelivery,
     finalBody,
@@ -927,7 +958,7 @@ export async function recordParentAcceptance(client, assessment, { write = false
   const initialBody = snapshot.parent.body;
   if (!write) {
     const decision = plan.incompleteChildren.length > 0 ? 'waiting_for_children'
-      : plan.missingDelivery.length > 0 ? 'delivery_evidence_incomplete'
+      : plan.incompleteDelivery.length > 0 ? 'delivery_evidence_incomplete'
         : !plan.allCriteriaValidated ? 'assessment_incomplete'
           : plan.finalExisting ? 'accepted' : 'ready_to_record';
     return publicSummary(report, plan, { decision });
@@ -947,7 +978,7 @@ export async function recordParentAcceptance(client, assessment, { write = false
     await appendCommentAndVerify(
       client,
       assessment.parentIssue,
-      childDeliveryMarker(assessment.parentIssue, childIssue),
+      childDeliveryMarker(assessment.parentIssue, childIssue, childComment.payload),
       childComment.body,
     );
     recorded.push(childIssue);
@@ -976,6 +1007,9 @@ export async function recordParentAcceptance(client, assessment, { write = false
     return publicSummary(report, plan, { decision: 'waiting_for_children' });
   }
   if (plan.missingDelivery.length > 0) {
+    return publicSummary(report, plan, { decision: 'delivery_evidence_incomplete' });
+  }
+  if (plan.incompleteDelivery.length > 0) {
     return publicSummary(report, plan, { decision: 'delivery_evidence_incomplete' });
   }
   if (!plan.allCriteriaValidated) {
@@ -1012,6 +1046,21 @@ export async function recordParentAcceptance(client, assessment, { write = false
     const error = new Error('Final assessment comment could not be verified against the current parent and child inventory.');
     error.uncertainWrite = true;
     throw error;
+  }
+  const childrenReopened = verified.childPages.flat().some(child =>
+    String(child.state).toLowerCase() !== 'closed'
+      || String(child.state_reason ?? child.stateReason ?? '').toLowerCase() !== 'completed');
+  const criteriaStillValidated = verifiedReport.criteria.length > 0
+    && verifiedReport.criteria.every(criterion => criterion.status === 'validated');
+  if (childrenReopened || !criteriaStillValidated) {
+    const reason = 'children_changed_after_final_assessment';
+    return publicSummary(verifiedReport, {
+      ...plan,
+      childDelivery: { ...plan.childDelivery, recorded },
+      finalBody: null,
+      finalExisting: true,
+      finalReason: reason,
+    }, { decision: 'unable_to_assess', reason, finalRecorded: true });
   }
   return publicSummary(verifiedReport, {
     ...plan,
