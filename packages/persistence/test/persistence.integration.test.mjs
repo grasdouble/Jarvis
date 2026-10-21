@@ -22,6 +22,21 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
     assert.deepEqual(migrations.map(({ version }) => version), ["001_initial"]);
+    await pool.query(`
+      DO $$
+      DECLARE table_name text; row_count bigint;
+      BEGIN
+        FOR table_name IN
+          SELECT tablename FROM pg_tables
+          WHERE schemaname = 'jarvis' AND tablename <> 'schema_migrations'
+        LOOP
+          EXECUTE format('SELECT count(*) FROM jarvis.%I', table_name) INTO row_count;
+          IF row_count > 0 THEN
+            RAISE EXCEPTION 'integration test database is not empty: jarvis.%', table_name;
+          END IF;
+        END LOOP;
+      END $$
+    `);
 
     client = await pool.connect();
     await client.query("BEGIN");
@@ -45,7 +60,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await client.query(`
       INSERT INTO jarvis.project_skills (project_id, repository_id, skill_id, revision_digest)
       VALUES ($1, 3001, 'plan', $2)`, ["00000000-0000-4000-8000-000000000003", "d".repeat(64)]);
-    await client.query(`
+    await pool.query(`
       INSERT INTO jarvis.project_skill_approvals
         (project_id, repository_id, skill_id, revision_digest, decision, actor_id, config_version)
       VALUES ($1, 3001, 'plan', $2, 'approved', 'owner-a', 1)`, [
@@ -115,7 +130,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await client.query("ROLLBACK").catch(() => undefined);
       client.release();
     }
-    if (fixtureCommitted) await pool.query("TRUNCATE jarvis.installations CASCADE");
+    if (fixtureCommitted) await pool.query("TRUNCATE jarvis.policies, jarvis.installations CASCADE");
     await pool.end();
   }
 });
