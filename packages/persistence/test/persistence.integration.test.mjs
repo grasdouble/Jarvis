@@ -192,7 +192,17 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
               END LOOP;
             END $$
           `);
-          await client.query("TRUNCATE jarvis.installations, jarvis.policies CASCADE");
+          await client.query(`
+            DO $$
+            DECLARE truncate_tables text;
+            BEGIN
+              SELECT string_agg(format('jarvis.%I', tablename), ', ' ORDER BY tablename)
+              INTO truncate_tables
+              FROM pg_tables
+              WHERE schemaname = 'jarvis' AND tablename <> 'schema_migrations';
+              EXECUTE 'TRUNCATE TABLE ' || truncate_tables;
+            END $$
+          `);
           await client.query("COMMIT");
           cleanupCommitted = true;
         } finally {
