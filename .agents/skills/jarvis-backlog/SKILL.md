@@ -5,6 +5,8 @@ description: Downstream project-management workflow for an explicitly routed @ja
 
 # JARVIS project management
 
+Follow the shared [orchestration and delegation policy](../../../docs/jarvis-request-routing.md#orchestration-and-delegation). The primary agent remains accountable for backlog outcomes; any specialist delegation is bounded by the user's existing authorization and does not grant additional mutation authority. Report when no suitable worker is available rather than implying delegation occurred.
+
 ## Context
 
 Read [AGENTS.md](../../../AGENTS.md) and the relevant sections of the [PRD](../../../docs/prd-and-roadmap.md). The development repository is `grasdouble/Jarvis`; its organization project is [JARVIS — Development](https://github.com/orgs/grasdouble/projects/1).

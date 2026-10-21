@@ -32,6 +32,18 @@ Tags express intent only. They do not grant permissions, expand the user's reque
 - `@jarvis-backlog` is the direct entry point to [`jarvis-backlog`](../.agents/skills/jarvis-backlog/SKILL.md). Backlog consultation/maintenance remains project management and does not imply implementation.
 - `@jarvis-tags` routes only to [`jarvis-tags`](../.agents/skills/jarvis-tags/SKILL.md), which returns this registry and starts no other workflow.
 
+## Orchestration and delegation
+
+### Coordinator and specialist subagents {#orchestration-and-delegation}
+
+For every tagged contributor-session request, the primary session remains the coordinator: it invokes the matching specialist skill, owns the end-to-end request, integrates evidence, and answers the user. For substantive work, it delegates bounded specialist analysis/work to an appropriately qualified subagent when suitable capacity is available. Give each subagent only the minimum sanitized context needed for its assignment; provide no credentials and no extra tools or permissions. Delegation is within the selected workflow, not launching a second copy of that workflow, and does not relax its scope, read-only, write, review, or approval gates.
+
+Credentialed GitHub reads, all GitHub writes, commits, and publication are performed and owned by the primary coordinator under the selected skill and actual authorization. The coordinator may delegate analysis of sanitized data returned from credentialed reads, but must not pass credentials or authenticated access to a subagent. Status and backlog delegation is therefore limited to bounded analysis of sanitized returned data (or other non-credentialed context); it grants no authenticated access or mutation authority. The same minimum-context and no-extra-permissions rule applies to every specialist.
+
+Do not spawn a worker for `@jarvis-tags`' exact registry-only response or a clarification-only turn. If suitable worker capacity or tooling is unavailable, report that limitation explicitly; direct handling without a worker cannot be called delegated. The primary session may proceed only as allowed by the selected skill and user authorization.
+
+This convention applies to contributor sessions only. It is not technically enforced, does not grant permissions, and does not add delegation capability or behavior to the JARVIS product runtime.
+
 Information, status, planning, and read-only audit requests do not start issue delivery. A repository change does, even if it is a small documentation or skill edit. A review report is not a GitHub approval or merge authorization.
 
 ## Skill entry points and enforcement limits
