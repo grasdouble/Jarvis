@@ -302,6 +302,10 @@ importers:
   packages/observability: {}
 
   packages/persistence:
+    dependencies:
+      '@jarvis/queue':
+        specifier: workspace:*
+        version: link:../queue
     devDependencies:
       '@types/node':
         specifier: 26.6.5

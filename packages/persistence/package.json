@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "pnpm run build && node --test src/*.test.mjs test/*.integration.test.mjs"
+    "build": "pnpm --filter @jarvis/queue run build && tsc",
+    "typecheck": "pnpm --filter @jarvis/queue run build && tsc --noEmit",
+    "test": "pnpm --filter @jarvis/queue run build && pnpm run build && node --test src/*.test.mjs test/*.integration.test.mjs"
+  },
+  "dependencies": {
+    "@jarvis/queue": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "26.6.5",
