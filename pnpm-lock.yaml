@@ -303,6 +303,9 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@jarvis/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@jarvis/queue':
         specifier: workspace:*
         version: link:../queue
