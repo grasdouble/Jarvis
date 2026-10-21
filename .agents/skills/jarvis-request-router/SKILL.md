@@ -1,11 +1,11 @@
 ---
 name: jarvis-request-router
-description: Apply the canonical tag-based routing convention to new JARVIS contributor-session requests and select the appropriate downstream specialist without granting permissions.
+description: Resolve missing, mismatched, or ambiguous JARVIS contributor-request tags and explain the canonical tag-to-skill entry points without granting permissions.
 ---
 
 # JARVIS request router
 
-Use this lightweight contributor-session router when handling JARVIS requests. The canonical registry and full contract are in [jarvis-request-routing.md](../../../docs/jarvis-request-routing.md). Read the registry from that source; do not maintain a second copy.
+Use this lightweight fallback when a contributor-session request lacks a tag, has a mismatched tag, or remains ambiguous. For a supplied matching tag, invoke the skill with the aligned ID directly instead of routing through this meta-skill. The canonical registry and full contract are in [jarvis-request-routing.md](../../../docs/jarvis-request-routing.md). Read the registry from that source; do not maintain a second copy.
 
 ## Decide before routing
 
@@ -18,12 +18,12 @@ Use this lightweight contributor-session router when handling JARVIS requests. T
 
 | Tag | Downstream route |
 | --- | --- |
-| `@jarvis-info` | `jarvis-project-info`, repository explanation mode; read-only. |
-| `@jarvis-status` | `jarvis-project-info`, current GitHub status mode; read-only and disclose inaccessible/stale/incomplete sources. |
-| `@jarvis-plan` | `jarvis-project-governance` with an explicit no-edits/no-GitHub-mutations constraint; return options and recommendation only. |
-| `@jarvis-delivery` | `jarvis-issue-delivery`; follow full issue intake and delivery gates. |
-| `@jarvis-review` | If part of a current delivery, `jarvis-issue-delivery` coordinates it. Otherwise start a fresh independent `jarvis-pr-review` context with scope, criteria, and exact base/head. Never create a delivery issue just to review. |
-| `@jarvis-backlog` | `jarvis-project-management`; perform only the requested authorized project-management work, not implementation by implication. |
+| `@jarvis-info` | Directly invoke `jarvis-info`; repository explanation, read-only. |
+| `@jarvis-status` | Directly invoke `jarvis-status`; current GitHub status, read-only, disclose inaccessible/stale/incomplete sources. |
+| `@jarvis-plan` | Directly invoke `jarvis-plan`; read-only governance assessment and options. |
+| `@jarvis-delivery` | Directly invoke `jarvis-delivery`; follow full issue intake and delivery gates. |
+| `@jarvis-review` | Directly invoke `jarvis-review`. If part of a current delivery, `jarvis-delivery` coordinates it; otherwise use a fresh independent reviewer context. Never create a delivery issue just to review. |
+| `@jarvis-backlog` | Directly invoke `jarvis-backlog`; perform only the requested authorized project-management work, not implementation by implication. |
 | `@jarvis-tags` | `jarvis-tags` only; return the canonical list, with no repository inspection or workflow. |
 
 ## Review boundary
@@ -32,4 +32,4 @@ The reviewer must not have authored any part of the candidate. The reviewer rece
 
 ## OpenCode capability boundary
 
-This skill is an instruction procedure, not a request hook or policy engine. OpenCode may discover it as a skill and a model/user may load it, but a normal session is not technically forced to invoke it. The custom `@jarvis-*` tags are not native OpenCode dispatch syntax; follow the root `AGENTS.md` entry point in ordinary repository sessions and be honest about unavailable/ignored instructions. Contributor-session agents/tools are distinct from the JARVIS product runtime. The product OpenCode profiles documented in [technical architecture §10.2](../../../docs/technical-architecture.md#102-controlled-configuration-and-permissions) disable task/subagent tools; do not claim the product can start one spontaneously. J06 is separately gated and uses its planned attempt/session model.
+This skill is a fallback instruction procedure for missing, mismatched, or ambiguous tags, not a request hook or policy engine. The canonical tag-aligned skills are the direct entry points when the user invokes them through a compatible skill-aware client. OpenCode v2 supports skill invocation by ID; other clients may use different syntax or not support it. Neither aligned IDs nor this router require every message to start with a tag or prevent direct invocation of other available skills. Contributor-session agents/tools are distinct from the JARVIS product runtime. The product OpenCode profiles documented in [technical architecture §10.2](../../../docs/technical-architecture.md#102-controlled-configuration-and-permissions) disable task/subagent tools; do not claim the product can start one spontaneously. J06 is separately gated and uses its planned attempt/session model.

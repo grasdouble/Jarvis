@@ -35,7 +35,7 @@ jobs:
       - name: Test package release workflow contracts and reconciliation
         run: python3 -m unittest discover -s scripts/release -p 'test_*.py'
       - name: Test the PR-review validation workspace helper
-        run: python3 .agents/skills/jarvis-pr-review/scripts/test_prepare_validation_workspace.py
+        run: python3 .agents/skills/jarvis-review/scripts/test_prepare_validation_workspace.py
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -56,7 +56,7 @@ jobs:
       - name: Test the sandbox-manager contracts
         run: pnpm --filter @jarvis/sandbox-manager test
       - name: Test contributor GitHub tooling without real credentials
-        run: node --test .agents/skills/jarvis-project-management/scripts/github/*.test.mjs
+        run: node --test .agents/skills/jarvis-backlog/scripts/github/*.test.mjs
 
   pr-title:
     name: Conventional PR title

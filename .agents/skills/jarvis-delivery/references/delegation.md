@@ -88,10 +88,10 @@ Retain commands, outcomes, limitations and provenance in the ledger.
 Before final checks and review, freeze/join every writer and verify none can
 continue modifying the candidate. The coordinator then prepares exact integrated
 commits and delegates to a fresh independent reviewer who authored none of the
-candidate, using [jarvis-pr-review](../../jarvis-pr-review/SKILL.md) and the
+candidate, using [jarvis-review](../../jarvis-review/SKILL.md) and the
 [shared review loop](../../../../docs/autonomous-delivery.md#contributor-review-loop).
 Supply exact base/head revisions, complete scope/evidence and a separate validation
-workspace/execution scope under the [direct validation contract](../../jarvis-pr-review/references/direct-validation.md).
+workspace/execution scope under the [direct validation contract](../../jarvis-review/references/direct-validation.md).
 The reviewer executes its own permitted checks and returns its verdict to the
 coordinator, which assigns fixes to the author and owns integration/delivery.
 Another validation LLM is not required. A later change

@@ -1,5 +1,5 @@
 ---
-name: jarvis-pr-review
+name: jarvis-review
 description: Downstream reviewer for @jarvis-review routing or issue-delivery coordination; independently review an authorized JARVIS change at exact base/head revisions, directly perform bounded validation, and return findings or a clean/limited result. Never implement, publish, or merge the change.
 ---
 
@@ -19,16 +19,16 @@ Confirm the base/head commits exist and the target is the intended issue/branch.
 
 Before running checks, use the bundled validation workspace helper at scripts/prepare_validation_workspace.py from the trusted base checkout. It accepts a clean source repository root, full base/head commit IDs, and a new destination outside that checkout. The source checkout must be at HEAD, and the exact base commit must be the target of an existing local ref. Fetch the intended base first when needed. When reviewing a change that adds or updates this helper, do not use the candidate copy to prepare its own review workspace; use the coordinator's already trusted preparation method until the helper is part of the trusted base.
 
-    python3 .agents/skills/jarvis-pr-review/scripts/prepare_validation_workspace.py prepare \
+    python3 .agents/skills/jarvis-review/scripts/prepare_validation_workspace.py prepare \
       --repo /absolute/path/to/issue-worktree \
       --base BASE_COMMIT --head HEAD_COMMIT \
       --destination /private/tmp/jarvis-review-RUN_ID
-    python3 .agents/skills/jarvis-pr-review/scripts/prepare_validation_workspace.py verify \
+    python3 .agents/skills/jarvis-review/scripts/prepare_validation_workspace.py verify \
       --workspace /private/tmp/jarvis-review-RUN_ID
 
 Preparation writes a JSON manifest under .git/jarvis-validation/manifest.json and returns the workspace path, exact B/H/merge-base IDs, tree ID, and tracked-file count. It bundles HEAD and the exact base ref with their reachable ancestry, then creates a fresh checkout with no remote, user/system Git configuration, hooks, credentials, caches, or unrelated branches. It does not change the source branch, index, working tree, or refs, access the network, or run repository commands. Submodules, unsafe paths, escaping symlinks, unsupported object types, dirty source checkouts, and existing destinations or missing destination parents fail before a workspace is delivered.
 
-The helper prints one JSON result per invocation. Exit 0 means prepared or verified, exit 1 means the workspace no longer matches its manifest, and exit 2 means invalid input or a Git/tool failure. Run verify before and after checks; keep test/build/cache output outside the snapshot so added files are reported as drift. The workspace is disposable test storage, not an enforced sandbox; inspect and run only checks allowed by the [direct validation contract](references/direct-validation.md). The helper itself is covered by python3 .agents/skills/jarvis-pr-review/scripts/test_prepare_validation_workspace.py.
+The helper prints one JSON result per invocation. Exit 0 means prepared or verified, exit 1 means the workspace no longer matches its manifest, and exit 2 means invalid input or a Git/tool failure. Run verify before and after checks; keep test/build/cache output outside the snapshot so added files are reported as drift. The workspace is disposable test storage, not an enforced sandbox; inspect and run only checks allowed by the [direct validation contract](references/direct-validation.md). The helper itself is covered by python3 .agents/skills/jarvis-review/scripts/test_prepare_validation_workspace.py.
 
 ## Review the outcome
 

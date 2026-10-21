@@ -83,8 +83,8 @@
 ## Invocation and trust boundary
 
 ```bash
-node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs 160 /path/to/assessment.json
-node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs 160 /path/to/assessment.json --write
+node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/coordination-parent-acceptance.mjs 160 /path/to/assessment.json
+node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/coordination-parent-acceptance.mjs 160 /path/to/assessment.json --write
 ```
 
 Default mode reads the parent, complete native-child inventory, and paginated parent comments, then prints per-criterion outcomes, rationales, evidence links, child-comment actions, and whether a final assessment could be posted; it does not mutate GitHub. `--write` is permitted only after explicit user authorization to append acceptance comments. For every completed child it appends an idempotent content-addressed delivery snapshot, including a structured `not_yet_validated` record when PR/check evidence is missing or insufficient. If stronger evidence is supplied later, it appends a new snapshot instead of editing or deleting earlier comments. If any native child is open, it stops before final assessment. It posts a structured final assessment only when every child has a validated delivery snapshot and every exact current parent criterion is validated, including required integration evidence. Otherwise it reports gaps and posts no final assessment. The recorder never PATCHes the parent body, edits checkboxes, or closes the issue. Run one writer at a time; after an uncertain write, reread the complete comment inventory before retrying. The caller must inspect and substantiate every cited PR, check, fixture, release, or live-service result; the helper validates structure and provenance markers, not semantic truth. A status/readiness check does not authorize `--write`. Keep assessment files in an approved temporary directory and do not include secrets or sensitive details in labels/comments.

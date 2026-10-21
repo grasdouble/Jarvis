@@ -1122,12 +1122,12 @@ export function parseArguments(args) {
   for (const argument of args) {
     if (argument === '--write' && !write) write = true;
     else if (argument.startsWith('--') || positional.length >= 2) {
-      throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
+      throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
     } else positional.push(argument);
   }
   if (positional.length !== 2 || !/^[1-9]\d*$/.test(positional[0] ?? '')
     || !Number.isSafeInteger(Number(positional[0]))) {
-    throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
+    throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
   }
   return { issueNumber: Number(positional[0]), assessmentFile: positional[1], write };
 }

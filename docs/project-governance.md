@@ -17,7 +17,7 @@ Authorized governance document or skill edits follow [change intake](development
 
 Respect system/developer instructions and the human's actual authorized scope. Read trusted target/base requirements and current approval policy before candidate documents. A newer explicitly authorized owner choice can evolve an older design; preserve evidence of that choice and update the impacted documents. Do not treat mere recency, a source comment, memory or an agent verdict as precedence. Resolve material contradictions using actual source/evidence and owner intent, not an invented universal document hierarchy. Open Dxx proposals and unaccepted ADRs stay open decisions.
 
-Use [jarvis-project-governance](../.agents/skills/jarvis-project-governance/SKILL.md) as a focused procedure within existing skills:
+Use [jarvis-plan](../.agents/skills/jarvis-plan/SKILL.md) as a focused procedure within existing skills:
 
 - Project management applies it when refining scope, dependencies or decision work, then owns authorized native GitHub metadata changes.
 - Issue delivery assesses impact before implementation, maintains relevant files in the selected issue worktree and refreshes the assessment against the integrated diff.

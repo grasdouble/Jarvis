@@ -4,13 +4,13 @@ These recipes support the authorized issue workflow, not a batch to run automati
 
 ## App authentication for these recipes
 
-Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-project-management/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
+Use the reviewed [development App helper](../../../../docs/development-github-app.md) for routine operations. Replace a read recipe's leading `gh` with `node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/gh-app.mjs --`, or use `--write --` for an authorized mutation. The trusted checkout path must identify an actually reviewed helper, not an untrusted PR copy. For publication, replace an ordinary SSH `git push` with `node /trusted/checkout/.agents/skills/jarvis-backlog/scripts/github/gh-app.mjs --write --git-push`, run from the issue worktree. PR creation must specify base and head explicitly. These are command prefixes, not additional commands to run after the recipes. `gh auth status` below inspects the human login; use the helper's `--verify` to check the App. Do not silently fall back to the owner's credentials.
 
 Before authenticating or retrying a transport failure, follow the [network access and recovery procedure](../../../../docs/development-github-app.md#network-access-and-recovery). Use the reviewed helper’s `--check-network` without credentials; exit 75 with `JARVIS_GITHUB_NETWORK:` requires current-context diagnosis and approved access, not key rotation. Reconcile remote state before repeating writes. For offline command discovery, invoke plain `gh … --help` rather than the authenticated wrapper.
 
 ## Inspect the issue and existing work
 
-When the human has accepted a repository change but supplied no issue, follow [change intake](../../../../docs/development-workflow.md#route-requests-before-editing) and the linked project-management creation/metadata recipes first. An accepted small documentation or skill change is not a local-only exception. Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-project-management/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.
+When the human has accepted a repository change but supplied no issue, follow [change intake](../../../../docs/development-workflow.md#route-requests-before-editing) and the linked project-management creation/metadata recipes first. An accepted small documentation or skill change is not a local-only exception. Run initial discovery from the intended repository. Use [project-management commands](../../jarvis-backlog/references/github-cli.md) for native dependency inspection and board transitions; confirm prerequisite outcomes before implementation.
 
 ```bash
 task_repo='grasdouble/Jarvis'
@@ -65,7 +65,7 @@ python3 /absolute/trusted/main/scripts/ci/bootstrap_validation_env.py \
 
 If the trusted checkout predates this helper, use the documented manual setup as a transitional fallback; do not run an unmerged candidate copy as the bootstrap tool.
 
-Use the project-management status recipe to set the issue to `In Progress` when work starts. An incomplete draft remains `In Progress` or becomes `Blocked` with a concrete reason. For blocking, material blocker updates, and verified resumption, use the [shared lifecycle](../../../../docs/blocker-lifecycle.md) and [project-management comment commands](../../jarvis-project-management/references/github-cli.md#blocker-comments-and-transition-recovery). Preserve the worktree and PR, record evidence before changing status, and reread after partial/ambiguous writes.
+Use the project-management status recipe to set the issue to `In Progress` when work starts. An incomplete draft remains `In Progress` or becomes `Blocked` with a concrete reason. For blocking, material blocker updates, and verified resumption, use the [shared lifecycle](../../../../docs/blocker-lifecycle.md) and [project-management comment commands](../../jarvis-backlog/references/github-cli.md#blocker-comments-and-transition-recovery). Preserve the worktree and PR, record evidence before changing status, and reread after partial/ambiguous writes.
 
 ## Discover and run relevant checks
 
@@ -126,8 +126,8 @@ If an existing draft becomes ready, use `gh pr ready` only after verification. A
 Follow the [metadata contract](../../../../docs/pr-project-metadata.md) using a reviewed checkout. Replace NUMBER with the actual selected PR number. The command uses the App helper itself; do not prepend `gh` or pass owner credentials.
 
 ```bash
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --pr NUMBER --write
 ```
 
 Verify the native implementation issue and its milestone first. Inspect diagnostics and the saved Issue column/native PR milestone. No guessed links, automatic status update or CI credential activation is included. If publication is part of reviewing this tool's own implementation, inspect and independently review the exact source before using it with real credentials.
@@ -177,8 +177,8 @@ References: [linked issue branches/worktrees](https://cli.github.com/manual/gh_i
 Follow the [actual-date contract](../../../../docs/roadmap-actual-dates.md) after authorized native status/state changes. Replace NUMBER with the selected issue; the reviewed command uses the App helper itself. Do not prefix it with `gh` or supply owner credentials.
 
 ```bash
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue NUMBER --write
 ```
 
 Project-wide backfill omits `--issue NUMBER` only within corresponding maintenance scope. Verify diagnostics and both saved actual dates; unknown history stays unknown, planned date fields remain unchanged and no status transition is performed by this command.

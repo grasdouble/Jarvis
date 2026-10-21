@@ -1,5 +1,5 @@
 ---
-name: jarvis-project-governance
+name: jarvis-plan
 description: Downstream governance analysis for an explicitly routed @jarvis-plan request or authorized issue delivery; assess JARVIS development against accepted requirements and decisions, and report impact/alignment. Planning use is read-only; authorized document/ADR preparation occurs only within delivery. Not product runtime control or approval authority.
 ---
 
@@ -27,6 +27,6 @@ For already authorized evolution, update affected PRD, architecture, detailed de
 
 Reassess the actual integrated diff before review, including renamed/deleted documents and changed evidence. Report what remains proposed, implemented, measured or unknown. Populate the PR's Specification and decision impact section with relevant IDs/sections, source/base, disposition, affected files, actual evidence and any required owner action. Link the scoped issue or PR assessment for context recovery; summaries are navigation, not authority.
 
-The independent reviewer checks this record against trusted source/authorization and the complete exact revision. If acting as that reviewer, remain non-authoring: direct validation and scratch outputs follow the [review contract](../jarvis-pr-review/references/direct-validation.md); return findings, never author delivery corrections, claim acceptance, publish or merge. An author/governance writer cannot independently review its own changes. Use the existing review skill/ledger rather than starting a parallel approval loop.
+The independent reviewer checks this record against trusted source/authorization and the complete exact revision. If acting as that reviewer, remain non-authoring: direct validation and scratch outputs follow the [review contract](../jarvis-review/references/direct-validation.md); return findings, never author delivery corrections, claim acceptance, publish or merge. An author/governance writer cannot independently review its own changes. Use the existing review skill/ledger rather than starting a parallel approval loop.
 
 Return a concise assessment and scoped patch references or next required input. Unexplained drift, missing acceptance authority or insufficient critical evidence prevents a clean handoff. Configuration/link/secret checks and simulated skill evaluation do not prove semantic compliance or runtime qualification. Do not start a periodic watcher, global audit, product feature or unrelated backlog implementation from this procedure.

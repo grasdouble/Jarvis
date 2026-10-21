@@ -43,7 +43,7 @@ export function findIssuesWithoutMilestones(pages) {
 
 function main(args) {
   if (args.length !== 1) {
-    process.stderr.write('Usage: node .agents/skills/jarvis-project-management/scripts/github/check-issue-milestones.mjs <inventory.json>\n');
+    process.stderr.write('Usage: node .agents/skills/jarvis-backlog/scripts/github/check-issue-milestones.mjs <inventory.json>\n');
     return 2;
   }
   try {

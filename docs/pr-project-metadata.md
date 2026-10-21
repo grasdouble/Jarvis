@@ -26,12 +26,12 @@ Use a reviewed checkout with Node.js 24, GitHub CLI and the [development App hel
 
 ```bash
 # Read-only preview of one published PR.
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr 92
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --pr 92
 # Within the authorized publication scope, apply and reread its derived metadata.
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --pr 92 --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --pr 92 --write
 # Authorized project-wide catch-up, including historical PRs.
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --write
 ```
 
 Replace 92 with the actual published PR number; never run an example blindly. Local execution uses the existing App helper with read/write profiles, without personal-token fallback. `--pr` scopes initial, recovery and final reads and effects to that PR; prefer it while another agent owns a different issue. No CLI option changes the repository, project or field.

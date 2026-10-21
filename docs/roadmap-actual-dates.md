@@ -17,12 +17,12 @@ Use a reviewed checkout and the existing [development App](development-github-ap
 
 ```bash
 # Preview the historical project inventory without effects.
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap
 # Authorized project maintenance/backfill, followed by readback.
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --write
 # Selected-issue maintenance; replace 93 with the actual issue.
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue 93
-node .agents/skills/jarvis-project-management/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue 93 --write
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue 93
+node .agents/skills/jarvis-backlog/scripts/github/sync-pr-project-metadata.mjs --roadmap --issue 93 --write
 ```
 
 `--issue` restricts effects to one existing Jarvis issue member; initial membership discovery reads the project inventory. It never adds missing membership. `--pr` cannot be combined with roadmap mode. Before starting, reviewing or confirming delivery, skills preview and synchronize the selected issue after its native state/status change. Recheck the JSON diagnostics and saved dates; idempotent reruns produce zero writes. Missing source/history is not an invitation to invent one.
