@@ -42,27 +42,28 @@ This changes contributor procedure only. It does not change product runtime poli
 
 ## Implementation coordination and context
 
-Before independent review, the issue-delivery coordinator may use the [bounded delegation procedure](../.agents/skills/jarvis-delivery/references/delegation.md) for implementation. The coordinator retains the issue plan, dependencies, file ownership, integration decisions and evidence/limits ledger; workers receive minimal fresh contexts and own explicit non-overlapping files. Default to one worker for substantial sequential work, allow at most two implementation workers when both tasks/resources are independent, and keep small changes direct. New workers do not each inherit a fresh issue/review budget or independent permission to publish.
+Before independent review, the issue-delivery coordinator uses the [bounded delegation procedure](../.agents/skills/jarvis-delivery/references/delegation.md) for implementation. The coordinator retains the issue plan, dependencies, file/resource ownership and evidence/limits ledger, and coordinates task/resource scheduling; bounded worker(s) own substantive code integration and interface-conflict resolution, plus whole-candidate integrated checks. The same worker may implement, integrate and validate when feasible. Default to one worker for substantial sequential work; allow at most two implementation workers when both tasks/resources are independent. New workers do not each inherit a fresh issue/review budget or independent permission to publish. If suitable workers/tools are unavailable for required integration or validation, hand off for owner direction rather than substituting the coordinator.
 
-One issue keeps one branch/worktree/PR. The coordinator owns Git index/commits, GitHub operations and final integration; workers do not recursively spawn workers or publish. Shared contracts, lockfiles, migrations and conflicting test resources serialize. Independently reviewable outcomes remain child issues with their own branches/worktrees/PRs. A timed-out/cancelled worker may still write: reconcile its status and diff and confirm it stopped before reassignment. Join every writer and freeze the integrated revision before review. The final reviewer must have authored none of the candidate, including worker fixes.
+One issue keeps one branch/worktree/PR. The coordinator owns the Git index, commits, review-snapshot control, delivery and GitHub operations; workers do not recursively spawn workers or publish. Shared interfaces/contracts, files, lockfiles, migrations and test resources serialize under coordinator resource scheduling, with substantive code integration/interface-conflict resolution assigned to the designated worker-integrator. Independently reviewable outcomes remain child issues with their own branches/worktrees/PRs. A timed-out/cancelled worker may still write: reconcile its status and diff and confirm it stopped before reassignment. Join every writer and freeze the worker-integrated, validated revision before review. The final reviewer must have authored none of the candidate, including worker fixes.
 
-Keep briefs/results short and store full relevant evidence outside tracked source. Recover claims, task dependencies, baseline revisions and actual verification before resuming; do not use compaction or a new agent to reset budgets. Summaries aid navigation, not truth: the coordinator inspects the final diff and integrated acceptance. Subagents shift context and can increase total usage; they do not guarantee unlimited context, data retention, credential separation or sandbox isolation. If implementation delegation is unavailable, continue sequentially when authorized; do not substitute self-review for the mandatory independent reviewer. Product J06 execution/concurrency still needs its own qualified profiles.
+Keep briefs/results short and store full relevant evidence outside tracked source. Recover claims, task dependencies, baseline revisions and actual verification before resuming; do not use compaction or a new agent to reset budgets. Summaries aid navigation, not truth: the coordinator inspects source and worker evidence and assesses acceptance. Subagents shift context and can increase total usage; they do not guarantee unlimited context, data retention, credential separation or sandbox isolation. Do not substitute the coordinator for required integration or integrated validation when suitable delegation is unavailable; hand off for owner direction. Do not substitute self-review for the mandatory independent reviewer. Product J06 execution/concurrency still needs its own qualified profiles.
 
 ## Direct contributor validation
 
-The author runs its own checks (including applicable RED/GREEN) and returns the change plus evidence. The coordinator performs integration checks and freezes the candidate. The independent reviewer selects and directly executes relevant checks through available authorized tools, then returns its verdict and findings to the coordinator. The coordinator routes fixes back to the author or applies the existing delivery gates. Small changes may combine coordinator/author, never author/reviewer. No fourth LLM executor is required.
+The author runs its own checks (including applicable RED/GREEN) and returns the change plus evidence. The designated bounded worker integrates the candidate, resolves code/interface conflicts and runs whole-candidate integrated/acceptance checks. The coordinator inspects the source and evidence, assesses acceptance, and freezes the review snapshot; it does not perform code integration or the integrated test phase. The independent reviewer selects and directly executes relevant checks through available authorized tools, then returns its verdict and findings to the coordinator. The coordinator routes fixes to a worker and retains Git/delivery controls. The reviewer must have authored none of the candidate. No fourth LLM executor is required.
 
 ```mermaid
 flowchart TD
-    O[Coordinator] -->|Implementation or fixes| A[Author]
+    O[Coordinator: scope and resource coordination] -->|Bounded implementation task| A[Author / worker-integrator]
     A -->|Runs checks| AT[Author validation tools]
     AT -->|Results| A
-    A -->|Change and evidence| O
-    O -->|Frozen revisions and scope| R[Independent reviewer]
+    A -->|Integrated candidate and acceptance evidence| O
+    O -->|Assesses evidence; freezes review snapshot| S[Exact revision]
+    S -->|Frozen revisions and scope| R[Independent reviewer]
     R -->|Runs selected checks| RT[Reviewer validation tools]
     RT -->|Direct results| R
     R -->|Verdict and findings| O
-    O -->|Findings: fix locally and fresh review| A
+    O -->|Findings: worker correction and fresh review| A
     O -->|Clean local review: publish exact H/B| D[Ready-for-review PR and current gates]
 ```
 

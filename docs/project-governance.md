@@ -23,7 +23,7 @@ Use [jarvis-plan](../.agents/skills/jarvis-plan/SKILL.md) as a focused procedure
 - Issue delivery assesses impact before implementation, maintains relevant files in the selected issue worktree and refreshes the assessment against the integrated diff.
 - Independent review verifies the assessment and source/acceptance evidence without authoring corrections. Any implementation contributor, including a governance writer, remains ineligible to review that candidate independently.
 
-The coordinator alone owns integration, commits and GitHub writes. A small change needs a short assessment, not a new agent or issue for every document. Use the existing bounded review ledger and role boundaries; this procedure creates no extra standing merge authority or separate review-budget reset.
+The coordinator owns task/resource coordination, evidence and acceptance assessment, review-snapshot control, Git index/commits and GitHub writes—not substantive code integration or integrated test execution. Designated bounded worker(s) own code integration/interface-conflict resolution and whole-candidate integrated checks. A small change needs a short assessment, not a new agent or issue for every document. Use the existing bounded review ledger and role boundaries; this procedure creates no extra standing merge authority or separate review-budget reset.
 
 ## Assess before implementation and before review
 

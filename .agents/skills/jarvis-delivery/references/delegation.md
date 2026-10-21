@@ -11,11 +11,13 @@ Keep one compact coordinator responsible for the issue and default to fresh,
 bounded implementers for repository issue implementation work. At issue start,
 assess what can be delegated and dispatch the meaningful bounded work rather
 than assuming the coordinator should implement everything. Supply only the
-context each task needs. Record a specific exception in the recoverable ledger
-when delegation is genuinely not meaningful for the bounded task or
-no suitable subagent capacity/tool is available; identify the reason and whether
-it covers all or only part of the issue. Do not spawn an agent merely to perform
-trivial coordination-only actions. Delegation shifts context between agents and
+context each task needs. A genuinely non-meaningful-to-delegate exception may
+apply only to the bounded authoring task; record its reason and affected scope in
+the recoverable ledger. It never waives designation of bounded worker(s) for
+substantive code integration/interface-conflict resolution and whole-candidate
+integrated/acceptance testing. If suitable workers/tools are unavailable for
+those required roles, hand off and request owner direction; the coordinator does
+not substitute. Do not spawn an agent merely to perform trivial coordination-only actions. Delegation shifts context between agents and
 can increase aggregate tokens; it does not guarantee perfect memory retention
 or reduce total cost.
 
