@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.21 • October 19, 2026 • Companion to the PRD and roadmap
+Document version 1.22 • October 21, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -342,6 +342,17 @@ Controller routes are separate (`/internal/v1/sandboxes`) and are not published.
 | Actions | Read only if needed to identify the expected workflow | Enable after endpoint-by-endpoint verification |
 
 Issues write, Workflows write, Secrets, Deployments, and Administration write are absent. Merge permissions/endpoints are not part of v0.1. Branch publication and PR creation permissions must be minimized for the selected implementation and validated on a test installation; agent containers never receive tokens. Any `Contents: write` capability remains in a deterministic executor inaccessible to agents. [G6](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps)
+
+The initial `@jarvis/github` adapter endpoint/permission matrix is deliberately narrow:
+
+| Endpoint | Adapter operation | App permission (minimum) | Qualification/status |
+| --- | --- | --- | --- |
+| `GET /repos/{owner}/{repo}/pulls/{pull_number}` | Explicit PR-state read | Pull requests: read | Implemented; installation and live permission behavior not qualified |
+| `GET /repos/{owner}/{repo}/pulls?head=…&base=…&state=all&per_page=100` | Reconcile a potentially uncertain PR creation; an incomplete paginated search is unknown, never absence | Pull requests: read | Implemented; no automatic retry on not-found |
+| `POST /repos/{owner}/{repo}/pulls` | Create/open a task-bound PR | Pull requests: write | Implemented behind deterministic adapter; live disposable App qualification outstanding |
+| Branch/ref/contents write endpoints | Publish task branch before PR creation | **Not implemented / not qualified** | Exact strategy and minimum permission remain an implementation qualification item; no `Contents: write` is implied by this PR endpoint |
+
+Every API effect rechecks both the current internal project allowlist and current installation authorization through trusted ports; removals or inability to establish either authorization fail closed. The trusted token port receives the canonical repository and exact `pull-requests:read` or `pull-requests:write` operation permission so it can provide a repository/operation-scoped installation token; it does not expose credentials to the agent. A lost create response is reconciled by exact repository, head/base refs, title, task/revision marker in the PR body, and `head.sha` equal to the requested revision, using GitHub's `owner:head-ref` filter and a detail GET for a match. A candidate with matching refs/title but a different marker or branch-head SHA is returned as `unknown` with reason `identity-mismatch`. A complete search with no result is returned as `unknown` with reason `not-found`; failed search or incomplete pagination also remains `unknown`. Even a complete no-match is **not authorization to retry**. The adapter never retries automatically. No issue/event discovery, webhook ingestion, approval, merge, or administrative write endpoint is exposed. These adapter tests do not qualify real App permissions, branch publication, protections, or a disposable installation.
 
 The App is installed only on selected repositories and is not a bypass actor. The broker creates an installation token limited to one repository and the task's permissions. Tokens expire according to the returned `expires_at`; the documentation specifies one hour. Never assume a fixed token length. The App private key never leaves the trusted service responsible for authentication. [G7](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
 
