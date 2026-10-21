@@ -27,14 +27,14 @@ export interface RequestRecord {
   repositoryId: string | null;
   mode: RequestMode | null;
   kind: RequestKind;
-  prompt: string;
+  prompt: string | null;
   promptDigest: string;
   configVersion: number | null;
   policyHash: string | null;
   state: IntakeState;
   clarification: readonly string[];
   idempotencyKey: string;
-  requestDigest: string;
+  requestDigest: string | null;
   selector: string | null;
   explicitMode: RequestMode | null;
   explicitKind: RequestKind | null;
@@ -95,6 +95,9 @@ export class ProjectRequestIntake {
     const requestDigest = await submissionDigest(input);
     const prior = await this.store.findByIdempotency(ownerId, input.idempotencyKey);
     if (prior) {
+      if (prior.prompt === null || prior.requestDigest === null) {
+        throw new RequestConflictError("Legacy request lacks replay-safe prompt and digest binding.");
+      }
       if (prior.requestDigest !== requestDigest) throw new RequestConflictError("Idempotency key was already used for a different request.");
       return prior;
     }
@@ -129,6 +132,9 @@ export class ProjectRequestIntake {
   async clarify(ownerId: string, requestId: string, expectedVersion: number, answer: RequestSubmission): Promise<RequestRecord> {
     const existing = await this.store.getOwned(requestId, ownerId);
     if (!existing) throw new RequestConflictError("No owned clarification is pending.");
+    if (existing.prompt === null || existing.requestDigest === null) {
+      throw new RequestConflictError("Legacy request lacks prompt and digest binding and cannot be clarified.");
+    }
     if (answer.prompt !== existing.prompt || answer.idempotencyKey !== existing.idempotencyKey) {
       throw new RequestConflictError("Clarification must resume the same request and idempotency key.");
     }

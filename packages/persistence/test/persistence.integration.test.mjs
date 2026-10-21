@@ -306,6 +306,28 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       state: "queued", clarification: [], idempotencyKey: "intake-integration-1", selector: "project-1",
       explicitMode: "plan", explicitKind: "dependency_update", version: 1,
     };
+    const legacyRequestId = randomUUID();
+    await pool.query(`
+      INSERT INTO jarvis.requests
+        (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key, config_version, policy_hash)
+      VALUES ($1, 'owner-a', '00000000-0000-4000-8000-000000000003', 3001, 'plan', $2, 'queued', 'legacy-request', 1, $3)
+    `, [legacyRequestId, "7".repeat(64), "b".repeat(64)]);
+    const legacyByKey = await intakeStore.findByIdempotency("owner-a", "legacy-request");
+    const legacyOwned = await intakeStore.getOwned(legacyRequestId, "owner-a");
+    assert.equal(legacyByKey.prompt, null);
+    assert.equal(legacyByKey.requestDigest, null);
+    assert.equal(legacyOwned.prompt, null);
+    assert.equal(legacyOwned.requestDigest, null);
+    await assert.rejects(intakeStore.create({
+      ...requestBase, id: randomUUID(), idempotencyKey: "legacy-request", requestDigest: "8".repeat(64),
+    }), /IDEMPOTENCY_CONFLICT/);
+    const { rows: [untouchedLegacy] } = await pool.query(`
+      SELECT r.state, r.prompt, r.request_digest,
+        (SELECT count(*) FROM jarvis.tasks t WHERE t.request_id=r.id)::integer AS task_count
+      FROM jarvis.requests r WHERE r.id=$1
+    `, [legacyRequestId]);
+    assert.deepEqual(untouchedLegacy, { state: "queued", prompt: null, request_digest: null, task_count: 0 });
+
     const admitted = await intakeStore.create(requestBase);
     assert.equal(admitted.state, "queued");
     assert.equal(admitted.prompt, requestBase.prompt);
@@ -385,7 +407,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'project_config_versions' THEN 1
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
-          WHEN 'requests' THEN 6
+          WHEN 'requests' THEN 7
           WHEN 'tasks' THEN 6
                   WHEN 'task_attempts' THEN 5
                   WHEN 'task_checkpoints' THEN 1

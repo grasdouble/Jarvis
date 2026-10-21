@@ -3,7 +3,7 @@ import type { SqlClient, SqlPool } from "./index.js";
 
 type RequestRow = {
   id: string; owner_id: string; project_id: string | null; repository_id: string | null; mode: RequestRecord["mode"];
-  request_kind: RequestRecord["kind"]; prompt: string; prompt_digest: string; request_digest: string;
+  request_kind: RequestRecord["kind"]; prompt: string | null; prompt_digest: string; request_digest: string | null;
   config_version: number | null; policy_hash: string | null; state: RequestRecord["state"];
   clarification: string[]; idempotency_key: string; selector: string | null; explicit_mode: RequestRecord["explicitMode"];
   explicit_kind: RequestRecord["explicitKind"]; version: number; profile_hash: string | null;
@@ -56,6 +56,9 @@ export class PostgresRequestIntakeStore implements RequestIntakeStore {
   }
 
   async create(value: RequestRecord): Promise<RequestRecord> {
+    if (value.prompt === null || value.requestDigest === null) {
+      throw new TypeError("New requests require a raw prompt and full request digest.");
+    }
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -115,6 +118,9 @@ export class PostgresRequestIntakeStore implements RequestIntakeStore {
   }
 
   async replaceClarification(value: RequestRecord, expectedVersion: number): Promise<RequestRecord> {
+    if (value.prompt === null || value.requestDigest === null) {
+      throw new TypeError("Legacy requests without prompt and digest cannot be clarified.");
+    }
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");

@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { URL } from "node:url";
 import { ProjectRequestIntake, RequestConflictError } from "../dist/index.js";
 
 const project = { id: "p1", repositoryId: "repo-1", configVersion: 3, policyHash: "a".repeat(64), profileHash: "b".repeat(64), active: true };
@@ -55,6 +57,35 @@ test("duplicate submission is idempotent and changed payload conflicts", async (
   assert.equal(await f.intake.submit("owner", input), first);
   await assert.rejects(() => f.intake.submit("owner", { ...input, prompt: "Different" }), RequestConflictError);
   await assert.rejects(() => f.intake.submit("owner", { ...input, mode: "dev" }), RequestConflictError);
+});
+
+test("public request types represent pre-004 prompt and full-request digest as nullable", async () => {
+  const declarations = await readFile(new URL("../dist/index.d.ts", import.meta.url), "utf8");
+  const record = declarations.match(/export interface RequestRecord \{([\s\S]*?)\n\}/)?.[1] ?? "";
+  assert.match(record, /prompt: string \| null;/);
+  assert.match(record, /requestDigest: string \| null;/);
+});
+
+test("legacy rows without raw prompt or full digest cannot be replayed or clarified", async () => {
+  const f = fixture();
+  const legacy = {
+    id: "legacy-1", ownerId: "owner", projectId: "p1", repositoryId: "repo-1", mode: "plan",
+    kind: "project", prompt: null, promptDigest: "a".repeat(64), requestDigest: null,
+    configVersion: 3, policyHash: project.policyHash, profileHash: null, state: "queued", clarification: [],
+    idempotencyKey: "legacy-key", selector: null, explicitMode: null, explicitKind: null, version: 1,
+    clarificationDigest: null,
+  };
+  f.rows.set(legacy.id, legacy);
+  const beforeEffects = { ...f.effects };
+  await assert.rejects(() => f.intake.submit("owner", {
+    idempotencyKey: "legacy-key", prompt: "new content", projectId: "p1", mode: "plan",
+  }), RequestConflictError);
+  await assert.rejects(() => f.intake.clarify("owner", legacy.id, legacy.version, {
+    idempotencyKey: "legacy-key", prompt: "new content", projectId: "p1", mode: "plan",
+  }), RequestConflictError);
+  assert.equal(f.rows.get(legacy.id).prompt, null);
+  assert.equal(f.rows.get(legacy.id).requestDigest, null);
+  assert.deepEqual(f.effects, beforeEffects);
 });
 
 test("clarification rejects changes to original prompt, key, and explicit selectors and versions", async () => {

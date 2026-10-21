@@ -12,6 +12,31 @@ test("PostgresRequestIntakeStore is available for durable admission", () => {
   assert.equal(typeof persistence.PostgresRequestIntakeStore, "function");
 });
 
+test("pre-004 rows preserve NULL prompt/digest and cannot be reused for admission", async () => {
+  const legacy = {
+    id: "00000000-0000-4000-8000-000000000010", owner_id: "owner", project_id: "p1", repository_id: "3001",
+    mode: "plan", request_kind: "project", prompt: null, prompt_digest: "a".repeat(64), request_digest: null,
+    config_version: 1, policy_hash: "b".repeat(64), state: "queued", clarification: [], idempotency_key: "legacy-key",
+    selector: null, explicit_mode: null, explicit_kind: null, version: 1, profile_hash: null, clarification_digest: null,
+  };
+  const readPool = poolFor([{ rows: [legacy], rowCount: 1 }, { rows: [legacy], rowCount: 1 }]);
+  const store = new persistence.PostgresRequestIntakeStore(readPool);
+  const byKey = await store.findByIdempotency("owner", "legacy-key");
+  const owned = await store.getOwned(legacy.id, "owner");
+  assert.equal(byKey.prompt, null);
+  assert.equal(byKey.requestDigest, null);
+  assert.equal(owned.prompt, null);
+  assert.equal(owned.requestDigest, null);
+
+  const writePool = poolFor([{ rows: [], rowCount: 0 }, { rows: [legacy], rowCount: 1 }]);
+  const writer = new persistence.PostgresRequestIntakeStore(writePool);
+  await assert.rejects(() => writer.create({
+    ...owned, id: "00000000-0000-4000-8000-000000000011", prompt: "new prompt", requestDigest: "c".repeat(64),
+  }), /IDEMPOTENCY_CONFLICT/);
+  assert.equal(writePool.calls.some(({ text }) => /INSERT INTO jarvis\.(requests|tasks|queue_entries|outbox)/i.test(text)), false);
+  assert.equal(writePool.calls.at(-1).text, "ROLLBACK");
+});
+
 test("ambiguous durable intake commits only the clarification record", async () => {
   const saved = {
     id: "00000000-0000-4000-8000-000000000001", owner_id: "owner", project_id: null, repository_id: null,
