@@ -5,11 +5,18 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { appNetworkError, NETWORK_EXIT_CODE } from './gh-app.mjs';
+import {
+  childDeliveryMarker,
+  finalAssessmentMarker,
+  indexCoordinationParentComments,
+  parseChildDeliveryComment,
+  parseFinalAssessmentComment,
+  renderChildDeliveryComment,
+  renderFinalAssessmentComment,
+} from './coordination-parent-comments.mjs';
 
 const REPOSITORY_PATH = 'repos/grasdouble/Jarvis';
 const API_HELPER = fileURLToPath(new URL('./gh-app.mjs', import.meta.url));
-const GENERATED_START = '<!-- jarvis-coordination-parent-acceptance:start -->';
-const GENERATED_END = '<!-- jarvis-coordination-parent-acceptance:end -->';
 const STATUSES = new Set(['validated', 'not_yet_validated', 'unable_to_assess']);
 const OUTCOME_KINDS = new Set(['child', 'integration']);
 const EVIDENCE_SOURCE_STATUSES = {
@@ -30,13 +37,6 @@ const SUCCESSFUL_EVIDENCE_STATUS = {
   issue_comment: 'available',
   other: 'verified',
 };
-const BODY_WRITE_SAFETY = Object.freeze({
-  mode: 'exclusive_editor_required',
-  atomicConflictDetection: false,
-  readbackMeaning: 'submitted_body_is_current',
-  warning: 'GitHub does not support conditional writes for this issue-body PATCH endpoint. Confirm this is the only active body editor during --write. Exact readback confirms the submitted body is current; it cannot detect whether a concurrent edit was overwritten between the prewrite read and PATCH.',
-});
-
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isIssueNumber = value => Number.isSafeInteger(value) && value > 0;
 const nonEmpty = value => typeof value === 'string' && value.trim().length > 0;
@@ -151,7 +151,7 @@ export function parseAcceptanceChecklist(body) {
   };
 }
 
-/** Preserve the structural checker's original compact parse result. */
+/** Parse structurally valid criteria without treating checkbox state as acceptance evidence. */
 export function parseAcceptanceCriteria(body) {
   const parsed = parseAcceptanceChecklist(body);
   const { lines, malformed: malformedFence } = typeof body === 'string'
@@ -161,25 +161,8 @@ export function parseAcceptanceCriteria(body) {
     return { valid: false, total: parsed.total, unchecked: parsed.unchecked, reason: 'criteria_malformed' };
   }
 
-  const startIndexes = [];
-  const endIndexes = [];
-  lines.forEach((line, index) => {
-    if (line === GENERATED_START) startIndexes.push(index);
-    if (line === GENERATED_END) endIndexes.push(index);
-  });
-  const hasOwnedMarker = startIndexes.length > 0 || endIndexes.length > 0;
-  const ownedBlockIsValid = !hasOwnedMarker
-    || (startIndexes.length === 1
-      && endIndexes.length === 1
-      && startIndexes[0] > 0
-      && startIndexes[0] < endIndexes[0]
-      && Number.isInteger(parsed.sectionLevel)
-      && lines[startIndexes[0] - 1] === `${'#'.repeat(parsed.sectionLevel)} Parent acceptance assessment evidence`);
-  const unmanagedComment = lines.some(line => line !== null
-    && (line.includes('<!--') || line.includes('-->'))
-    && line !== GENERATED_START
-    && line !== GENERATED_END);
-  if (!ownedBlockIsValid || unmanagedComment) {
+  const bodyComment = lines.some(line => line !== null && (line.includes('<!--') || line.includes('-->')));
+  if (bodyComment) {
     return { valid: false, total: parsed.total, unchecked: parsed.unchecked, reason: 'criteria_malformed' };
   }
 
@@ -191,15 +174,7 @@ export function parseAcceptanceCriteria(body) {
       reason: parsed.reason,
     };
   }
-  if (parsed.unchecked > 0) {
-    return {
-      valid: false,
-      total: parsed.total,
-      unchecked: parsed.unchecked,
-      reason: 'criteria_unchecked',
-    };
-  }
-  return { valid: true, total: parsed.total, unchecked: 0 };
+  return { valid: true, total: parsed.total, unchecked: parsed.unchecked };
 }
 
 function repositoryIsJarvis(issue) {
@@ -572,7 +547,7 @@ export function assessParentAcceptance({ parent, childPages, assessment }) {
     return { decision: 'unable_to_assess', parentIssue: parent.number, canRecord: false, reason: checklist.reason, criteria: [] };
   }
   const structuralCriteria = parseAcceptanceCriteria(parent.body);
-  if (!structuralCriteria.valid && structuralCriteria.reason !== 'criteria_unchecked') {
+  if (!structuralCriteria.valid) {
     return {
       decision: 'unable_to_assess', parentIssue: parent.number, canRecord: false,
       reason: structuralCriteria.reason, criteria: [],
@@ -630,112 +605,6 @@ export function assessParentAcceptance({ parent, childPages, assessment }) {
   };
 }
 
-function markdownText(value) {
-  const special = new Set(['\\', '`', '*', '_', '{', '}', '[', ']', '(', ')', '#', '+', '!', '<', '>', '|']);
-  return [...String(value).replace(/\s+/g, ' ').trim()]
-    .map(character => special.has(character) ? `\\${character}` : character)
-    .join('');
-}
-
-function acceptanceEvidenceBlock(report) {
-  const headingPrefix = '#'.repeat(report.sectionLevel);
-  const lines = [
-    `${headingPrefix} Parent acceptance assessment evidence`,
-    GENERATED_START,
-    '**Latest criterion-by-criterion acceptance assessment**',
-  ];
-  for (const criterion of report.criteria) {
-    lines.push(`- Criterion ${criterion.index}: **${criterion.status.replaceAll('_', ' ')}**`);
-    if (criterion.reason) lines.push(`  - Assessment: ${markdownText(criterion.reason)}.`);
-    if (criterion.scopeEvolution) {
-      lines.push(`  - Previous wording: ${markdownText(criterion.scopeEvolution.previousText)}`);
-      lines.push(`  - Authorized scope evolution: ${markdownText(criterion.scopeEvolution.rationale)} Source: <${criterion.scopeEvolution.authorizationUrl}>.`);
-    }
-    for (const outcome of criterion.outcomes) {
-      lines.push(`  - Outcome: ${markdownText(outcome.description)} (${outcome.status.replaceAll('_', ' ')}).`);
-      if (outcome.childIssues.length > 0) {
-        lines.push(`    - Native children: ${outcome.childIssues.map(number => `#${number}`).join(', ')}.`);
-      }
-      for (const source of outcome.evidence) {
-        const revisionDetails = [
-          ...(source.revision ? [`revision ${source.revision}`] : []),
-          ...(source.reviewedRevision ? [`reviewed head ${source.reviewedRevision}`] : []),
-        ];
-        const details = [source.sourceType, source.status, ...revisionDetails].join('; ');
-        const childDetails = source.childIssue === undefined ? [] : [`child #${source.childIssue}`];
-        lines.push(`    - Evidence: ${markdownText([...childDetails, details].join('; '))}; ${markdownText(source.label)} — <${source.url}>.`);
-      }
-      if (outcome.reason) lines.push(`    - Assessment: ${markdownText(outcome.reason)}.`);
-      if (outcome.rationale) lines.push(`    - Rationale: ${markdownText(outcome.rationale)}.`);
-    }
-  }
-  lines.push(GENERATED_END);
-  return lines;
-}
-
-/** Update only checklist markers, explicitly authorized criterion wording, and the owned evidence block. */
-export function updateAcceptanceBody(body, report) {
-  if (!report?.canRecord || !Array.isArray(report.criteria)) {
-    throw new Error('Parent acceptance assessment is incomplete; no body can be prepared.');
-  }
-  const parsed = parseAcceptanceChecklist(body);
-  if (!parsed.valid || parsed.items.length !== report.criteria.length) {
-    throw new Error('Parent acceptance checklist changed; reread and reassess before recording.');
-  }
-  const structuralCriteria = parseAcceptanceCriteria(body);
-  if (!structuralCriteria.valid && structuralCriteria.reason !== 'criteria_unchecked') {
-    throw new Error('Parent acceptance body contains malformed or unmanaged markup; no body can be prepared.');
-  }
-  const criteria = new Map(report.criteria.map(item => [item.index, item]));
-  const lines = body.split(/\r?\n/);
-  for (const item of parsed.items) {
-    const result = criteria.get(item.index);
-    if (!result || !STATUSES.has(result.status)) {
-      throw new Error('Parent acceptance assessment does not match the current checklist.');
-    }
-    if (result.text !== item.text
-      && (!result.scopeEvolution || result.scopeEvolution.previousText !== item.text || !result.scopeEvolution.replaceText)) {
-      throw new Error('Parent acceptance criterion changed without an authorized scope-evolution record.');
-    }
-    const line = lines[item.lineIndex];
-    const marker = result.status === 'validated' ? 'x' : ' ';
-    let updated = `${line.slice(0, item.markerIndex)}${marker}${line.slice(item.markerIndex + 1)}`;
-    if (result.text !== item.text) {
-      updated = `${updated.slice(0, item.textStart)}${result.text}${updated.slice(item.textEnd)}`;
-    }
-    lines[item.lineIndex] = updated;
-  }
-
-  const newline = body.includes('\r\n') ? '\r\n' : '\n';
-  const startIndexes = [];
-  const endIndexes = [];
-  lines.forEach((line, index) => {
-    if (line === GENERATED_START) startIndexes.push(index);
-    if (line === GENERATED_END) endIndexes.push(index);
-  });
-  if (startIndexes.length !== endIndexes.length || startIndexes.length > 1
-    || (startIndexes.length === 1 && startIndexes[0] >= endIndexes[0])) {
-    throw new Error('Existing parent acceptance evidence block is ambiguous; no body can be prepared.');
-  }
-
-  const evidenceLines = acceptanceEvidenceBlock(report);
-  if (startIndexes.length === 1) {
-    const headingIndex = startIndexes[0] - 1;
-    const expectedHeading = `${'#'.repeat(parsed.sectionLevel)} Parent acceptance assessment evidence`;
-    if (lines[headingIndex] !== expectedHeading) {
-      throw new Error('Existing parent acceptance evidence block is ambiguous; no body can be prepared.');
-    }
-    lines.splice(headingIndex, endIndexes[0] - headingIndex + 1, ...evidenceLines);
-    return lines.join(newline);
-  }
-  if (lines.includes(`${'#'.repeat(parsed.sectionLevel)} Parent acceptance assessment evidence`)) {
-    throw new Error('An unmanaged parent acceptance evidence heading already exists; no body can be prepared.');
-  }
-  const nextBody = lines.join(newline);
-  const separator = nextBody.endsWith(newline) ? newline : `${newline}${newline}`;
-  return `${nextBody}${separator}${evidenceLines.join(newline)}`;
-}
-
 function helperEnvironment() {
   const env = { ...process.env };
   for (const name of Object.keys(env)) {
@@ -785,11 +654,21 @@ export function createAcceptanceGitHubClient(runGh = runReviewedHelper, { writeE
         `${REPOSITORY_PATH}/issues/${number}/sub_issues?per_page=100`,
       ]);
     },
+    listIssueComments(number) {
+      const pages = apiJson(runGh, [
+        '--method', 'GET', '--paginate', '--slurp',
+        `${REPOSITORY_PATH}/issues/${number}/comments?per_page=100`,
+      ]);
+      if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page))) {
+        throw new Error('GitHub returned an incomplete issue-comment inventory.');
+      }
+      return pages.flat();
+    },
   };
   if (writeEnabled) {
-    client.updateIssueBody = (number, body) => {
+    client.createIssueComment = (number, body) => {
       runGh([
-        'api', '--method', 'PATCH', `${REPOSITORY_PATH}/issues/${number}`,
+        'api', '--method', 'POST', `${REPOSITORY_PATH}/issues/${number}/comments`,
         '--raw-field', `body=${body}`,
       ], { write: true });
     };
@@ -797,133 +676,370 @@ export function createAcceptanceGitHubClient(runGh = runReviewedHelper, { writeE
   return client;
 }
 
-function publicSummary(report, { recorded = false, wouldChange = false, exclusiveBodyEditConfirmed = false } = {}) {
+function issueCommentsWithMarker(comments, marker) {
+  return comments.filter(comment => typeof comment?.body === 'string'
+    && comment.body.split(/\r?\n/).includes(marker));
+}
+
+function uniqueEvidence(sources) {
+  const items = new Map();
+  for (const source of sources) {
+    const key = [source.sourceType, source.url, source.status, source.revision ?? '', source.reviewedRevision ?? '', source.childIssue ?? ''].join('|');
+    if (!items.has(key)) items.set(key, source);
+  }
+  return [...items.values()].sort((left, right) =>
+    left.sourceType.localeCompare(right.sourceType) || left.url.localeCompare(right.url));
+}
+
+function deliveryPayloadForChild(report, child) {
+  if (String(child.state).toLowerCase() !== 'closed'
+    || String(child.state_reason ?? child.stateReason ?? '').toLowerCase() !== 'completed') return null;
+  const sources = report.criteria.flatMap(criterion => criterion.outcomes.flatMap(outcome => outcome.evidence))
+    .filter(source => source.childIssue === child.number);
+  const pullRequests = uniqueEvidence(sources.filter(source =>
+    source.sourceType === 'pull_request' && source.status === 'merged'));
+  if (pullRequests.length === 0) return null;
+  const checks = uniqueEvidence(sources.filter(source => ['workflow_run', 'check_run'].includes(source.sourceType)
+    && source.status === 'success'));
+  const currentChecks = [];
+  for (const pr of pullRequests) {
+    const matching = checks.filter(check => check.revision.toLowerCase() === pr.reviewedRevision.toLowerCase());
+    if (matching.length === 0) return null;
+    currentChecks.push(...matching);
+  }
+  const evidence = uniqueEvidence([...pullRequests, ...currentChecks]);
   return {
-    decision: report.decision,
+    schemaVersion: 1,
     parentIssue: report.parentIssue,
-    childCount: report.childCount,
-    canRecord: report.canRecord,
-    ...(report.reason ? { reason: report.reason } : {}),
-    ...(report.unassessedChildIssues ? { unassessedChildIssues: report.unassessedChildIssues } : {}),
-    ...(report.conflictingPullRequestNumbers ? { conflictingPullRequestNumbers: report.conflictingPullRequestNumbers } : {}),
-    criteria: report.criteria.map(criterion => ({
-      index: criterion.index,
-      status: criterion.status,
-      ...(criterion.reason ? { reason: criterion.reason } : {}),
-      ...(criterion.scopeEvolution ? {
-        scopeEvolution: {
-          previousText: criterion.scopeEvolution.previousText,
-          authorizationUrl: criterion.scopeEvolution.authorizationUrl,
-          rationale: criterion.scopeEvolution.rationale,
-        },
-      } : {}),
-      outcomes: criterion.outcomes.map(outcome => ({
-        description: outcome.description,
-        status: outcome.status,
-        ...(outcome.reason ? { reason: outcome.reason } : {}),
-        childIssues: outcome.childIssues,
-        evidence: outcome.evidence,
-        ...(outcome.rationale ? { rationale: outcome.rationale } : {}),
-      })),
-    })),
-    recorded,
-    wouldChange,
-    ...(wouldChange ? {
-      writeSafety: { ...BODY_WRITE_SAFETY, exclusiveBodyEditConfirmed },
-    } : {}),
+    childIssue: child.number,
+    state: 'closed',
+    stateReason: 'completed',
+    evidence,
   };
 }
 
-/** Preview by default; body writes require explicit authorization and an exclusive-editor assertion. */
-export async function recordParentAcceptance(client, assessment, { write = false, exclusiveBodyEditConfirmed = false } = {}) {
-  if (write && exclusiveBodyEditConfirmed !== true) {
-    return publicSummary({
-      decision: 'unable_to_assess', parentIssue: assessment?.parentIssue,
-      canRecord: false, reason: 'exclusive_body_edit_confirmation_required', criteria: [],
-    });
-  }
-  if (!isIssueNumber(assessment?.parentIssue)) {
-    return publicSummary({
-      decision: 'unable_to_assess', parentIssue: undefined, childCount: undefined,
-      canRecord: false, reason: 'invalid_assessment_data', criteria: [],
-    });
-  }
-  let parent = await client.getIssue(assessment.parentIssue);
-  let childPages = await client.listSubIssuePages(assessment.parentIssue);
-  let report = assessParentAcceptance({ parent, childPages, assessment });
-  if (!report.canRecord) return publicSummary(report);
-  let nextBody = updateAcceptanceBody(parent.body, report);
-  let wouldChange = nextBody !== parent.body;
-  if (!write) return publicSummary(report, { wouldChange });
+function criterionSummary(criteria) {
+  return criteria.map(criterion => ({
+    index: criterion.index,
+    text: criterion.text,
+    status: criterion.status,
+    ...(criterion.reason ? { reason: criterion.reason } : {}),
+    ...(criterion.scopeEvolution ? {
+      scopeEvolution: {
+        previousText: criterion.scopeEvolution.previousText,
+        authorizationUrl: criterion.scopeEvolution.authorizationUrl,
+        rationale: criterion.scopeEvolution.rationale,
+      },
+    } : {}),
+    outcomes: criterion.outcomes.map(outcome => ({
+      description: outcome.description,
+      kind: outcome.kind,
+      status: outcome.status,
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
+      childIssues: outcome.childIssues,
+      evidence: outcome.evidence,
+      ...(outcome.rationale ? { rationale: outcome.rationale } : {}),
+    })),
+  }));
+}
 
-  const originalBody = parent.body;
-  parent = await client.getIssue(assessment.parentIssue);
-  childPages = await client.listSubIssuePages(assessment.parentIssue);
-  if (parent.body !== originalBody) {
-    return publicSummary({
-      decision: 'unable_to_assess', parentIssue: parent.number,
-      canRecord: false, reason: 'parent_changed_before_write', criteria: [],
-    });
-  }
-  report = assessParentAcceptance({ parent, childPages, assessment });
-  if (!report.canRecord) return publicSummary(report);
-  nextBody = updateAcceptanceBody(parent.body, report);
-  wouldChange = nextBody !== parent.body;
-  if (String(parent.state).toLowerCase() !== 'open') {
-    return publicSummary({ ...report, canRecord: false, reason: 'parent_not_open' });
-  }
-  if (!wouldChange) return publicSummary(report, { recorded: true, wouldChange: false });
-  if (typeof client.updateIssueBody !== 'function') {
-    throw new Error('Explicit issue-body write capability is unavailable.');
+function inspectCommentPlan(report, parent, childPages, comments) {
+  const children = childPages.flat();
+  const childDelivery = { pending: [], existing: [], missingEvidence: [], recorded: [] };
+  const payloads = new Map();
+  const prefix = `<!-- jarvis:coordination-parent-delivery:v1:${parent.number}:`;
+  const expectedChildren = new Set(children.map(child => child.number));
+  for (const comment of comments) {
+    for (const line of typeof comment?.body === 'string' ? comment.body.split(/\r?\n/) : []) {
+      if (!line.startsWith(prefix)) continue;
+      const match = line.match(/^<!-- jarvis:coordination-parent-delivery:v1:(\d+):(\d+) -->$/);
+      if (!match || !expectedChildren.has(Number(match[2]))) {
+        return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
+      }
+    }
   }
 
+  for (const child of children) {
+    const payload = deliveryPayloadForChild(report, child);
+    const marker = childDeliveryMarker(parent.number, child.number);
+    const existing = issueCommentsWithMarker(comments, marker);
+    if (existing.length > 1) return { valid: false, reason: 'child_delivery_comment_invalid', childDelivery, children };
+    if (existing.length === 1) {
+      const parsed = parseChildDeliveryComment(existing[0], parent.number, child.number);
+      if (!parsed) {
+        return { valid: false, reason: 'child_delivery_comment_conflict', childDelivery, children };
+      }
+      payloads.set(child.number, { payload: parsed, body: existing[0].body });
+      childDelivery.existing.push(child.number);
+      continue;
+    }
+    if (payload) {
+      try {
+        const expectedBody = renderChildDeliveryComment(payload);
+        payloads.set(child.number, { payload, body: expectedBody });
+        childDelivery.pending.push(child.number);
+      } catch {
+        childDelivery.missingEvidence.push(child.number);
+      }
+    } else if (String(child.state).toLowerCase() === 'closed'
+      && String(child.state_reason ?? child.stateReason ?? '').toLowerCase() === 'completed') {
+      childDelivery.missingEvidence.push(child.number);
+    }
+  }
+
+  const deliveryEvidenceKey = source => [source.sourceType, source.url, source.status,
+    source.revision ?? '', source.reviewedRevision ?? '', source.childIssue ?? ''].join('|');
+  for (const criterion of report.criteria) {
+    for (const outcome of criterion.outcomes) {
+      for (const source of outcome.evidence) {
+        if (!source.childIssue || !['pull_request', 'workflow_run', 'check_run'].includes(source.sourceType)) continue;
+        const delivery = payloads.get(source.childIssue)?.payload;
+        if (!delivery?.evidence.some(item => deliveryEvidenceKey(item) === deliveryEvidenceKey(source))) {
+          return { valid: false, reason: 'child_delivery_comment_evidence_mismatch', childDelivery, children };
+        }
+      }
+    }
+  }
+
+  const incompleteChildren = children.filter(child => String(child.state).toLowerCase() !== 'closed'
+    || String(child.state_reason ?? child.stateReason ?? '').toLowerCase() !== 'completed')
+    .map(child => child.number);
+  const missingDelivery = children.filter(child => !payloads.has(child.number)).map(child => child.number);
+  const allCriteriaValidated = report.criteria.every(criterion => criterion.status === 'validated');
+  let finalBody = null;
+  let finalExisting = false;
+  let finalReason = null;
+  const finalComments = issueCommentsWithMarker(comments, finalAssessmentMarker(parent.number));
+  if (finalComments.length > 1) {
+    return { valid: false, reason: 'final_assessment_conflict', childDelivery, children };
+  }
+  if (incompleteChildren.length > 0) finalReason = 'children_incomplete';
+  else if (missingDelivery.length > 0) finalReason = 'child_delivery_evidence_missing';
+  else if (!allCriteriaValidated) finalReason = 'criteria_not_validated';
+  if (finalComments.length === 1 && finalReason) {
+    return { valid: false, reason: 'final_assessment_conflict', childDelivery, children };
+  }
+  if (!finalReason) {
+    finalBody = renderFinalAssessmentComment(report);
+    if (finalComments.length === 1) {
+      const parsed = parseFinalAssessmentComment(finalComments[0], {
+        parentIssue: parent.number,
+        criteria: parseAcceptanceChecklist(parent.body).items,
+        childIssues: children.map(child => child.number),
+      });
+      if (!parsed || finalComments[0].body !== finalBody) {
+        return { valid: false, reason: 'final_assessment_conflict', childDelivery, children };
+      }
+      finalExisting = true;
+    }
+  }
+
+  return {
+    valid: true,
+    children,
+    payloads,
+    incompleteChildren,
+    missingDelivery,
+    allCriteriaValidated,
+    childDelivery,
+    finalBody,
+    finalExisting,
+    finalReason,
+  };
+}
+
+function publicSummary(report, plan, { decision, reason, finalRecorded = false } = {}) {
+  return {
+    decision: decision ?? report.decision,
+    parentIssue: report.parentIssue,
+    childCount: report.childCount,
+    canRecord: report.canRecord,
+    ...(reason ?? report.reason ? { reason: reason ?? report.reason } : {}),
+    ...(report.unassessedChildIssues ? { unassessedChildIssues: report.unassessedChildIssues } : {}),
+    ...(report.conflictingPullRequestNumbers ? { conflictingPullRequestNumbers: report.conflictingPullRequestNumbers } : {}),
+    criteria: criterionSummary(report.criteria),
+    childDelivery: plan?.childDelivery ?? { pending: [], existing: [], missingEvidence: [], recorded: [] },
+    finalAssessment: {
+      eligible: plan?.finalBody !== null && plan?.finalBody !== undefined,
+      wouldPost: plan?.finalBody !== null && plan?.finalBody !== undefined && !plan.finalExisting,
+      recorded: finalRecorded || plan?.finalExisting === true,
+      ...(plan?.finalReason ? { reason: plan.finalReason } : {}),
+    },
+  };
+}
+
+async function readParentSnapshot(client, parentIssue) {
+  const parent = await client.getIssue(parentIssue);
+  const childPages = await client.listSubIssuePages(parentIssue);
+  const comments = await client.listIssueComments(parentIssue);
+  return { parent, childPages, comments };
+}
+
+async function appendCommentAndVerify(client, parentIssue, marker, expectedBody) {
+  if (typeof client.createIssueComment !== 'function') {
+    throw new Error('Explicit issue-comment write capability is unavailable.');
+  }
+  const before = await client.listIssueComments(parentIssue);
+  const already = issueCommentsWithMarker(before, marker);
+  if (already.length > 0) {
+    if (already.length === 1 && already[0].body === expectedBody) return already[0];
+    throw new Error('A conflicting comment marker exists; reconcile before retrying.');
+  }
+  let writeError = null;
   try {
-    await client.updateIssueBody(parent.number, nextBody);
-  } catch (cause) {
-    const error = new Error('Parent acceptance update outcome is uncertain; reread the issue before retrying.', { cause });
-    error.uncertainWrite = true;
-    throw error;
+    await client.createIssueComment(parentIssue, expectedBody);
+  } catch (error) {
+    writeError = error;
   }
-  let current;
+  let after;
   try {
-    current = await client.getIssue(parent.number);
+    after = await client.listIssueComments(parentIssue);
   } catch (cause) {
-    const error = new Error('Parent acceptance update may have succeeded; reread the issue before retrying.', { cause });
+    const error = new Error('Comment write outcome is uncertain; reread the complete issue-comment inventory before retrying.', { cause: writeError ?? cause });
     error.uncertainWrite = true;
     throw error;
   }
-  if (current.body !== nextBody) {
-    const error = new Error('Parent acceptance update did not read back exactly; reconcile before retrying.');
-    error.uncertainWrite = true;
-    throw error;
+  const matches = issueCommentsWithMarker(after, marker);
+  if (matches.length === 1 && matches[0].body === expectedBody) return matches[0];
+  const error = new Error('Comment write did not read back uniquely; reconcile the issue-comment inventory before retrying.', { cause: writeError ?? undefined });
+  error.uncertainWrite = true;
+  throw error;
+}
+
+function incompleteResult(assessment, reason) {
+  return publicSummary({
+    decision: 'unable_to_assess', parentIssue: assessment?.parentIssue,
+    childCount: undefined, canRecord: false, reason, criteria: [],
+  }, null, { decision: 'unable_to_assess', reason });
+}
+
+/** Preview by default; --write appends child/final comments and never patches the parent body. */
+export async function recordParentAcceptance(client, assessment, { write = false } = {}) {
+  if (!isIssueNumber(assessment?.parentIssue)) return incompleteResult(assessment, 'invalid_assessment_data');
+  let snapshot = await readParentSnapshot(client, assessment.parentIssue);
+  let report = assessParentAcceptance({ parent: snapshot.parent, childPages: snapshot.childPages, assessment });
+  if (!report.canRecord) return publicSummary(report, null);
+  if (String(snapshot.parent.state).toLowerCase() !== 'open') {
+    return publicSummary({ ...report, canRecord: false, reason: 'parent_not_open' }, null);
   }
-  return publicSummary(report, {
-    recorded: true,
-    wouldChange: true,
-    exclusiveBodyEditConfirmed,
+  let plan = inspectCommentPlan(report, snapshot.parent, snapshot.childPages, snapshot.comments);
+  if (!plan.valid) return publicSummary({ ...report, canRecord: false, reason: plan.reason }, plan);
+  const initialBody = snapshot.parent.body;
+  if (!write) {
+    const decision = plan.incompleteChildren.length > 0 ? 'waiting_for_children'
+      : plan.missingDelivery.length > 0 ? 'delivery_evidence_incomplete'
+        : !plan.allCriteriaValidated ? 'assessment_incomplete'
+          : plan.finalExisting ? 'accepted' : 'ready_to_record';
+    return publicSummary(report, plan, { decision });
+  }
+
+  snapshot = await readParentSnapshot(client, assessment.parentIssue);
+  if (snapshot.parent.body !== initialBody) return incompleteResult(assessment, 'parent_changed_before_recording');
+  report = assessParentAcceptance({ parent: snapshot.parent, childPages: snapshot.childPages, assessment });
+  if (!report.canRecord) return publicSummary(report, null);
+  plan = inspectCommentPlan(report, snapshot.parent, snapshot.childPages, snapshot.comments);
+  if (!plan.valid) return publicSummary({ ...report, canRecord: false, reason: plan.reason }, plan);
+
+  const recorded = [];
+  for (const childIssue of plan.childDelivery.pending) {
+    const childComment = plan.payloads.get(childIssue);
+    if (!childComment) continue;
+    await appendCommentAndVerify(
+      client,
+      assessment.parentIssue,
+      childDeliveryMarker(assessment.parentIssue, childIssue),
+      childComment.body,
+    );
+    recorded.push(childIssue);
+  }
+
+  snapshot = await readParentSnapshot(client, assessment.parentIssue);
+  if (snapshot.parent.body !== initialBody) {
+    return publicSummary({ ...report, canRecord: true }, {
+      ...plan,
+      childDelivery: { ...plan.childDelivery, recorded },
+      finalBody: null,
+      finalExisting: false,
+      finalReason: 'parent_changed_before_final_assessment',
+    }, { decision: 'unable_to_assess', reason: 'parent_changed_before_final_assessment' });
+  }
+  report = assessParentAcceptance({ parent: snapshot.parent, childPages: snapshot.childPages, assessment });
+  if (!report.canRecord) return publicSummary(report, null);
+  plan = inspectCommentPlan(report, snapshot.parent, snapshot.childPages, snapshot.comments);
+  plan.childDelivery.recorded = recorded;
+  if (!plan.valid) return publicSummary({ ...report, canRecord: false, reason: plan.reason }, plan);
+  if (String(snapshot.parent.state).toLowerCase() !== 'open') {
+    return publicSummary({ ...report, canRecord: false, reason: 'parent_not_open' }, plan);
+  }
+
+  if (plan.incompleteChildren.length > 0) {
+    return publicSummary(report, plan, { decision: 'waiting_for_children' });
+  }
+  if (plan.missingDelivery.length > 0) {
+    return publicSummary(report, plan, { decision: 'delivery_evidence_incomplete' });
+  }
+  if (!plan.allCriteriaValidated) {
+    return publicSummary(report, plan, { decision: 'assessment_incomplete' });
+  }
+  if (plan.finalExisting) return publicSummary(report, plan, { decision: 'accepted', finalRecorded: true });
+  if (!plan.finalBody) return publicSummary(report, plan, { decision: 'assessment_incomplete' });
+
+  await appendCommentAndVerify(
+    client,
+    assessment.parentIssue,
+    finalAssessmentMarker(assessment.parentIssue),
+    plan.finalBody,
+  );
+  const verified = await readParentSnapshot(client, assessment.parentIssue);
+  if (verified.parent.body !== initialBody) {
+    return publicSummary(report, {
+      ...plan,
+      childDelivery: { ...plan.childDelivery, recorded },
+      finalBody: null,
+      finalExisting: false,
+      finalReason: 'parent_changed_after_final_assessment',
+    }, { decision: 'unable_to_assess', reason: 'parent_changed_after_final_assessment' });
+  }
+  const verifiedReport = assessParentAcceptance({ parent: verified.parent, childPages: verified.childPages, assessment });
+  const verifiedIndex = indexCoordinationParentComments(verified.comments, {
+    parentIssue: assessment.parentIssue,
+    criteria: parseAcceptanceChecklist(verified.parent.body).items,
+    childIssues: verifiedReport.criteria.length > 0
+      ? verified.childPages.flat().map(child => child.number)
+      : [],
   });
+  if (!verifiedReport.canRecord || !verifiedIndex.valid) {
+    const error = new Error('Final assessment comment could not be verified against the current parent and child inventory.');
+    error.uncertainWrite = true;
+    throw error;
+  }
+  return publicSummary(verifiedReport, {
+    ...plan,
+    childDelivery: { ...plan.childDelivery, recorded },
+    finalExisting: true,
+    finalBody: plan.finalBody,
+    finalReason: null,
+  }, { decision: 'accepted', finalRecorded: true });
 }
 
 export function parseArguments(args) {
   const positional = [];
   let write = false;
-  let confirmExclusiveBodyEdit = false;
   for (const argument of args) {
     if (argument === '--write' && !write) write = true;
-    else if (argument === '--confirm-exclusive-body-edit' && !confirmExclusiveBodyEdit) confirmExclusiveBodyEdit = true;
     else if (argument.startsWith('--') || positional.length >= 2) {
-      throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write --confirm-exclusive-body-edit]');
+      throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
     } else positional.push(argument);
   }
   if (positional.length !== 2 || !/^[1-9]\d*$/.test(positional[0] ?? '')
-    || !Number.isSafeInteger(Number(positional[0])) || (confirmExclusiveBodyEdit && !write)) {
-    throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write --confirm-exclusive-body-edit]');
+    || !Number.isSafeInteger(Number(positional[0]))) {
+    throw new Error('Usage: node .agents/skills/jarvis-project-management/scripts/github/coordination-parent-acceptance.mjs ISSUE_NUMBER ASSESSMENT.json [--write]');
   }
-  return { issueNumber: Number(positional[0]), assessmentFile: positional[1], write, confirmExclusiveBodyEdit };
+  return { issueNumber: Number(positional[0]), assessmentFile: positional[1], write };
 }
 
 export async function main(args = process.argv.slice(2), client = null, output = process.stdout) {
-  const { issueNumber, assessmentFile, write, confirmExclusiveBodyEdit } = parseArguments(args);
+  const { issueNumber, assessmentFile, write } = parseArguments(args);
   let assessment;
   try {
     assessment = JSON.parse(readFileSync(assessmentFile, 'utf8'));
@@ -936,7 +1052,6 @@ export async function main(args = process.argv.slice(2), client = null, output =
   const github = client ?? createAcceptanceGitHubClient(runReviewedHelper, { writeEnabled: write });
   const result = await recordParentAcceptance(github, assessment, {
     write,
-    exclusiveBodyEditConfirmed: confirmExclusiveBodyEdit,
   });
   output.write(`${JSON.stringify(result)}\n`);
   return result.canRecord ? 0 : 2;

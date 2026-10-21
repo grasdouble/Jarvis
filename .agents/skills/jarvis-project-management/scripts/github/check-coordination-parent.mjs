@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { appNetworkError, NETWORK_EXIT_CODE } from './gh-app.mjs';
-import { parseAcceptanceCriteria } from './coordination-parent-acceptance.mjs';
+import { parseAcceptanceChecklist, parseAcceptanceCriteria } from './coordination-parent-acceptance.mjs';
+import { indexCoordinationParentComments } from './coordination-parent-comments.mjs';
 
 export { parseAcceptanceCriteria };
 
@@ -58,7 +59,7 @@ function validReasonForState(issue) {
   return ['completed', 'not_planned', 'duplicate'].includes(reason);
 }
 
-export function evaluateCoordinationParent({ issue, parent, childPages }) {
+export function evaluateCoordinationParent({ issue, parent, childPages, comments = [] }) {
   if (!validIssue(issue) || !validReasonForState(issue)) {
     return { decision: 'unable_to_assess', reason: 'invalid_issue_data' };
   }
@@ -121,6 +122,26 @@ export function evaluateCoordinationParent({ issue, parent, childPages }) {
       decision: 'not_eligible', issue: issue.number, parent: target.number,
       reason: criteria.reason, childCount: children.length,
       criterionCount: criteria.total, uncheckedCriteria: criteria.unchecked,
+    };
+  }
+  const checklist = parseAcceptanceChecklist(target.body);
+  if (!checklist.valid) {
+    return {
+      decision: 'not_eligible', issue: issue.number, parent: target.number,
+      reason: checklist.reason, childCount: children.length,
+      criterionCount: criteria.total, uncheckedCriteria: criteria.unchecked,
+    };
+  }
+  const assessment = indexCoordinationParentComments(comments, {
+    parentIssue: target.number,
+    criteria: checklist.items,
+    childIssues: numbers,
+  });
+  if (!assessment.valid) {
+    return {
+      decision: 'not_eligible', issue: issue.number, parent: target.number,
+      reason: assessment.reason, childCount: children.length, criterionCount: criteria.total,
+      uncheckedCriteria: criteria.unchecked,
     };
   }
   return {
@@ -187,6 +208,14 @@ export function createGitHubClient(runGh = gh) {
         `${REPOSITORY_PATH}/issues/${number}/sub_issues?per_page=100`,
       ]);
     },
+    listIssueComments(number) {
+      const pages = apiJson(runGh, [
+        '--method', 'GET', '--paginate', '--slurp',
+        `${REPOSITORY_PATH}/issues/${number}/comments?per_page=100`,
+      ]);
+      if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page))) invalidInventory();
+      return pages.flat();
+    },
   };
 }
 
@@ -218,7 +247,8 @@ export async function checkIssue(client, number) {
 
   const targetNumber = parent?.number ?? issue.number;
   const childPages = await client.listSubIssuePages(targetNumber);
-  return evaluateCoordinationParent({ issue, parent, childPages });
+  const comments = await client.listIssueComments(targetNumber);
+  return evaluateCoordinationParent({ issue, parent, childPages, comments });
 }
 
 function parseIssueNumber(raw) {
