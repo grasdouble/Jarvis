@@ -1,6 +1,6 @@
 ---
 name: jarvis-project-governance
-description: Assess a JARVIS development change against accepted requirements and decisions, prepare coherent documentation or ADR updates, and report alignment for delivery and independent review. Use for contributor impact assessment, design evolution or a scoped documentation audit, not product runtime control or granting approvals.
+description: Downstream governance analysis for an explicitly routed @jarvis-plan request or authorized issue delivery; assess JARVIS development against accepted requirements and decisions, and report impact/alignment. Planning use is read-only; authorized document/ADR preparation occurs only within delivery. Not product runtime control or approval authority.
 ---
 
 # JARVIS project governance

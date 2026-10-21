@@ -4,6 +4,8 @@ This document governs development of JARVIS. It is not an instruction set for th
 
 ## Route requests before editing
 
+For JARVIS-related contributor-session requests, apply the [canonical tag-based routing contract](jarvis-request-routing.md) before this delivery intake. An absent or mismatched tag requires clarification before choosing a workflow; a tag-list request is answered directly. Routing is an instruction convention for normal repository sessions, not a technically guaranteed interception mechanism. Information, status, planning, and read-only audits do not themselves create delivery issues or branches; a concrete repository change still follows the complete workflow below.
+
 A human request or acceptance of a concrete repository change starts the contributor delivery workflow, even when the human supplies no issue number and does not explicitly say "create a PR". This covers new files intended for version control and edits to code, configuration, documentation, `AGENTS.md` and contributor skills, regardless of size. A follow-up such as "OK, add that" after discussing a change is implementation authorization within that agreed scope; do not ask the human to restate the workflow.
 
 1. Inspect the checkout, existing worktrees/branches/PRs and matching open/closed issues. Use project management to reuse suitable active work or create one bounded English issue with acceptance and verification, the appropriate native milestone, existing labels, stable JV key and project membership. Verify the saved metadata, prerequisite outcomes and ownership before starting; do not reopen delivered work merely to avoid a new issue.

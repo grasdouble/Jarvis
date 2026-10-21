@@ -1,6 +1,6 @@
 ---
 name: jarvis-issue-delivery
-description: Deliver human-requested or accepted JARVIS repository changes through issue intake, bounded implementation, optional subagent delegation, independent review and a linked PR. Use even without an issue number, including documentation and contributor skill changes; not for read-only advice, backlog-only administration or runtime maintenance of other repositories.
+description: "Downstream contributor workflow for an explicitly routed @jarvis-delivery request: deliver JARVIS repository changes through issue intake, bounded implementation, optional subagent delegation, independent review and a linked PR. Use even without an issue number, including documentation and contributor skill changes; not for read-only advice, backlog-only administration or runtime maintenance of other repositories."
 ---
 
 # JARVIS issue delivery

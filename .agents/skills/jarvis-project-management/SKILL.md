@@ -1,6 +1,6 @@
 ---
 name: jarvis-project-management
-description: Maintain JARVIS GitHub issues, milestones, labels, dependencies, project views, and on-demand coordination-parent acceptance checks. Use for backlog planning and issue-state checks, not implementation or JARVIS runtime operations on other repositories.
+description: Downstream project-management workflow for an explicitly routed @jarvis-backlog request or authorized issue-delivery intake; maintain JARVIS GitHub issues, milestones, labels, dependencies, project views, and on-demand coordination-parent acceptance checks. Does not imply repository implementation or JARVIS runtime operations on other repositories.
 ---
 
 # JARVIS project management
