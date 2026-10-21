@@ -51,6 +51,7 @@ test("checkpoint writes require the current lease and current project and skill 
 test("migrations enforce repository-scoped identity and hide secrets from task state", async () => {
   const migration = await readFile(new URL("../migrations/001_initial.sql", import.meta.url), "utf8");
   const approvalOrderingMigration = await readFile(new URL("../migrations/002_skill_approval_order.sql", import.meta.url), "utf8");
+  const requestIntakeMigration = await readFile(new URL("../migrations/004_project_request_intake.sql", import.meta.url), "utf8");
   assert.match(migration, /CREATE TABLE projects/i);
   assert.match(migration, /UNIQUE\s*\(id, repository_id\)/i);
   assert.match(migration, /FOREIGN KEY\s*\([^)]*repository_id[^)]*\)\s*REFERENCES/i);
@@ -61,6 +62,11 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   assert.match(migration, /project_skill_approvals_serialize/i);
   assert.match(approvalOrderingMigration, /skill_approval_order\s*=\s*skill_approval_order\s*\+\s*1/i);
   assert.match(approvalOrderingMigration, /decision_order_unique/i);
+  assert.match(requestIntakeMigration, /ADD COLUMN request_digest/i);
+  assert.match(requestIntakeMigration, /ADD COLUMN clarification/i);
+  assert.match(requestIntakeMigration, /ADD COLUMN clarification_digest/i);
+  assert.match(requestIntakeMigration, /ALTER COLUMN project_id DROP NOT NULL/i);
+  assert.match(requestIntakeMigration, /requests_admission_binding/i);
 });
 
 test("migration runner serializes concurrent callers and records applied versions", async () => {

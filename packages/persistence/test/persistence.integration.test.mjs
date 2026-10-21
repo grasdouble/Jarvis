@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import process from "node:process";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
-import { CheckpointRejectedError, PostgresPersistence, PostgresQueueStore } from "../dist/index.js";
+import { CheckpointRejectedError, PostgresPersistence, PostgresQueueStore, PostgresRequestIntakeStore } from "../dist/index.js";
 import { QueueError, QueueService } from "@jarvis/queue";
 
 const { Pool } = pg;
@@ -24,7 +25,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake"]);
     lockClient = await pool.connect();
     await lockClient.query("SELECT pg_advisory_lock($1)", [0x4a385445]);
     await pool.query(`
@@ -297,6 +298,75 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       attempt_state: "cancelled", outbox_count: "3",
     });
 
+    const intakeStore = new PostgresRequestIntakeStore(pool);
+    const requestBase = {
+      id: randomUUID(), ownerId: "owner-a", projectId: "00000000-0000-4000-8000-000000000003", repositoryId: "3001",
+      mode: "plan", kind: "dependency_update", prompt: "Review dependency updates", promptDigest: "a".repeat(64),
+      requestDigest: "b".repeat(64), configVersion: 1, policyHash: "b".repeat(64), profileHash: "f".repeat(64),
+      state: "queued", clarification: [], idempotencyKey: "intake-integration-1", selector: "project-1",
+      explicitMode: "plan", explicitKind: "dependency_update", version: 1,
+    };
+    const legacyRequestId = randomUUID();
+    await pool.query(`
+      INSERT INTO jarvis.requests
+        (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key, config_version, policy_hash)
+      VALUES ($1, 'owner-a', '00000000-0000-4000-8000-000000000003', 3001, 'plan', $2, 'queued', 'legacy-request', 1, $3)
+    `, [legacyRequestId, "7".repeat(64), "b".repeat(64)]);
+    const legacyByKey = await intakeStore.findByIdempotency("owner-a", "legacy-request");
+    const legacyOwned = await intakeStore.getOwned(legacyRequestId, "owner-a");
+    assert.equal(legacyByKey.prompt, null);
+    assert.equal(legacyByKey.requestDigest, null);
+    assert.equal(legacyOwned.prompt, null);
+    assert.equal(legacyOwned.requestDigest, null);
+    await assert.rejects(intakeStore.create({
+      ...requestBase, id: randomUUID(), idempotencyKey: "legacy-request", requestDigest: "8".repeat(64),
+    }), /IDEMPOTENCY_CONFLICT/);
+    const { rows: [untouchedLegacy] } = await pool.query(`
+      SELECT r.state, r.prompt, r.request_digest,
+        (SELECT count(*) FROM jarvis.tasks t WHERE t.request_id=r.id)::integer AS task_count
+      FROM jarvis.requests r WHERE r.id=$1
+    `, [legacyRequestId]);
+    assert.deepEqual(untouchedLegacy, { state: "queued", prompt: null, request_digest: null, task_count: 0 });
+
+    const admitted = await intakeStore.create(requestBase);
+    assert.equal(admitted.state, "queued");
+    assert.equal(admitted.prompt, requestBase.prompt);
+    assert.equal(admitted.configVersion, 1);
+    assert.equal(admitted.policyHash, requestBase.policyHash);
+    assert.equal(admitted.profileHash, requestBase.profileHash);
+    assert.equal((await intakeStore.create({ ...requestBase, id: randomUUID() })).id, admitted.id,
+      "same owner/key and full request digest returns the persisted canonical request");
+    const concurrentBase = { ...requestBase, idempotencyKey: "intake-concurrent", requestDigest: "9".repeat(64), id: randomUUID() };
+    const [concurrentA, concurrentB] = await Promise.all([
+      intakeStore.create(concurrentBase),
+      intakeStore.create({ ...concurrentBase, id: randomUUID() }),
+    ]);
+    assert.equal(concurrentA.id, concurrentB.id, "concurrent duplicate submissions resolve to one canonical durable request");
+    const clarification = await intakeStore.create({
+      ...requestBase, id: randomUUID(), projectId: null, repositoryId: null, mode: null, configVersion: null,
+      policyHash: null, profileHash: null, state: "clarification", clarification: ["project", "mode"],
+      idempotencyKey: "intake-integration-clarification", selector: null, explicitMode: null, explicitKind: null,
+      requestDigest: "c".repeat(64),
+    });
+    assert.equal(clarification.state, "clarification");
+    const { rows: [clarificationEffects] } = await pool.query(`
+      SELECT (SELECT count(*) FROM jarvis.tasks WHERE request_id=$1)::integer AS tasks,
+             (SELECT count(*) FROM jarvis.queue_entries q JOIN jarvis.tasks t ON t.id=q.task_id WHERE t.request_id=$1)::integer AS queue,
+             (SELECT count(*) FROM jarvis.task_attempts a JOIN jarvis.tasks t ON t.id=a.task_id WHERE t.request_id=$1)::integer AS attempts
+    `, [clarification.id]);
+    assert.deepEqual(clarificationEffects, { tasks: 0, queue: 0, attempts: 0 });
+    await assert.rejects(intakeStore.create({ ...requestBase, id: randomUUID(), requestDigest: "d".repeat(64) }), /IDEMPOTENCY_CONFLICT/);
+    const clarified = await intakeStore.replaceClarification({
+      ...clarification, projectId: "00000000-0000-4000-8000-000000000003", repositoryId: "3001", mode: "plan",
+      configVersion: 1, policyHash: "b".repeat(64), profileHash: "f".repeat(64), state: "queued", clarification: [],
+      version: 2, clarificationDigest: "f".repeat(64),
+    }, 1);
+    assert.equal(clarified.id, clarification.id);
+    assert.equal(clarified.prompt, clarification.prompt);
+    assert.equal(clarified.idempotencyKey, clarification.idempotencyKey);
+    assert.equal(clarified.requestDigest, clarification.requestDigest);
+    assert.equal(clarified.clarificationDigest, "f".repeat(64));
+
     client = await pool.connect();
     await client.query("BEGIN");
     await assert.rejects(
@@ -337,12 +407,12 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'project_config_versions' THEN 1
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
-                  WHEN 'requests' THEN 3
-                  WHEN 'tasks' THEN 3
+          WHEN 'requests' THEN 7
+          WHEN 'tasks' THEN 6
                   WHEN 'task_attempts' THEN 5
                   WHEN 'task_checkpoints' THEN 1
-                  WHEN 'queue_entries' THEN 2
-                  WHEN 'outbox' THEN 10
+          WHEN 'queue_entries' THEN 5
+          WHEN 'outbox' THEN 13
                   ELSE 0
                 END;
                 IF row_count <> expected_count THEN
