@@ -12,7 +12,7 @@ bounded implementers for repository issue implementation work. At issue start,
 assess what can be delegated and dispatch the meaningful bounded work rather
 than assuming the coordinator should implement everything. Supply only the
 context each task needs. Record a specific exception in the recoverable ledger
-when direct implementation is genuinely not meaningful for the bounded task or
+when delegation is genuinely not meaningful for the bounded task or
 no suitable subagent capacity/tool is available; identify the reason and whether
 it covers all or only part of the issue. Do not spawn an agent merely to perform
 trivial coordination-only actions. Delegation shifts context between agents and
