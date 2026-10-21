@@ -94,9 +94,13 @@ Review changes and stage only intended files. Set `task_changed_file` to an insp
 git add -- "$task_changed_file"
 git diff --cached --check
 git diff --cached
-git commit -F "$task_commit_message_file"
+git -c user.name='jarvis-development-grasdouble[bot]' \
+  -c user.email='343254644+jarvis-development-grasdouble[bot]@users.noreply.github.com' \
+  commit -F "$task_commit_message_file"
 git push --set-upstream origin "$task_branch"
 ```
+
+The process-scoped `git -c` settings apply only to this commit command and set its author and committer identity; they do not change repository or global Git configuration, or rewrite historical commits. The email is a **provisional candidate** and must be confirmed by GitHub attribution in a live test commit before relying on it. This commit identity is separate from push authentication (use the App push helper described above), PR authorship (the App creates the PR), and review identity (never impersonate a reviewer or satisfy review/protection gates with this identity). Keep all existing review and protection gates unchanged.
 
 Use normal pushes; do not rewrite published history merely to simplify delivery. Prepare the English PR body from the repository template, with actual verification and limitations. Use `Closes #N` only for complete resolution, or `Refs #N` for partial work. Closing keywords auto-close issues on merge into the default branch; for another target, reconcile closure after confirming delivery.
 
