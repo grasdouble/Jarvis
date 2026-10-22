@@ -319,3 +319,20 @@ test('allowlisted read-only gh retries once then succeeds without reminting its 
   assert.match(r.stdout, /checks passed/);
   assert.equal(r.requests.filter(x => x.method === 'POST').length, 1);
 });
+
+test('ambiguous equals-form gh flags fail closed without retry', async t => {
+  for (const args of [
+    ['--', 'issue', 'view', '123', '--web=true'],
+    ['--', 'pr', 'checks', '123', '--watch=true'],
+  ]) {
+    const r = await fixtureCommand(t, args, `
+      if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+      if (options.method === 'DELETE') return new Response(null, {status: 204});
+      return Response.json(${JSON.stringify(grant())});`, {
+      ghScript: `n=0; [ ! -f __COUNT__ ] || n=$(cat __COUNT__); n=$((n+1)); echo $n > __COUNT__; echo 'connection reset' >&2; exit 1`,
+    });
+    assert.equal(r.status, 1);
+    assert.equal(r.ghCalls, 1, `${args.join(' ')} must not be retried`);
+    assert.equal(r.requests.filter(x => x.method === 'POST').length, 1, 'token mint must not replay');
+  }
+});

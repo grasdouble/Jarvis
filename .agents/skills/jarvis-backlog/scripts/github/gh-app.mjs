@@ -59,9 +59,10 @@ async function retryTransport(operation, eligible) {
 const readOnlyGhCommands = new Set(['issue list', 'issue view', 'label list', 'pr list', 'pr view', 'pr checks',
   'project list', 'project view', 'project item-list', 'repo list', 'repo view', 'run list', 'run view',
   'workflow list', 'workflow view']);
+const ambiguousReadOnlyGhFlags = new Set(['--web', '--edit', '--watch']);
 function retryableGh(args) {
   return args.length >= 2 && readOnlyGhCommands.has(`${args[0]} ${args[1]}`) &&
-    !args.slice(2).some(argument => ['--web', '--edit', '--watch'].includes(argument));
+    !args.slice(2).some(argument => ambiguousReadOnlyGhFlags.has(argument.split('=', 1)[0]));
 }
 function transientGhFailure(result) {
   const code = result.error?.code;
