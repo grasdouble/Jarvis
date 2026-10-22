@@ -8,10 +8,35 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_changeset_pr import is_changesets_version_pr
+from check_changeset_pr import is_changesets_version_pr, pull_request_merge_base
 
 
 class ChangesetsVersionPrTests(unittest.TestCase):
+    def test_pull_request_merge_candidate_uses_current_target_parent_not_stale_event_base(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, stale_base = self.make_version_pr(Path(temporary))
+            (root / "target-only.txt").write_text("advanced target\n", encoding="utf-8")
+            self.git(root, "switch", "--quiet", "main")
+            self.git(root, "add", "target-only.txt")
+            self.git(root, "commit", "--quiet", "-m", "advance target")
+            current_target = self.git(root, "rev-parse", "HEAD").strip()
+            self.git(root, "merge", "--quiet", "--no-ff", "--no-edit", "version-pr")
+            candidate = self.git(root, "rev-parse", "HEAD").strip()
+
+            self.assertNotEqual(stale_base, current_target)
+            self.assertEqual(pull_request_merge_base(root, candidate), current_target)
+            self.assertTrue(is_changesets_version_pr(current_target, root))
+            self.assertFalse(is_changesets_version_pr(stale_base, root))
+
+    def test_pull_request_merge_base_fails_closed_for_non_merge_or_mismatched_sha(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            head = self.git(root, "rev-parse", "HEAD").strip()
+            with self.assertRaises(ValueError):
+                pull_request_merge_base(root, head)
+            with self.assertRaises(ValueError):
+                pull_request_merge_base(root, base)
+
     def test_version_only_changeset_output_is_recognized(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, base = self.make_version_pr(Path(temporary))
