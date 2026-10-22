@@ -33,6 +33,17 @@ STABLE_VERSION = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 EMPTY_CHANGESET = re.compile(r"\A---[ \t]*\r?\n---[ \t]*(?:\r?\n|\Z)")
 
 
+def pull_request_merge_base(root: Path, github_sha: str) -> str:
+    """Return the current target parent of GitHub's exact two-parent PR merge candidate."""
+    head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", github_sha) or head != github_sha:
+        raise ValueError("GITHUB_SHA does not identify the checked-out PR candidate")
+    parents = _git(root, "rev-list", "--parents", "-n", "1", head).split()
+    if len(parents) != 3 or parents[0] != head:
+        raise ValueError("checked-out PR candidate is not an unambiguous two-parent merge commit")
+    return parents[1]
+
+
 def _changeset_bumps(text: str) -> dict[str, str] | None:
     match = FRONTMATTER.match(text)
     if not match:
@@ -316,10 +327,22 @@ def run_gate(base_sha: str, root: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("base_sha", help="Exact base commit SHA from the pull_request event")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("base_sha", nargs="?", help="Exact base commit SHA")
+    source.add_argument(
+        "--pull-request-merge-base",
+        metavar="GITHUB_SHA",
+        help="derive the current target from the checked-out GitHub PR merge candidate",
+    )
     args = parser.parse_args()
     try:
-        run_gate(args.base_sha, Path.cwd())
+        root = Path.cwd()
+        base_sha = (
+            pull_request_merge_base(root, args.pull_request_merge_base)
+            if args.pull_request_merge_base
+            else args.base_sha
+        )
+        run_gate(base_sha, root)
     except (OSError, subprocess.CalledProcessError, ValueError, yaml.YAMLError) as error:
         print(f"Changeset PR gate failed: {error}", file=sys.stderr)
         return 1
