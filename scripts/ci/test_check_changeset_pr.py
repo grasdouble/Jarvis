@@ -22,6 +22,34 @@ class ChangesetsVersionPrTests(unittest.TestCase):
             root, base = self.make_version_pr(Path(temporary), include_empty=True)
             self.assertTrue(is_changesets_version_pr(base, root))
 
+    def test_version_output_with_unmodified_dependent_range_is_recognized(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            manifest = root / "packages/other/package.json"
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            package["version"] = "1.0.1"
+            manifest.write_text(json.dumps(package), encoding="utf-8")
+            (root / "packages/other/CHANGELOG.md").write_text(
+                "# @fixture/other\n\n## 1.0.1\n\n- Dependent release.\n", encoding="utf-8"
+            )
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "generated dependent release")
+            self.assertTrue(is_changesets_version_pr(base, root))
+
+    def test_version_output_with_unrelated_package_bump_is_not_exempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary))
+            manifest = root / "packages/dep/package.json"
+            package = json.loads(manifest.read_text(encoding="utf-8"))
+            package["version"] = "1.0.1"
+            manifest.write_text(json.dumps(package), encoding="utf-8")
+            (root / "packages/dep/CHANGELOG.md").write_text(
+                "# @fixture/dep\n\n## 1.0.1\n\n- Unrelated release.\n", encoding="utf-8"
+            )
+            self.git(root, "add", ".")
+            self.git(root, "commit", "--quiet", "-m", "generated unrelated package bump")
+            self.assertFalse(is_changesets_version_pr(base, root))
+
     def test_version_output_with_malformed_changeset_is_not_exempt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root, base = self.make_version_pr(Path(temporary), include_malformed=True)
