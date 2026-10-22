@@ -233,11 +233,31 @@ def is_changesets_version_pr(base_sha: str, root: Path) -> bool:
     if not isinstance(dependent_bump, str) or dependent_bump not in BUMP_ORDER:
         return False
     release_plan_packages = set(target_bumps)
+    # Changesets propagates releases through workspace dependents even when a
+    # workspace protocol range does not need changing (for example, `^1.0.0`
+    # remains valid after a patch). Validate that propagation as a dependency
+    # closure rather than requiring every dependent to have a changed range.
+    while True:
+        previous = len(release_plan_packages)
+        for package_root, (before, _) in versioned_manifests.items():
+            package_name = base_packages.get(package_root)
+            if package_name not in changed_versions:
+                continue
+            dependencies = set().union(
+                *(
+                    before.get(field, {}).keys()
+                    for field in DEPENDENCY_FIELDS
+                    if isinstance(before.get(field, {}), dict)
+                )
+            )
+            if dependencies & release_plan_packages:
+                release_plan_packages.add(package_name)
+        if len(release_plan_packages) == previous:
+            break
     for package_root, field, dependency, _ in expected_ranges:
         package_name = base_packages.get(PurePosixPath(package_root))
         if package_name not in changed_versions or dependency not in changed_versions:
             return False
-        release_plan_packages.add(package_name)
     if set(changed_versions) - release_plan_packages:
         return False
 
