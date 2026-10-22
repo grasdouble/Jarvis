@@ -24,6 +24,8 @@ const transportCodes = new Set(['EPERM', 'EACCES', 'ENOTFOUND', 'EAI_AGAIN', 'EN
   'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID']);
+const transientTransportCodes = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED',
+  'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET']);
 function transportCode(error) {
   for (let item = error, depth = 0; item && depth < 4; item = item.cause, depth++) {
     if (transportCodes.has(item.code)) return item.code;
@@ -35,11 +37,49 @@ function transportError(error) {
   const code = transportCode(error);
   // Never retain/print the original cause, headers, body, URL or credential.
   return Object.assign(new Error(NETWORK_RECOVERY + (code ? ` Transport code: ${code}.` : '')),
-    {networkFailure: true, exitCode: NETWORK_EXIT_CODE});
+    {networkFailure: true, retryable: transientTransportCodes.has(code), exitCode: NETWORK_EXIT_CODE});
 }
 async function githubFetch(url, options) {
   try { return await fetch(url, options); }
   catch (error) { throw transportError(error); }
+}
+async function retryTransport(operation, eligible) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      if (eligible && error.retryable && attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+const readOnlyGhCommands = new Set(['issue list', 'issue view', 'label list', 'pr list', 'pr view', 'pr checks',
+  'project list', 'project view', 'project item-list', 'repo list', 'repo view', 'run list', 'run view',
+  'workflow list', 'workflow view']);
+function retryableGh(args) {
+  return args.length >= 2 && readOnlyGhCommands.has(`${args[0]} ${args[1]}`) &&
+    !args.slice(2).some(argument => ['--web', '--edit', '--watch'].includes(argument));
+}
+function transientGhFailure(result) {
+  const code = result.error?.code;
+  if (code && transientTransportCodes.has(code)) return true;
+  // gh's diagnostics are variable; accept only known transport phrases, never generic failures.
+  return /(?:connection reset|connection refused|no such host|temporary failure in name resolution|i\/o timeout|operation timed out|tls handshake timeout|network is unreachable|context deadline exceeded)/i
+    .test(result.stderr ?? '');
+}
+async function runReadOnlyGh(args, environment) {
+  for (let attempt = 0; ; attempt++) {
+    const result = spawnSync('gh', args, {encoding: 'utf8', env: environment});
+    if (result.status === 0 || attempt >= 2 || !transientGhFailure(result)) {
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+      return result.status ?? 1;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+  }
 }
 // Only the reviewed helper's distinct exit and fixed marker trigger recovery.
 export function appNetworkError(error) {
@@ -47,8 +87,8 @@ export function appNetworkError(error) {
   return Object.assign(new Error(NETWORK_RECOVERY), {networkFailure: true, retryable: false, exitCode: NETWORK_EXIT_CODE});
 }
 async function checkNetwork() {
-  const response = await githubFetch('https://api.github.com/', {method: 'HEAD', redirect: 'error',
-    signal: AbortSignal.timeout(5000), headers: {'User-Agent': APP.slug}});
+  const response = await retryTransport(() => githubFetch('https://api.github.com/', {method: 'HEAD', redirect: 'error',
+    signal: AbortSignal.timeout(5000), headers: {'User-Agent': APP.slug}}), true);
   // Even an HTTP denial proves transport reachability, never App authorization.
   console.log(JSON.stringify({host: 'api.github.com', network: 'reachable', httpStatus: response.status, authenticated: false}));
   return 0;
@@ -92,27 +132,29 @@ export async function loadKey(explicitPath = process.env.JARVIS_GITHUB_APP_KEY_F
 }
 
 async function api(resource, token, method = 'GET', body) {
-  const response = await githubFetch(`https://api.github.com${resource}`, {
-    method, redirect: 'error', signal: AbortSignal.timeout(20000),
-    headers: {
-      Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2026-03-10', 'User-Agent': APP.slug,
-      ...(body ? {'Content-Type': 'application/json'} : {}),
-    },
-    ...(body ? {body: JSON.stringify(body)} : {}),
-  });
-  if (!response.ok) {
-    // Do not expose response bodies, request headers, JWTs, or tokens in diagnostics.
-    const error = new Error(`GitHub ${method} ${resource}: HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  if (response.status === 204) return null;
-  try { return await response.json(); }
-  catch (error) {
-    if (transportCode(error)) throw transportError(error);
-    throw new Error('GitHub returned an invalid JSON response.');
-  }
+  return retryTransport(async () => {
+    const response = await githubFetch(`https://api.github.com${resource}`, {
+      method, redirect: 'error', signal: AbortSignal.timeout(20000),
+      headers: {
+        Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2026-03-10', 'User-Agent': APP.slug,
+        ...(body ? {'Content-Type': 'application/json'} : {}),
+      },
+      ...(body ? {body: JSON.stringify(body)} : {}),
+    });
+    if (!response.ok) {
+      // Do not expose response bodies, request headers, JWTs, or tokens in diagnostics.
+      const error = new Error(`GitHub ${method} ${resource}: HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    if (response.status === 204) return null;
+    try { return await response.json(); }
+    catch (error) {
+      if (transportCode(error)) throw transportError(error);
+      throw new Error('GitHub returned an invalid JSON response.');
+    }
+  }, method === 'GET');
 }
 
 export function assertGrant(grant, expected) {
@@ -263,6 +305,7 @@ async function run(options) {
       });
       return result.status ?? 1;
     }
+    if (!options.write && retryableGh(options.args)) return runReadOnlyGh(options.args, environment);
     const result = spawnSync('gh', options.args, {stdio: 'inherit', env: environment});
     return result.status ?? 1;
   } finally {

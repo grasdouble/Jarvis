@@ -134,7 +134,7 @@ test('key loading rejects shared permissions and symlink files', async () => {
 });
 
 // Full CLI fixtures intercept every request and use a synthetic key only.
-async function fixtureCommand(t, args, behavior, {key = true, ghExit} = {}) {
+async function fixtureCommand(t, args, behavior, {key = true, ghExit, ghScript} = {}) {
   const folder = await mkdtemp(path.join(tmpdir(), 'jarvis-network-test-'));
   t.after(() => rm(folder, {recursive: true, force: true}));
   const keyPath = path.join(folder, 'fixture.pem');
@@ -149,7 +149,8 @@ async function fixtureCommand(t, args, behavior, {key = true, ghExit} = {}) {
       appendFileSync(${JSON.stringify(calls)}, JSON.stringify({url, method: options.method ?? 'GET'}) + '\\n');
       ${behavior}
     };`);
-  if (ghExit !== undefined) await writeFile(path.join(folder, 'gh'), `#!/bin/sh\nexit ${ghExit}\n`, {mode: 0o700});
+  if (ghScript !== undefined) await writeFile(path.join(folder, 'gh'), `#!/bin/sh\n${ghScript.replaceAll('__COUNT__', path.join(folder, 'gh-count'))}\n`, {mode: 0o700});
+  else if (ghExit !== undefined) await writeFile(path.join(folder, 'gh'), `#!/bin/sh\nexit ${ghExit}\n`, {mode: 0o700});
   const result = spawnSync(process.execPath,
     ['--import', preload, fileURLToPath(new URL('./gh-app.mjs', import.meta.url)), ...args], {
       encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
@@ -160,7 +161,9 @@ async function fixtureCommand(t, args, behavior, {key = true, ghExit} = {}) {
   let requests = [];
   try { requests = (await readFile(calls, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  return {...result, requests};
+  let ghCalls = 0;
+  try { ghCalls = Number(await readFile(path.join(folder, 'gh-count'), 'utf8')); } catch {}
+  return {...result, requests, ghCalls};
 }
 
 test('network probe needs no key and sends no credentials, body or write request', async t => {
@@ -172,6 +175,44 @@ test('network probe needs no key and sends no credentials, body or write request
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), {host: 'api.github.com', network: 'reachable', httpStatus: 200, authenticated: false});
   assert.equal(r.requests.length, 1);
+});
+
+test('network probe retries classified transient transport failures at most twice', async t => {
+  const r = await fixtureCommand(t, ['--check-network'], `
+    const n = globalThis.__attempts = (globalThis.__attempts ?? 0) + 1;
+    if (n < 3) throw new TypeError('fetch failed', {cause: {code: 'ECONNRESET'}});
+    return new Response(null, {status: 200});`, {key: false});
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.requests.length, 3);
+  assert.equal(JSON.parse(r.stdout).authenticated, false);
+});
+
+test('network probe stops after three transient failures without leaking causes', async t => {
+  const r = await fixtureCommand(t, ['--check-network'], `
+    throw new TypeError('fetch failed synthetic-secret', {cause: {code: 'ECONNRESET'}});`, {key: false});
+  assert.equal(r.status, 75);
+  assert.equal(r.requests.length, 3);
+  assert.doesNotMatch(r.stderr, /synthetic-secret/);
+});
+
+test('read response-body transport failures retry the individual GET only', async t => {
+  const r = await fixtureCommand(t, ['--verify'], `
+    if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+    if (options.method === 'POST') return Response.json(${JSON.stringify(grant())});
+    if (options.method === 'DELETE') return new Response(null, {status: 204});
+    if (url.endsWith('/repos/${APP.repository}') && !url.endsWith('/actions/permissions')) {
+      globalThis.__repoReads = (globalThis.__repoReads ?? 0) + 1;
+      if (globalThis.__repoReads === 1) return new Response(new ReadableStream({start(controller) {
+        controller.error(new TypeError('synthetic-secret', {cause: {code: 'ECONNRESET'}}));
+      }}), {status: 200});
+      return Response.json({full_name: ${JSON.stringify(APP.repository)}});
+    }
+    if (url.endsWith('/installation/repositories')) return Response.json({total_count: 1});
+    return new Response(null, {status: 403});`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.requests.filter(x => x.url.endsWith(`/repos/${APP.repository}`)).length, 2);
+  assert.equal(r.requests.filter(x => x.method === 'POST').length, 1);
+  assert.doesNotMatch(r.stderr, /synthetic-secret/);
 });
 
 test('public probe reports HTTP reachability without claiming App authentication', async t => {
@@ -190,7 +231,8 @@ test('transport failures have a stable recovery exit and never expose raw causes
     assert.match(r.stderr, /--check-network/);
     assert.match(r.stderr, /approved network/i);
     assert.doesNotMatch(r.stderr, /synthetic-secret|headers\/key\/token/);
-    assert.equal(r.requests.length, 1, 'no blind transport retry');
+    assert.equal(r.requests.length, ['ENOTFOUND', 'UND_ERR_CONNECT_TIMEOUT'].includes(code) ? 3 : 1,
+      'only classified transient GET transport failures retry');
   }
 });
 
@@ -205,13 +247,23 @@ test('network probe timeout is bounded and classified without using App credenti
 
 test('HTTP auth errors and malformed JSON are not network-permission diagnoses', async t => {
   for (const status of [401, 403]) {
-    const auth = await fixtureCommand(t, ['--verify'], `return new Response('synthetic-secret', {status: ${status}});`);
+    const auth = await fixtureCommand(t, ['--verify'], `
+      if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+      if (options.method === 'POST') return Response.json(${JSON.stringify(grant())});
+      if (options.method === 'DELETE') return new Response(null, {status: 204});
+      return new Response('synthetic-secret', {status: ${status}});`);
     assert.equal(auth.status, 1);
+    assert.equal(auth.requests.filter(x => x.url.endsWith(`/repos/${APP.repository}`)).length, 1);
     assert.match(auth.stderr, new RegExp(`HTTP ${status}`));
     assert.doesNotMatch(auth.stderr, /JARVIS_GITHUB_NETWORK:|synthetic-secret/);
   }
-  const invalid = await fixtureCommand(t, ['--verify'], "return new Response('synthetic-secret', {status: 200});");
+  const invalid = await fixtureCommand(t, ['--verify'], `
+    if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+    if (options.method === 'POST') return Response.json(${JSON.stringify(grant())});
+    if (options.method === 'DELETE') return new Response(null, {status: 204});
+    return new Response('synthetic-secret', {status: 200});`);
   assert.equal(invalid.status, 1);
+  assert.equal(invalid.requests.filter(x => x.url.endsWith(`/repos/${APP.repository}`)).length, 1);
   assert.doesNotMatch(invalid.stderr, /JARVIS_GITHUB_NETWORK:|synthetic-secret/);
 });
 
@@ -233,4 +285,37 @@ test('downstream pending-check exit is preserved and the grant is revoked once',
   assert.equal(r.status, 8, r.stderr);
   assert.doesNotMatch(r.stderr, /JARVIS_GITHUB_NETWORK:/);
   assert.deepEqual(r.requests.map(x => x.method), ['GET', 'POST', 'DELETE']);
+});
+
+test('recognized read-only gh forms retry transient child failures; writes and unknown forms do not', async t => {
+  for (const [args, expected] of [
+    [['--', 'pr', 'checks', '1'], 3],
+    [['--', 'pr', 'checks', '1', '--watch'], 1],
+    [['--', 'issue', 'create'], 1],
+    [['--', 'api', '/repos/grasdouble/Jarvis'], 1],
+    [['--', 'repo', 'delete', 'grasdouble/Jarvis'], 1],
+  ]) {
+    const r = await fixtureCommand(t, args, `
+      if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+      if (options.method === 'DELETE') return new Response(null, {status: 204});
+      return Response.json(${JSON.stringify(grant())});`, {
+      ghScript: `n=0; [ ! -f __COUNT__ ] || n=$(cat __COUNT__); n=$((n+1)); echo $n > __COUNT__; echo 'connection reset' >&2; exit 1`,
+    });
+    assert.equal(r.status, 1);
+    assert.equal(r.ghCalls, expected, `${args.join(' ')}: ${r.stderr}`);
+    assert.equal(r.requests.filter(x => x.method === 'POST').length, 1, 'token mint is not replayed');
+  }
+});
+
+test('allowlisted read-only gh retries once then succeeds without reminting its token', async t => {
+  const r = await fixtureCommand(t, ['--', 'pr', 'checks', '1'], `
+    if (url.endsWith('/app')) return Response.json({id: ${APP.id}, slug: ${JSON.stringify(APP.slug)}});
+    if (options.method === 'DELETE') return new Response(null, {status: 204});
+    return Response.json(${JSON.stringify(grant())});`, {
+    ghScript: `n=0; [ ! -f __COUNT__ ] || n=$(cat __COUNT__); n=$((n+1)); echo $n > __COUNT__; if [ $n -eq 1 ]; then echo 'connection reset' >&2; exit 1; fi; echo 'checks passed'; exit 0`,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.ghCalls, 2);
+  assert.match(r.stdout, /checks passed/);
+  assert.equal(r.requests.filter(x => x.method === 'POST').length, 1);
 });
