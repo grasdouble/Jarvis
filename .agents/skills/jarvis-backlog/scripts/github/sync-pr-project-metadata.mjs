@@ -9,7 +9,7 @@ import { createMetadataApi } from './pr-project-metadata-api.mjs';
 import { synchronizeMetadata } from './pr-project-metadata-sync.mjs';
 import { CONFIG } from './pr-project-metadata.mjs';
 import { createRoadmapApi, synchronizeDates } from './roadmap-dates-sync.mjs';
-import { appNetworkError, NETWORK_EXIT_CODE } from './gh-app.mjs';
+import { appNetworkError, isRoadmapQuery, NETWORK_EXIT_CODE } from './gh-app.mjs';
 
 export function parseOptions(args) {
   const options={write:false,ci:false};const seen=new Set();
@@ -44,6 +44,17 @@ export function requestError(error) {
   return Object.assign(new Error('GitHub request failed; inspect permissions or service availability.'),
     {retryable:safeToRetry||ambiguous,safeToRetry,ambiguous});
 }
+export function apiInvocation(options, request, helper) {
+  const roadmapRead = !options.ci && options.roadmap && !request.write &&
+    request.path === 'graphql' && request.method === 'POST';
+  if (roadmapRead) {
+    if (!isRoadmapQuery(request.body)) throw new Error('Refusing an unrecognized Roadmap GraphQL read.');
+    return {command:process.execPath,args:[helper,'--roadmap-query']};
+  }
+  const ghArgs=['api',request.path,'--method',request.method,'--input','-'];
+  return {command:options.ci?'gh':process.execPath,
+    args:options.ci?ghArgs:[helper,...(request.write?['--write']:[]),'--',...ghArgs]};
+}
 export async function main(args=process.argv.slice(2),env=process.env) {
   const options=parseOptions(args);
   if(options.ci)assertCiContext(env);
@@ -57,10 +68,9 @@ export async function main(args=process.argv.slice(2),env=process.env) {
     if(options.ci)Object.assign(childEnv,{GH_HOST:'github.com',GH_REPO:CONFIG.repository,GH_CONFIG_DIR:temporary,GH_PROMPT_DISABLED:'1'});
     const api=async request=>{
       if(request.write&&!options.write)throw new Error('Mutation is disabled in preview.');
-      const ghArgs=['api',request.path,'--method',request.method,'--input','-'];
+      const invocation=apiInvocation(options,request,helper);
       try {
-        const output=execFileSync(options.ci?'gh':process.execPath,options.ci?ghArgs:
-          [helper,...(request.write?['--write']:[]),'--',...ghArgs],
+        const output=execFileSync(invocation.command,invocation.args,
           {input:JSON.stringify(request.body),encoding:'utf8',stdio:['pipe','pipe','pipe'],env:childEnv,timeout:45000,maxBuffer:16*1024*1024});
         return JSON.parse(output);
       } catch(error){throw requestError(error);}
