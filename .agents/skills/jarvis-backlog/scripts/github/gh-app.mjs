@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Local development authentication only; never distribute this into review sandboxes.
-import { createSign, randomUUID } from 'node:crypto';
+import { createHash, createSign, randomUUID } from 'node:crypto';
 import { lstat, readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -24,6 +25,8 @@ const transportCodes = new Set(['EPERM', 'EACCES', 'ENOTFOUND', 'EAI_AGAIN', 'EN
   'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'ERR_TLS_CERT_ALTNAME_INVALID']);
+const transientTransportCodes = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED',
+  'ECONNRESET', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET']);
 function transportCode(error) {
   for (let item = error, depth = 0; item && depth < 4; item = item.cause, depth++) {
     if (transportCodes.has(item.code)) return item.code;
@@ -35,11 +38,50 @@ function transportError(error) {
   const code = transportCode(error);
   // Never retain/print the original cause, headers, body, URL or credential.
   return Object.assign(new Error(NETWORK_RECOVERY + (code ? ` Transport code: ${code}.` : '')),
-    {networkFailure: true, exitCode: NETWORK_EXIT_CODE});
+    {networkFailure: true, retryable: transientTransportCodes.has(code), exitCode: NETWORK_EXIT_CODE});
 }
 async function githubFetch(url, options) {
   try { return await fetch(url, options); }
   catch (error) { throw transportError(error); }
+}
+async function retryTransport(operation, eligible) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      if (eligible && error.retryable && attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+const readOnlyGhCommands = new Set(['issue list', 'issue view', 'label list', 'pr list', 'pr view', 'pr checks',
+  'project list', 'project view', 'project item-list', 'repo list', 'repo view', 'run list', 'run view',
+  'workflow list', 'workflow view']);
+const ambiguousReadOnlyGhFlags = new Set(['--web', '--edit', '--watch']);
+function retryableGh(args) {
+  return args.length >= 2 && readOnlyGhCommands.has(`${args[0]} ${args[1]}`) &&
+    !args.slice(2).some(argument => ambiguousReadOnlyGhFlags.has(argument.split('=', 1)[0]));
+}
+function transientGhFailure(result) {
+  const code = result.error?.code;
+  if (code && transientTransportCodes.has(code)) return true;
+  // gh's diagnostics are variable; accept only known transport phrases, never generic failures.
+  return /(?:connection reset|connection refused|no such host|temporary failure in name resolution|i\/o timeout|operation timed out|tls handshake timeout|network is unreachable|context deadline exceeded)/i
+    .test(result.stderr ?? '');
+}
+async function runReadOnlyGh(args, environment) {
+  for (let attempt = 0; ; attempt++) {
+    const result = spawnSync('gh', args, {encoding: 'utf8', env: environment});
+    if (result.status === 0 || attempt >= 2 || !transientGhFailure(result)) {
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+      return result.status ?? 1;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+  }
 }
 // Only the reviewed helper's distinct exit and fixed marker trigger recovery.
 export function appNetworkError(error) {
@@ -47,8 +89,8 @@ export function appNetworkError(error) {
   return Object.assign(new Error(NETWORK_RECOVERY), {networkFailure: true, retryable: false, exitCode: NETWORK_EXIT_CODE});
 }
 async function checkNetwork() {
-  const response = await githubFetch('https://api.github.com/', {method: 'HEAD', redirect: 'error',
-    signal: AbortSignal.timeout(5000), headers: {'User-Agent': APP.slug}});
+  const response = await retryTransport(() => githubFetch('https://api.github.com/', {method: 'HEAD', redirect: 'error',
+    signal: AbortSignal.timeout(5000), headers: {'User-Agent': APP.slug}}), true);
   // Even an HTTP denial proves transport reachability, never App authorization.
   console.log(JSON.stringify({host: 'api.github.com', network: 'reachable', httpStatus: response.status, authenticated: false}));
   return 0;
@@ -91,28 +133,30 @@ export async function loadKey(explicitPath = process.env.JARVIS_GITHUB_APP_KEY_F
   return readFile(keyPath);
 }
 
-async function api(resource, token, method = 'GET', body) {
-  const response = await githubFetch(`https://api.github.com${resource}`, {
-    method, redirect: 'error', signal: AbortSignal.timeout(20000),
-    headers: {
-      Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2026-03-10', 'User-Agent': APP.slug,
-      ...(body ? {'Content-Type': 'application/json'} : {}),
-    },
-    ...(body ? {body: JSON.stringify(body)} : {}),
-  });
-  if (!response.ok) {
-    // Do not expose response bodies, request headers, JWTs, or tokens in diagnostics.
-    const error = new Error(`GitHub ${method} ${resource}: HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  if (response.status === 204) return null;
-  try { return await response.json(); }
-  catch (error) {
-    if (transportCode(error)) throw transportError(error);
-    throw new Error('GitHub returned an invalid JSON response.');
-  }
+async function api(resource, token, method = 'GET', body, retryRead = true) {
+  return retryTransport(async () => {
+    const response = await githubFetch(`https://api.github.com${resource}`, {
+      method, redirect: 'error', signal: AbortSignal.timeout(20000),
+      headers: {
+        Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2026-03-10', 'User-Agent': APP.slug,
+        ...(body ? {'Content-Type': 'application/json'} : {}),
+      },
+      ...(body ? {body: JSON.stringify(body)} : {}),
+    });
+    if (!response.ok) {
+      // Do not expose response bodies, request headers, JWTs, or tokens in diagnostics.
+      const error = new Error(`GitHub ${method} ${resource}: HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    if (response.status === 204) return null;
+    try { return await response.json(); }
+    catch (error) {
+      if (transportCode(error)) throw transportError(error);
+      throw new Error('GitHub returned an invalid JSON response.');
+    }
+  }, method === 'GET' && retryRead);
 }
 
 export function assertGrant(grant, expected) {
@@ -146,13 +190,182 @@ export function parseArguments(input) {
   const write = args[0] === '--write';
   if (write) args.shift();
   if (!write && args.length === 1 && args[0] === '--check-network') return {write: false, mode: 'network'};
+  if (!write && args.length === 1 && args[0] === '--roadmap-query') return {write: false, mode: 'roadmap-query'};
   if (!write && args.length === 1 && args[0] === '--refresh-main') return {write: false, mode: 'refresh-main'};
   if (args.length === 1 && args[0] === '--verify') return {write, mode: 'verify'};
   if (args.length === 1 && args[0] === '--git-push' && write) return {write, mode: 'push'};
   if (args.shift() !== '--' || !['api', 'issue', 'label', 'pr', 'project', 'repo', 'run', 'workflow'].includes(args[0])) {
-    throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/gh-app.mjs [--write] -- <gh arguments>; --verify; or --write --git-push. Authentication/config/extension commands are not exposed.');
+    throw new Error('Usage: node .agents/skills/jarvis-backlog/scripts/github/gh-app.mjs [--write] -- <gh arguments>; --verify; --roadmap-query; or --write --git-push. Authentication/config/extension commands are not exposed.');
   }
   return {write, mode: 'gh', args};
+}
+
+const roadmapQueryShapes = {
+  RoadmapItems: {variables:['after'], signature:'e30e787d1f3d8247d029313b9d6912de2c61f72dc28448a6653acbb9ecd50e94'},
+  RoadmapIssue: {variables:['itemId','number'], signature:'60f86840cab0b4a7c983cc7f988718e00e1988509c125fefd3baa974d0ea8bfb'},
+  RoadmapHistory: {variables:['after','number'], signature:'6636cfafdca07000baeb7b2844b8af4671494c4dc4f906d2cd3376d70a5c91c8'},
+};
+function roadmapQuerySignature(query) {
+  return createHash('sha256').update(JSON.stringify(graphqlTokens(query).map(token => [token.kind, token.value ?? null]))).digest('hex');
+}
+function graphqlTokens(source) {
+  const tokens = [];
+  for (let i = 0; i < source.length;) {
+    const char = source[i];
+    if (/\s|,/.test(char) || char === '\uFEFF') { i++; continue; }
+    if (char === '#') { while (i < source.length && source[i] !== '\n' && source[i] !== '\r') i++; continue; }
+    if (source.startsWith('"""', i)) {
+      i += 3;
+      while (i < source.length && !source.startsWith('"""', i)) {
+        if (source.startsWith('\\"""', i)) i += 4; else i++;
+      }
+      if (i >= source.length) throw new Error('Malformed Roadmap GraphQL query.');
+      i += 3; tokens.push({kind: 'string', value: null}); continue;
+    }
+    if (char === '"') {
+      const start = i;
+      i++;
+      let closed = false;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i++] === '"') { closed = true; break; }
+      }
+      if (!closed) throw new Error('Malformed Roadmap GraphQL query.');
+      tokens.push({kind: 'string', value: JSON.parse(source.slice(start, i))}); continue;
+    }
+    const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(i));
+    if (name) { tokens.push({kind: 'name', value: name[0]}); i += name[0].length; continue; }
+    const number = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(source.slice(i));
+    if (number) { tokens.push({kind: 'number', value:number[0]}); i += number[0].length; continue; }
+    if (source.startsWith('...', i)) { tokens.push({kind: 'punct', value: '...'}); i += 3; continue; }
+    if ('!$():=@[]{|}&'.includes(char)) { tokens.push({kind: 'punct', value: char}); i++; continue; }
+    throw new Error('Malformed Roadmap GraphQL query.');
+  }
+  return tokens;
+}
+function rejectDuplicateJsonKeys(source) {
+  let index = 0;
+  const whitespace = () => { while (/\s/.test(source[index] ?? '')) index++; };
+  function string() {
+    const start = index++;
+    while (index < source.length) {
+      if (source[index] === '\\') { index += 2; continue; }
+      if (source[index++] === '"') return JSON.parse(source.slice(start, index));
+    }
+    throw new Error('Malformed JSON input.');
+  }
+  function value() {
+    whitespace();
+    if (source[index] === '"') { string(); return; }
+    if (source[index] === '{') {
+      index++; whitespace(); const keys = new Set();
+      if (source[index] === '}') { index++; return; }
+      while (index < source.length) {
+        whitespace();
+        if (source[index] !== '"') throw new Error('Malformed JSON input.');
+        const key = string();
+        if (keys.has(key)) throw new Error('Duplicate JSON property.');
+        keys.add(key); whitespace();
+        if (source[index++] !== ':') throw new Error('Malformed JSON input.');
+        value(); whitespace();
+        if (source[index] === '}') { index++; return; }
+        if (source[index++] !== ',') throw new Error('Malformed JSON input.');
+      }
+      throw new Error('Malformed JSON input.');
+    }
+    if (source[index] === '[') {
+      index++; whitespace();
+      if (source[index] === ']') { index++; return; }
+      while (index < source.length) {
+        value(); whitespace();
+        if (source[index] === ']') { index++; return; }
+        if (source[index++] !== ',') throw new Error('Malformed JSON input.');
+      }
+      throw new Error('Malformed JSON input.');
+    }
+    while (index < source.length && !/[\s,}\]]/.test(source[index])) index++;
+    if (index === 0) throw new Error('Malformed JSON input.');
+  }
+  value(); whitespace();
+  if (index !== source.length) throw new Error('Malformed JSON input.');
+}
+
+export function isRoadmapQuery(body) {
+  try { validateRoadmapQuery(body); return true; }
+  catch { return false; }
+}
+
+function validateRoadmapQuery(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      Object.keys(body).sort().join(',') !== 'query,variables' || typeof body.query !== 'string' ||
+      !body.variables || typeof body.variables !== 'object' || Array.isArray(body.variables)) {
+    throw new Error('Malformed Roadmap query input.');
+  }
+  const tokens = graphqlTokens(body.query);
+  if (tokens[0]?.kind !== 'name' || tokens[0].value !== 'query' ||
+      tokens[1]?.kind !== 'name' || !roadmapQueryShapes[tokens[1].value] ||
+      tokens[2]?.kind !== 'punct' || !['(', '{'].includes(tokens[2].value)) {
+    throw new Error('Unrecognized Roadmap GraphQL query.');
+  }
+  const shape = roadmapQueryShapes[tokens[1].value];
+  if (Object.keys(body.variables).sort().join(',') !== shape.variables.join(',') ||
+      roadmapQuerySignature(body.query) !== shape.signature) {
+    throw new Error('Roadmap GraphQL query does not match its recognized read shape.');
+  }
+  if ('after' in body.variables && body.variables.after !== null && typeof body.variables.after !== 'string') {
+    throw new Error('Invalid Roadmap cursor variable.');
+  }
+  if ('number' in body.variables && (!Number.isSafeInteger(body.variables.number) || body.variables.number < 1)) {
+    throw new Error('Invalid Roadmap issue variable.');
+  }
+  if ('itemId' in body.variables && (typeof body.variables.itemId !== 'string' || !body.variables.itemId)) {
+    throw new Error('Invalid Roadmap item variable.');
+  }
+  let braces = 0, parentheses = 0, brackets = 0, rootClosed = false, sawRoot = false;
+  for (const token of tokens.slice(2)) {
+    if (rootClosed) throw new Error('Multiple or trailing Roadmap GraphQL operations are not allowed.');
+    if (token.kind !== 'punct') continue;
+    if (token.value === '(') parentheses++;
+    else if (token.value === ')') { if (--parentheses < 0) throw new Error('Malformed Roadmap GraphQL query.'); }
+    else if (token.value === '[') brackets++;
+    else if (token.value === ']') { if (--brackets < 0) throw new Error('Malformed Roadmap GraphQL query.'); }
+    else if (token.value === '{') {
+      if (parentheses === 0 && brackets === 0) sawRoot = true;
+      braces++;
+    } else if (token.value === '}') {
+      if (--braces < 0) throw new Error('Malformed Roadmap GraphQL query.');
+      if (sawRoot && braces === 0 && parentheses === 0 && brackets === 0) rootClosed = true;
+    }
+  }
+  if (!sawRoot || !rootClosed || braces || parentheses || brackets) throw new Error('Malformed Roadmap GraphQL query.');
+  return body;
+}
+
+async function runRoadmapQuery() {
+  let body;
+  try {
+    const input = readFileSync(0, 'utf8');
+    if (Buffer.byteLength(input) > 256 * 1024) throw new Error('Roadmap query input is too large.');
+    rejectDuplicateJsonKeys(input);
+    body = validateRoadmapQuery(JSON.parse(input));
+  }
+  catch { throw new Error('Invalid or unrecognized Roadmap query input.'); }
+  const signed = jwt(await loadKey());
+  const identity = await api('/app', signed, 'GET', undefined, false);
+  if (identity.id !== APP.id || identity.slug !== APP.slug) throw new Error('Private key belongs to another GitHub App.');
+  const expected = permissions(false);
+  const grant = await api(`/app/installations/${APP.installationId}/access_tokens`, signed, 'POST', {
+    repositories: [APP.repository.split('/')[1]], permissions: expected,
+  });
+  try {
+    assertGrant(grant, expected);
+    const result = await retryTransport(() => api('/graphql', grant.token, 'POST', body), true);
+    console.log(JSON.stringify(result));
+    return 0;
+  } finally {
+    try { await api('/installation/token', grant.token, 'DELETE'); }
+    catch { console.error('Could not confirm token revocation; the issued token expires automatically within one hour.'); }
+  }
 }
 
 function git(args, options = {}) {
@@ -185,8 +398,9 @@ export async function refreshMain({target, commonGitDir, git: runGit, fetchMain,
 
 async function run(options) {
   if (options.mode === 'network') return checkNetwork();
+  if (options.mode === 'roadmap-query') return runRoadmapQuery();
   const signed = jwt(await loadKey());
-  const identity = await api('/app', signed);
+  const identity = await api('/app', signed, 'GET', undefined, false);
   if (identity.id !== APP.id || identity.slug !== APP.slug) throw new Error('Private key belongs to another GitHub App.');
   const expected = permissions(options.write);
   const grant = await api(`/app/installations/${APP.installationId}/access_tokens`, signed, 'POST', {
@@ -263,6 +477,7 @@ async function run(options) {
       });
       return result.status ?? 1;
     }
+    if (!options.write && retryableGh(options.args)) return runReadOnlyGh(options.args, environment);
     const result = spawnSync('gh', options.args, {stdio: 'inherit', env: environment});
     return result.status ?? 1;
   } finally {
