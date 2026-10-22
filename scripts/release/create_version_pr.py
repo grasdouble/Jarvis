@@ -131,7 +131,11 @@ def authorize_branch_update(
         return
     if previous_pull is not None:
         _verify_pull_request(previous_pull, slug)
-        if previous_pull.get("state") != "closed" or previous_pull.get("merged") is not True:
+        merged_at = previous_pull.get("merged_at")
+        merged = previous_pull.get("merged") is True or (
+            isinstance(merged_at, str) and bool(merged_at)
+        )
+        if previous_pull.get("state") != "closed" or not merged:
             raise ReleaseError(
                 "A previously closed, unmerged version PR will not be reopened or overwritten."
             )
