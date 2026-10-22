@@ -13,6 +13,7 @@ This document is the canonical source for contributor-session request tags and t
 | `@jarvis-review` | Request a review of a change. |
 | `@jarvis-backlog` | Consult or manage issues and the project within the authorization given. |
 | `@jarvis-tags` | Display the available canonical tags. |
+| `@jarvis-tools` | Read-only analysis of a specifically identified OpenCode contributor session. |
 
 For skill-aware clients, the text after `@` is the corresponding skill ID. This is an explicit entry-point naming convention, not a universal invocation syntax.
 
@@ -31,6 +32,7 @@ Tags express intent only. They do not grant permissions, expand the user's reque
 - `@jarvis-review` is the direct entry point to [`jarvis-review`](../.agents/skills/jarvis-review/SKILL.md). A review linked to an active delivery remains coordinated by `jarvis-delivery`; an autonomous review uses a fresh independent reviewer context without creating an artificial delivery issue. The reviewer receives the authorized scope, criteria, and exact base/head revisions; it does not modify delivery source, publish, or merge. A session that authored any part of the change cannot review it independently. If a suitable independent reviewer is unavailable, report the review as limited, not independent.
 - `@jarvis-backlog` is the direct entry point to [`jarvis-backlog`](../.agents/skills/jarvis-backlog/SKILL.md). Backlog consultation/maintenance remains project management and does not imply implementation.
 - `@jarvis-tags` routes only to [`jarvis-tags`](../.agents/skills/jarvis-tags/SKILL.md), which returns this registry and starts no other workflow.
+- `@jarvis-tools` routes only to the read-only [`jarvis-tools`](../.agents/skills/jarvis-tools/SKILL.md) skill for evidence-based analysis of a specifically identified OpenCode contributor session; it does not authorize session mutations or broader access.
 
 ## Orchestration and delegation
 
