@@ -201,9 +201,9 @@ export function parseArguments(input) {
 }
 
 const roadmapQueryShapes = {
-  RoadmapItems: {variables:['after'], signature:'e9ca693d62b59aa7940a2f54184d61add5381202ea2652de13ccf8ed65b35aaa'},
-  RoadmapIssue: {variables:['itemId','number'], signature:'34721d2cb4fcfc380949b2c6a2da4c5990ce373ea6bf1c4a056668e57e7cf55a'},
-  RoadmapHistory: {variables:['after','number'], signature:'fdffe23ad752266df6713940422e12600a7a68e228585bae68dc293c77c43015'},
+  RoadmapItems: {variables:['after'], signature:'e30e787d1f3d8247d029313b9d6912de2c61f72dc28448a6653acbb9ecd50e94'},
+  RoadmapIssue: {variables:['itemId','number'], signature:'60f86840cab0b4a7c983cc7f988718e00e1988509c125fefd3baa974d0ea8bfb'},
+  RoadmapHistory: {variables:['after','number'], signature:'6636cfafdca07000baeb7b2844b8af4671494c4dc4f906d2cd3376d70a5c91c8'},
 };
 function roadmapQuerySignature(query) {
   return createHash('sha256').update(JSON.stringify(graphqlTokens(query).map(token => [token.kind, token.value ?? null]))).digest('hex');
@@ -236,7 +236,7 @@ function graphqlTokens(source) {
     const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(i));
     if (name) { tokens.push({kind: 'name', value: name[0]}); i += name[0].length; continue; }
     const number = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(source.slice(i));
-    if (number) { tokens.push({kind: 'number'}); i += number[0].length; continue; }
+    if (number) { tokens.push({kind: 'number', value:number[0]}); i += number[0].length; continue; }
     if (source.startsWith('...', i)) { tokens.push({kind: 'punct', value: '...'}); i += 3; continue; }
     if ('!$():=@[]{|}&'.includes(char)) { tokens.push({kind: 'punct', value: char}); i++; continue; }
     throw new Error('Malformed Roadmap GraphQL query.');

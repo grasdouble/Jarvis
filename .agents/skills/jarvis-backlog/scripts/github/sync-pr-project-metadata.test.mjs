@@ -98,6 +98,12 @@ test('actual Roadmap preview query passes helper validation and routes through r
  assert.equal(isRoadmapQuery(expanded.body),false);
  assert.throws(()=>apiInvocation({ci:false,roadmap:true,write:false},expanded,'/trusted/gh-app.mjs'),
   /unrecognized Roadmap GraphQL read/);
+ const oversizedPage={...emitted,body:{...emitted.body,
+  query:emitted.body.query.replace('items(first:20,after:$after)','items(first:1000000000,after:$after)')}};
+ assert.notEqual(oversizedPage.body.query,emitted.body.query,'fixture changes the production page bound');
+ assert.equal(isRoadmapQuery(oversizedPage.body),false);
+ assert.throws(()=>apiInvocation({ci:false,roadmap:true,write:false},oversizedPage,'/trusted/gh-app.mjs'),
+  /unrecognized Roadmap GraphQL read/);
 });
 
 
