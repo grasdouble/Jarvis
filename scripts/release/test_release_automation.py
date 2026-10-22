@@ -274,6 +274,27 @@ class ReleaseBehaviorTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "refusing to overwrite"):
             authorize_branch_update(None, None, "b" * 40, "a" * 40, "package-release-app")
 
+    def test_merged_list_response_authorizes_reserved_branch_update(self) -> None:
+        # GitHub's list-pulls endpoint reports `merged: null` even for a merged
+        # PR; `merged_at` is the list response's merge evidence.
+        merged_list_response = version_pull(state="closed", merged=None)
+        merged_list_response["merged_at"] = "2026-10-20T15:29:15Z"
+
+        authorize_branch_update(
+            None, merged_list_response, "b" * 40, "a" * 40, "package-release-app"
+        )
+
+        closed_unmerged_list_response = version_pull(state="closed", merged=None)
+        closed_unmerged_list_response["merged_at"] = None
+        with self.assertRaisesRegex(ReleaseError, "will not be reopened"):
+            authorize_branch_update(
+                None,
+                closed_unmerged_list_response,
+                "b" * 40,
+                "a" * 40,
+                "package-release-app",
+            )
+
 
 def artifact(package: str, version: str) -> PackageRelease:
     return PackageRelease(
