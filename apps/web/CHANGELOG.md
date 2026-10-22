@@ -1,5 +1,11 @@
 # @jarvis/web
 
+## 0.0.2
+
+### Patch Changes
+
+- @jarvis/contracts@0.0.1
+
 ## 0.0.1
 
 ### Patch Changes
