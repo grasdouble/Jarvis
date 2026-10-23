@@ -119,5 +119,15 @@ jobs:
             --output "$archive"
           printf '%s  %s\n' "$GITLEAKS_SHA256" "$archive" | sha256sum --check --strict
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
-      - name: Scan the full available Git history with redacted findings
-        run: '"${RUNNER_TEMP}/gitleaks" git . --redact --no-banner'
+      - name: Test secret-scan history scoping with the pinned scanner
+        env:
+          GITLEAKS_BIN: ${{ runner.temp }}/gitleaks
+        run: python3 -m unittest discover -s scripts/ci -p 'test_scan_secrets.py'
+      - name: Scan the required Git history with redacted findings
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          python3 scripts/ci/scan_secrets.py
+          --gitleaks "${RUNNER_TEMP}/gitleaks"
+          --event-name "${GITHUB_EVENT_NAME}"
