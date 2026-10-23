@@ -69,7 +69,13 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await ownerAuthStore.createSession({
         ownerId: "owner", tokenDigest: expiredTokenDigest, csrfTokenDigest: "d".repeat(64), inactivityMs: 60_000,
       });
-      await authClient.query("UPDATE jarvis.owner_sessions SET expires_at = now() - interval '1 second' WHERE token_digest = $1", [expiredTokenDigest]);
+      await authClient.query(`
+        UPDATE jarvis.owner_sessions
+        SET created_at = now() - interval '2 seconds',
+            last_seen_at = now() - interval '2 seconds',
+            expires_at = now() - interval '1 second'
+        WHERE token_digest = $1
+      `, [expiredTokenDigest]);
       assert.equal(await ownerAuthStore.touchSession(expiredTokenDigest, 60_000), null);
     } finally {
       await authClient.query("ROLLBACK");
