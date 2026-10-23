@@ -7,9 +7,12 @@ import argparse
 import json
 import os
 import re
+import selectors
+import signal
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +25,7 @@ from ci_evidence_packet import create_packet, serialize_packet, validate_packet
 REPOSITORY = "grasdouble/Jarvis"
 PROCESS_TIMEOUT_SECONDS = 30
 MAX_HELPER_STDOUT_BYTES = 2 * 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
 API_PAGE_SIZE = 100
 MAX_API_PAGES = 20
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -142,35 +146,98 @@ def _clean_helper_environment() -> dict[str, str]:
     return {name: value for name, value in os.environ.items() if name in allowed}
 
 
+def _stop_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill the isolated helper/gh process group and reap its direct child."""
+    try:
+        # The session is dedicated to this helper invocation, so SIGKILL cannot
+        # affect unrelated processes and prevents ignored signals leaving children.
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _bounded_process_output(argv: Sequence[str]) -> tuple[int, bytes, bytes]:
+    if os.name != "posix":
+        raise CollectionError("Process-group execution is unavailable; no packet was produced.")
+    process = subprocess.Popen(
+        argv,
+        shell=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=_clean_helper_environment(),
+        close_fds=True,
+        start_new_session=True,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    selector: selectors.BaseSelector | None = None
+    streams = {process.stdout: bytearray(), process.stderr: bytearray()}
+    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+    try:
+        selector = selectors.DefaultSelector()
+        for stream in streams:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CollectionError("Trusted App-helper timed out; no packet was produced.")
+            for key, _ in selector.select(timeout=min(remaining, 0.25)):
+                stream = key.fileobj
+                output = streams[stream]
+                # Read at most one byte beyond the limit, enough to detect overflow
+                # without buffering an unbounded chunk from the pipe.
+                read_size = min(READ_CHUNK_BYTES, MAX_HELPER_STDOUT_BYTES + 1 - len(output))
+                chunk = os.read(stream.fileno(), read_size)
+                if not chunk:
+                    selector.unregister(stream)
+                    continue
+                if len(output) + len(chunk) > MAX_HELPER_STDOUT_BYTES:
+                    raise CollectionError("Trusted App-helper response exceeded the output limit; no packet was produced.")
+                output.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise CollectionError("Trusted App-helper timed out; no packet was produced.")
+        try:
+            return_code = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            raise CollectionError("Trusted App-helper timed out; no packet was produced.") from None
+        return return_code, bytes(streams[process.stdout]), bytes(streams[process.stderr])
+    except BaseException:
+        _stop_process_group(process)
+        raise
+    finally:
+        if selector is not None:
+            selector.close()
+        process.stdout.close()
+        process.stderr.close()
+
+
 def _run_helper(helper: Path, gh_args: Sequence[str]) -> str:
     node = shutil.which("node")
     if not node:
         raise CollectionError("Node.js is unavailable; no packet was produced.")
     argv = [node, str(helper), "--", *gh_args]
     try:
-        result = subprocess.run(
-            argv,
-            shell=False,
-            check=False,
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=PROCESS_TIMEOUT_SECONDS,
-            env=_clean_helper_environment(),
-        )
-    except (OSError, subprocess.SubprocessError):
+        return_code, stdout, _stderr = _bounded_process_output(argv)
+    except CollectionError:
+        raise
+    except (OSError, subprocess.SubprocessError, ValueError):
         raise CollectionError("Trusted App-helper invocation failed; no packet was produced.") from None
-    if result.returncode != 0:
+    if return_code != 0:
         # Helper output may contain private paths or sensitive diagnostics; never relay it.
         raise CollectionError("Trusted App-helper read failed; no packet was produced.")
-    if (
-        len(result.stdout.encode("utf-8")) > MAX_HELPER_STDOUT_BYTES
-        or len(result.stderr.encode("utf-8")) > MAX_HELPER_STDOUT_BYTES
-    ):
-        raise CollectionError("Trusted App-helper response exceeded the output limit; no packet was produced.")
-    return result.stdout
+    return stdout.decode("utf-8", errors="replace")
 
 
 def _api_read(helper: Path, endpoint: str, jq_filter: str) -> str:

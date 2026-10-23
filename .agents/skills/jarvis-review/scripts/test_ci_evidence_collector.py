@@ -3,12 +3,22 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
+import shutil
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from ci_evidence_packet import validate_packet
-from collect_ci_evidence import CollectionError, CollectionRequest, collect_packet, main, _paginated_api_read
+from collect_ci_evidence import (
+    CollectionError,
+    CollectionRequest,
+    _clean_helper_environment,
+    _paginated_api_read,
+    collect_packet,
+    main,
+)
 
 
 BASE = "a" * 40
@@ -116,52 +126,47 @@ class CollectorTests(unittest.TestCase):
         ]
 
     def patch_helper(self, responses):
-        from subprocess import CompletedProcess
-
         queue = iter(responses)
 
-        def run(argv, **kwargs):
-            self.assertIsInstance(argv, list)
-            self.assertFalse(kwargs["shell"])
-            self.assertEqual(kwargs["timeout"], 30)
-            self.assertEqual(argv[1], str(self.helper))
-            self.assertEqual(argv[2], "--")
-            action = argv[3:5]
+        def run(helper, gh_args):
+            self.assertEqual(helper, self.helper)
+            self.assertIsInstance(gh_args, list)
             next_response = next(queue)
             if isinstance(next_response, tuple):
-                return CompletedProcess(argv, next_response[0], next_response[1], next_response[2])
-            if action == ["pr", "view"]:
-                return CompletedProcess(argv, 0, json.dumps(next_response), "")
-            return CompletedProcess(argv, 0, json.dumps(next_response), "")
+                if next_response[0] != 0:
+                    raise CollectionError("Trusted App-helper read failed; no packet was produced.")
+                return next_response[1]
+            return json.dumps(next_response)
 
-        return patch("collect_ci_evidence.subprocess.run", side_effect=run)
+        return patch("collect_ci_evidence._run_helper", side_effect=run)
 
     def test_success_uses_read_only_app_requests_and_emits_allowlisted_packet(self):
         responses = self.successful_responses()
         with patch.dict(os.environ, {"GH_TOKEN": "ambient-gh-secret", "FORGEJO_TOKEN": "other-secret"}):
+            environment = _clean_helper_environment()
+            self.assertNotIn("GH_TOKEN", environment)
+            self.assertNotIn("FORGEJO_TOKEN", environment)
+            self.assertLessEqual(set(environment), {"PATH", "HOME", "TMPDIR", "JARVIS_GITHUB_APP_KEY_FILE"})
             with patch("collect_ci_evidence.shutil.which", return_value="/usr/bin/node"):
                 with self.patch_helper(responses) as runner:
                     packet = collect_packet(self.request)
 
         self.assertEqual(runner.call_count, 5)
-        calls = [call.args[0] for call in runner.call_args_list]
-        self.assertEqual(calls[0][3:5], ["pr", "view"])
-        self.assertEqual(calls[0][5:8], [str(PR_NUMBER), "--repo", "grasdouble/Jarvis"])
+        calls = [call.args[1] for call in runner.call_args_list]
+        self.assertEqual(calls[0][:2], ["pr", "view"])
+        self.assertEqual(calls[0][2:5], [str(PR_NUMBER), "--repo", "grasdouble/Jarvis"])
         self.assertIn("number,baseRefOid,headRefOid,url", calls[0])
-        self.assertEqual(calls[1][3:5], ["api", f"repos/grasdouble/Jarvis/actions/runs/{RUN_ID}"])
+        self.assertEqual(calls[1][:2], ["api", f"repos/grasdouble/Jarvis/actions/runs/{RUN_ID}"])
         self.assertIn("--method", calls[1])
         self.assertIn("--jq", calls[1])
         self.assertIn("pull_requests", calls[1][calls[1].index("--jq") + 1])
-        self.assertEqual(calls[2][3:5], ["api", f"repos/grasdouble/Jarvis/actions/runs/{RUN_ID}/jobs?per_page=100&page=1"])
-        self.assertEqual(calls[3][3:5], ["api", f"repos/grasdouble/Jarvis/check-suites/222/check-runs?filter=all&per_page=100&page=1"])
+        self.assertEqual(calls[2][:2], ["api", f"repos/grasdouble/Jarvis/actions/runs/{RUN_ID}/jobs?per_page=100&page=1"])
+        self.assertEqual(calls[3][:2], ["api", f"repos/grasdouble/Jarvis/check-suites/222/check-runs?filter=all&per_page=100&page=1"])
         self.assertIn("--method", calls[3])
         self.assertIn("--jq", calls[3])
         self.assertEqual(calls[4], calls[0])
         for call in runner.call_args_list:
-            self.assertNotIn("--write", call.args[0])
-            self.assertFalse(call.kwargs["shell"])
-            self.assertNotIn("GH_TOKEN", call.kwargs["env"])
-            self.assertNotIn("FORGEJO_TOKEN", call.kwargs["env"])
+            self.assertNotIn("--write", call.args[1])
         expected = {
             "repository": "grasdouble/Jarvis",
             "pull_request_number": PR_NUMBER,
@@ -234,7 +239,7 @@ class CollectorTests(unittest.TestCase):
         with patch("collect_ci_evidence.shutil.which", return_value="/usr/bin/node"):
             with self.patch_helper(responses) as runner:
                 packet = collect_packet(self.request)
-        endpoints = [call.args[0][4] for call in runner.call_args_list]
+        endpoints = [call.args[1][1] for call in runner.call_args_list]
         self.assertEqual(endpoints[2:6], [
             f"repos/grasdouble/Jarvis/actions/runs/{RUN_ID}/jobs?per_page=100&page=1",
             f"repos/grasdouble/Jarvis/actions/runs/{RUN_ID}/jobs?per_page=100&page=2",
@@ -381,7 +386,7 @@ class CollectorTests(unittest.TestCase):
             CollectionRequest(**{**self.request.__dict__, "required_jobs": ()}),
             CollectionRequest(**{**self.request.__dict__, "required_checks": ()}),
         ]
-        with patch("collect_ci_evidence.subprocess.run") as runner:
+        with patch("collect_ci_evidence._run_helper") as runner:
             for request in invalid:
                 with self.subTest(request=request), self.assertRaises(CollectionError):
                     collect_packet(request)
@@ -397,6 +402,68 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertNotIn(secret, stderr.getvalue())
         self.assertIn("Invalid collector arguments", stderr.getvalue())
+
+    def test_stdout_and_stderr_overflow_stops_synthetic_child_process_tree(self):
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node is required for the harmless process-tree cap test")
+        secret = "CAP_TEST_SECRET_"
+        for stream in ("stdout", "stderr"):
+            with self.subTest(stream=stream):
+                with tempfile.TemporaryDirectory(prefix=".cap-process-", dir=Path(__file__).parent) as folder:
+                    folder_path = Path(folder)
+                    child_file = folder_path / "child.mjs"
+                    helper_file = folder_path / "gh-app.mjs"
+                    pid_file = folder_path / "child.pid"
+                    child_file.write_text(
+                        "process.on('SIGTERM', () => {});\n"
+                        "setInterval(() => {}, 1000);\n"
+                    )
+                    helper_file.write_text(
+                        "import {spawn} from 'node:child_process';\n"
+                        "import {writeFileSync} from 'node:fs';\n"
+                        f"const child = spawn(process.execPath, [{json.dumps(str(child_file))}], {{stdio:'ignore'}});\n"
+                        f"writeFileSync({json.dumps(str(pid_file))}, String(child.pid));\n"
+                        f"const target = {json.dumps(stream)} === 'stdout' ? process.stdout : process.stderr;\n"
+                        f"target.write('{secret}' + 'x'.repeat(3 * 1024 * 1024));\n"
+                    )
+                    child_pid = None
+                    try:
+                        argv = [
+                            "--helper-path", str(helper_file), "--repo", "grasdouble/Jarvis",
+                            "--pr", str(PR_NUMBER), "--base-sha", BASE, "--head-sha", HEAD,
+                            "--run-id", str(RUN_ID), "--workflow", WORKFLOW,
+                            "--event", "pull_request", "--required-job", JOB_NAME,
+                            "--required-check", CHECK_NAME,
+                        ]
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        # Bypass only the trusted-path check for this temporary harmless
+                        # helper; all process execution and bounded collection stays real.
+                        with patch("collect_ci_evidence._validate_request", return_value=helper_file):
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                result = main(argv)
+                        self.assertEqual(result, 2)
+                        self.assertEqual(stdout.getvalue(), "")
+                        self.assertIn("no packet was produced", stderr.getvalue())
+                        self.assertNotIn(secret, stdout.getvalue() + stderr.getvalue())
+                        self.assertTrue(pid_file.is_file(), "synthetic child did not start")
+                        child_pid = int(pid_file.read_text())
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            try:
+                                os.kill(child_pid, 0)
+                            except ProcessLookupError:
+                                break
+                            time.sleep(0.05)
+                        else:
+                            self.fail("overflow left a spawned child process alive")
+                    finally:
+                        if child_pid is None and pid_file.is_file():
+                            child_pid = int(pid_file.read_text())
+                        if child_pid is not None:
+                            try:
+                                os.kill(child_pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
 
 
 if __name__ == "__main__":
