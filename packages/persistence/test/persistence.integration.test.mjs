@@ -4,7 +4,13 @@ import process from "node:process";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
-import { CheckpointRejectedError, PostgresPersistence, PostgresQueueStore, PostgresRequestIntakeStore } from "../dist/index.js";
+import {
+  CheckpointRejectedError,
+  PostgresOwnerAuthStore,
+  PostgresPersistence,
+  PostgresQueueStore,
+  PostgresRequestIntakeStore,
+} from "../dist/index.js";
 import { QueueError, QueueService } from "@jarvis/queue";
 
 const { Pool } = pg;
@@ -15,6 +21,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
 }, async () => {
   const pool = new Pool({ connectionString: databaseUrl, max: 3 });
   let client;
+  let authClient;
   let lockClient;
   let fixtureCommitted = false;
   try {
@@ -25,7 +32,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth"]);
     lockClient = await pool.connect();
     await lockClient.query("SELECT pg_advisory_lock($1)", [0x4a385445]);
     await pool.query(`
@@ -43,6 +50,32 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
         END LOOP;
       END $$
     `);
+
+    authClient = await pool.connect();
+    await authClient.query("BEGIN");
+    try {
+      const transactionPool = { async connect() { return { query: authClient.query.bind(authClient), release() {} }; } };
+      const ownerAuthStore = new PostgresOwnerAuthStore(transactionPool);
+      assert.equal(await ownerAuthStore.createOwner({ ownerId: "owner", passwordHash: "scrypt$integration-fixture" }), true);
+      assert.equal(await ownerAuthStore.createOwner({ ownerId: "owner", passwordHash: "scrypt$second-fixture" }), false);
+      const sessionTokenDigest = "a".repeat(64);
+      const expiredTokenDigest = "c".repeat(64);
+      await ownerAuthStore.createSession({
+        ownerId: "owner", tokenDigest: sessionTokenDigest, csrfTokenDigest: "b".repeat(64), inactivityMs: 60_000,
+      });
+      assert.equal((await ownerAuthStore.touchSession(sessionTokenDigest, 60_000))?.ownerId, "owner");
+      await ownerAuthStore.revokeSession(sessionTokenDigest);
+      assert.equal(await ownerAuthStore.touchSession(sessionTokenDigest, 60_000), null);
+      await ownerAuthStore.createSession({
+        ownerId: "owner", tokenDigest: expiredTokenDigest, csrfTokenDigest: "d".repeat(64), inactivityMs: 60_000,
+      });
+      await authClient.query("UPDATE jarvis.owner_sessions SET expires_at = now() - interval '1 second' WHERE token_digest = $1", [expiredTokenDigest]);
+      assert.equal(await ownerAuthStore.touchSession(expiredTokenDigest, 60_000), null);
+    } finally {
+      await authClient.query("ROLLBACK");
+      authClient.release();
+      authClient = undefined;
+    }
 
     client = await pool.connect();
     await client.query("BEGIN");
@@ -379,6 +412,10 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
         await client.query("ROLLBACK").catch(() => undefined);
         client.release();
       }
+      if (authClient) {
+        await authClient.query("ROLLBACK").catch(() => undefined);
+        authClient.release();
+      }
       if (fixtureCommitted) {
         client = await pool.connect();
         let cleanupCommitted = false;
@@ -402,6 +439,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                 EXECUTE format('SELECT count(*) FROM jarvis.%I', table_name) INTO row_count;
                 expected_count := CASE table_name
                   WHEN 'installations' THEN 1
+                  WHEN 'owner_accounts' THEN 0
+                  WHEN 'owner_sessions' THEN 0
                   WHEN 'policies' THEN 1
                   WHEN 'projects' THEN 1
                   WHEN 'project_config_versions' THEN 1

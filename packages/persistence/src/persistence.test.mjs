@@ -52,6 +52,7 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   const migration = await readFile(new URL("../migrations/001_initial.sql", import.meta.url), "utf8");
   const approvalOrderingMigration = await readFile(new URL("../migrations/002_skill_approval_order.sql", import.meta.url), "utf8");
   const requestIntakeMigration = await readFile(new URL("../migrations/004_project_request_intake.sql", import.meta.url), "utf8");
+  const ownerAuthMigration = await readFile(new URL("../migrations/005_owner_auth.sql", import.meta.url), "utf8");
   assert.match(migration, /CREATE TABLE projects/i);
   assert.match(migration, /UNIQUE\s*\(id, repository_id\)/i);
   assert.match(migration, /FOREIGN KEY\s*\([^)]*repository_id[^)]*\)\s*REFERENCES/i);
@@ -67,6 +68,14 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   assert.match(requestIntakeMigration, /ADD COLUMN clarification_digest/i);
   assert.match(requestIntakeMigration, /ALTER COLUMN project_id DROP NOT NULL/i);
   assert.match(requestIntakeMigration, /requests_admission_binding/i);
+  assert.match(ownerAuthMigration, /CREATE TABLE jarvis\.owner_accounts/i);
+  assert.match(ownerAuthMigration, /CHECK \(owner_id = 'owner'\)/i);
+  assert.match(ownerAuthMigration, /CREATE TABLE jarvis\.owner_sessions/i);
+  assert.match(ownerAuthMigration, /token_digest char\(64\)/i);
+  assert.match(ownerAuthMigration, /csrf_token_digest char\(64\)/i);
+  assert.match(ownerAuthMigration, /revoked_at timestamptz/i);
+  assert.match(ownerAuthMigration, /GRANT SELECT, INSERT, UPDATE ON jarvis\.owner_sessions TO jarvis_app/i);
+  assert.doesNotMatch(ownerAuthMigration, /onboarding_secret/i);
 });
 
 test("migration runner serializes concurrent callers and records applied versions", async () => {

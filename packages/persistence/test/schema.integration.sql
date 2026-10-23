@@ -13,6 +13,21 @@ DO $$ BEGIN
   IF has_table_privilege('jarvis_app', 'jarvis.audit_events', 'DELETE') THEN
     RAISE EXCEPTION 'core app role must not delete audit records';
   END IF;
+  IF NOT has_table_privilege('jarvis_app', 'jarvis.owner_accounts', 'SELECT')
+     OR NOT has_table_privilege('jarvis_app', 'jarvis.owner_accounts', 'INSERT')
+     OR NOT has_table_privilege('jarvis_app', 'jarvis.owner_accounts', 'UPDATE')
+     OR has_table_privilege('jarvis_app', 'jarvis.owner_accounts', 'DELETE') THEN
+    RAISE EXCEPTION 'core app owner credential privileges must allow setup and account updates but not deletion';
+  END IF;
+  IF NOT has_table_privilege('jarvis_app', 'jarvis.owner_sessions', 'INSERT')
+     OR NOT has_table_privilege('jarvis_app', 'jarvis.owner_sessions', 'UPDATE')
+     OR has_table_privilege('jarvis_app', 'jarvis.owner_sessions', 'DELETE') THEN
+    RAISE EXCEPTION 'core app session privileges must allow creation/revocation but not deletion';
+  END IF;
+  IF has_table_privilege('jarvis_agent', 'jarvis.owner_accounts', 'SELECT')
+     OR has_table_privilege('jarvis_agent', 'jarvis.owner_sessions', 'SELECT') THEN
+    RAISE EXCEPTION 'agent role must not access owner authentication state';
+  END IF;
   IF NOT has_table_privilege('jarvis_app', 'jarvis.queue_entries', 'INSERT')
      OR NOT has_table_privilege('jarvis_app', 'jarvis.queue_entries', 'UPDATE')
      OR has_table_privilege('jarvis_app', 'jarvis.queue_entries', 'DELETE') THEN

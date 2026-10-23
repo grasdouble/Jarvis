@@ -1,4 +1,29 @@
 import { ProjectRequestIntake, type RequestSubmission } from "@jarvis/domain";
+import type {
+  OwnerAuthBoundary,
+  OwnerAuthHttpRequest,
+} from "./auth.js";
+
+export {
+  createOwnerAuthBoundary,
+  createOwnerAuthService,
+} from "./auth.js";
+export type {
+  ActiveOwnerSession,
+  AuthenticatedOwnerSession,
+  CreateOwnerAuthServiceOptions,
+  OwnerAuthBoundary,
+  OwnerAuthBoundaryOptions,
+  OwnerAuthHttpRequest,
+  OwnerAuthHttpResponse,
+  OwnerAuthService,
+  OwnerAuthStore,
+  OwnerCredential,
+  OwnerMutationAuthorization,
+  OwnerMutationDenial,
+  OwnerSessionCredentials,
+  OwnerSessionToCreate,
+} from "./auth.js";
 
 export const serviceName = "api";
 
@@ -8,7 +33,11 @@ export interface IntakeHttpRequest {
   readonly body: unknown;
   readonly idempotencyKey: string | null;
 }
-export interface IntakeHttpResponse { status: number; body: unknown }
+export interface IntakeHttpResponse {
+  status: number;
+  body: unknown;
+  headers?: Readonly<Record<string, string | readonly string[]>>;
+}
 export interface RequestIntakeBoundary {
   submit(request: IntakeHttpRequest): Promise<IntakeHttpResponse>;
   clarify(request: IntakeHttpRequest & { requestId: string; expectedVersion: number }): Promise<IntakeHttpResponse>;
@@ -66,6 +95,67 @@ export function createRequestIntakeBoundary(intake: ProjectRequestIntake): Reque
         if (error instanceof Error && (error.name === "RequestConflictError" || ["IDEMPOTENCY_CONFLICT", "PROJECT_AUTHORIZATION_STALE", "REQUEST_VERSION_CONFLICT"].includes(error.message))) return { status: 409, body: { error: "request_conflict" } };
         throw error;
       }
+    },
+  };
+}
+
+export interface AuthenticatedIntakeHttpRequest extends OwnerAuthHttpRequest {
+  readonly idempotencyKey: string | null;
+}
+
+export interface AuthenticatedClarificationHttpRequest extends AuthenticatedIntakeHttpRequest {
+  readonly requestId: string;
+  readonly expectedVersion: number;
+}
+
+/**
+ * Public browser adapter: session middleware supplies the only owner identity,
+ * and Origin/CSRF checks run before the intake boundary can create effects.
+ */
+export function createAuthenticatedRequestIntakeBoundary(
+  intake: ProjectRequestIntake,
+  auth: OwnerAuthBoundary,
+): {
+  submit(request: AuthenticatedIntakeHttpRequest): Promise<IntakeHttpResponse>;
+  clarify(request: AuthenticatedClarificationHttpRequest): Promise<IntakeHttpResponse>;
+} {
+  const protectedIntake = createRequestIntakeBoundary(intake);
+
+  return {
+    async submit(request): Promise<IntakeHttpResponse> {
+      const authorization = await auth.authorizeMutation(request);
+      if (!authorization.authorized) {
+        return {
+          status: authorization.response.status,
+          body: authorization.response.body ?? null,
+          ...(authorization.response.headers === undefined ? {} : { headers: authorization.response.headers }),
+        };
+      }
+      const result = await protectedIntake.submit({
+        auth: authorization.auth,
+        body: request.body,
+        idempotencyKey: request.idempotencyKey,
+      });
+      return { ...result, headers: authorization.headers };
+    },
+
+    async clarify(request): Promise<IntakeHttpResponse> {
+      const authorization = await auth.authorizeMutation(request);
+      if (!authorization.authorized) {
+        return {
+          status: authorization.response.status,
+          body: authorization.response.body ?? null,
+          ...(authorization.response.headers === undefined ? {} : { headers: authorization.response.headers }),
+        };
+      }
+      const result = await protectedIntake.clarify({
+        auth: authorization.auth,
+        body: request.body,
+        idempotencyKey: request.idempotencyKey,
+        requestId: request.requestId,
+        expectedVersion: request.expectedVersion,
+      });
+      return { ...result, headers: authorization.headers };
     },
   };
 }

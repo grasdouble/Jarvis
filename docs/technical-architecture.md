@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.22 • October 21, 2026 • Companion to the PRD and roadmap
+Document version 1.23 • October 23, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -302,7 +302,10 @@ interface SandboxManager {
 
 | Proposed method and route | Purpose | Constraints |
 | --- | --- | --- |
-| POST /api/v1/session | Local login | Rate limiting, hashed password, no secret in the response |
+| GET /api/v1/session | Inspect local owner session and obtain a same-origin CSRF token | Server-side session; no credentials in response |
+| POST /api/v1/session/onboard | One-time local owner password setup | Injected one-time secret, strong password, CSRF and Origin validation; secret is not stored or returned |
+| POST /api/v1/session | Local login | Rate limiting, hashed password, CSRF and Origin validation; no credential in response |
+| POST /api/v1/session/logout | Revoke the current local owner session | CSRF and Origin validation; clear session and CSRF cookies |
 | GET /api/v1/projects | Internally authorized project list | Owner session, cursor pagination; no repository-derived additions |
 | POST /api/v1/projects | Add a project to the internal allowlist | Owner session, stable GitHub identity validation, CSRF, audit |
 | PATCH /api/v1/projects/:id | Project settings, allowlist state and suspension | Expected version, CSRF, audit, policy validation |
@@ -326,6 +329,8 @@ interface SandboxManager {
 An API mutation returns `202` for scheduled work, `409` for an outdated version or revision, `422` for an invalid contract, and `429` for a local limit. Ambiguity is a persisted clarification, while authorization blocks carry stable reason codes. There is no merge endpoint and no runtime publication endpoint; only the core's validated dev-task workflow can request PR publication.
 
 Controller routes are separate (`/internal/v1/sandboxes`) and are not published. A local network does not provide authentication: internal mTLS, certificate rotation, service identity verification, and route restrictions remain necessary.
+
+The current source implements these session routes as framework-neutral API boundaries, an injected durable-store contract, and a PostgreSQL adapter; the React shell provides the initial onboarding/login and sign-out flow. The boundaries are not yet mounted on a running API listener. The login limiter is process-local (five failures per 15-minute window per accepted peer address and at most four concurrent password verifications), so multi-instance enforcement and trusted-proxy address handling remain deployment qualifications. This source implementation does not enable project configuration, dashboard, task cancellation, provider dispatch, or GitHub operations.
 
 ## 9 GitHub App and permissions
 
@@ -666,7 +671,7 @@ Persistent secrets are the GitHub App private key, provider keys, PostgreSQL cre
 
 GitHub keys stay in the trusted broker; read/PR-publication tokens are created on demand, retained in memory, and expire or are revoked. No merge token/capability is provisioned for v0.1. Per-attempt LLM capabilities have a scope, limit, and deadline. Gateway keys are injected into temporary storage and disappear when it is destroyed. A control prevents them from being written to events, logs, and artifacts.
 
-Web administration uses a single account, a password hashed with an appropriate function, an opaque server-side session, HttpOnly and SameSite cookies, inactivity expiry, and CSRF protection. Cookie behavior is tested on the strictly loopback HTTP interface; any remote exposure requires TLS and a Secure cookie. Onboarding uses a one-time secret, never printed in logs, and then revokes it.
+Web administration uses a single account, a password hashed with scrypt (`N=32768`, `r=8`, `p=1`, a 16-byte random salt and a 64-byte derived key), a random 32-byte opaque server-side session whose SHA-256 digest is stored in PostgreSQL, HttpOnly and SameSite=Strict cookies, inactivity expiry, and CSRF protection. Passwords require at least 14 Unicode code points and are limited to 1,024 UTF-8 bytes. The implementation accepts an onboarding secret of at least 32 UTF-8 bytes only through explicit API-service configuration, atomically creates the sole owner, and stores no copy of that secret; absent configuration disables onboarding. Browser mutations require the configured exact Origin plus a session-bound HMAC CSRF value in both the readable CSRF cookie and request header. Session cookies are Secure for HTTPS; unencrypted cookies are allowed only for a strictly loopback HTTP origin. The API boundary sets/validates these cookies and its loopback HTTP adapter test exercises the headers and lifecycle locally, but browser-engine cookie policy, an API listener, deployment, and Colima behavior are not yet qualified. Any remote exposure requires TLS and Secure cookies.
 
 Rotation and revocation are documented: suspend starts, replace the secret, restart only its consumers, test reads, verify capabilities, and resume actions. Logging uses an allowlist of fields rather than only pattern matching for strings that resemble keys.
 
