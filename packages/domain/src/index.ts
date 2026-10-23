@@ -61,6 +61,159 @@ export class RequestConflictError extends Error {
   constructor(message: string) { super(message); this.name = "RequestConflictError"; }
 }
 
+export type ProjectAuthorizationState = "active" | "suspended" | "removed";
+
+export interface ProjectConfigurationRecord {
+  readonly projectId: string;
+  /** Canonical decimal string: GitHub's bigint repository ID is never coerced to a JS number. */
+  readonly repositoryId: string;
+  readonly installationId: string;
+  readonly repositoryOwner: string;
+  readonly repositoryName: string;
+  readonly state: ProjectAuthorizationState;
+  readonly configVersion: number;
+  readonly policyHash: string;
+  readonly profileHash: string;
+}
+
+export interface NewProjectConfiguration {
+  readonly repositoryId: string;
+  readonly installationId: string;
+  readonly repositoryOwner: string;
+  readonly repositoryName: string;
+}
+
+export interface ProjectConfigurationChanges {
+  readonly repositoryOwner?: string;
+  readonly repositoryName?: string;
+  readonly state?: ProjectAuthorizationState;
+}
+
+export interface InitialProjectConfiguration {
+  /** Existing core-activated policy; never supplied by a project/request body. */
+  readonly policyHash: string;
+  /** Opaque profile reference injected by trusted core configuration. */
+  readonly profileHash: string;
+}
+
+export interface ProjectConfigurationStore {
+  list(): Promise<readonly ProjectConfigurationRecord[]>;
+  add(actorId: string, input: NewProjectConfiguration, initial: InitialProjectConfiguration): Promise<ProjectConfigurationRecord>;
+  update(actorId: string, repositoryId: string, expectedVersion: number, changes: ProjectConfigurationChanges): Promise<ProjectConfigurationRecord>;
+  remove(actorId: string, repositoryId: string, expectedVersion: number): Promise<ProjectConfigurationRecord>;
+}
+
+export interface InitialProjectConfigurationSource {
+  /** Configuration comes from trusted core startup configuration, never repository or request content. */
+  initialConfiguration(): Promise<InitialProjectConfiguration>;
+}
+
+const MAX_POSTGRES_BIGINT = 9_223_372_036_854_775_807n;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256 = /^[a-f0-9]{64}$/;
+
+function plainDataObject(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${label} must be an object.`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = typeof key === "string" ? descriptors[key] : undefined;
+    if (descriptor === undefined || !("value" in descriptor) || descriptor.enumerable !== true) {
+      throw new TypeError(`${label} must contain only enumerable data fields.`);
+    }
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertClosed(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key))) throw new TypeError(`${label} contains unsupported fields.`);
+}
+
+function validateRepositoryId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^[1-9][0-9]{0,18}$/.test(value) || BigInt(value) > MAX_POSTGRES_BIGINT) {
+    throw new TypeError("Repository identity must be a canonical positive decimal string.");
+  }
+}
+
+function validateRepositoryPart(value: unknown, field: string): asserts value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 100 || !/^[A-Za-z0-9_.-]+$/.test(value)
+    || value === "." || value === "..") {
+    throw new TypeError(`${field} is not a valid repository name component.`);
+  }
+}
+
+function validateExpectedVersion(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1) throw new TypeError("Expected configuration version must be a positive integer.");
+}
+
+function validateInitialConfiguration(value: InitialProjectConfiguration): void {
+  const object = plainDataObject(value, "Initial project configuration");
+  assertClosed(object, ["policyHash", "profileHash"], "Initial project configuration");
+  if (typeof object.policyHash !== "string" || !SHA256.test(object.policyHash)) throw new TypeError("Initial policy reference is invalid.");
+  if (typeof object.profileHash !== "string" || !SHA256.test(object.profileHash)) throw new TypeError("Initial profile reference is invalid.");
+}
+
+function validateActor(actorId: string): void {
+  if (actorId !== "owner") throw new TypeError("Authenticated owner is required.");
+}
+
+/** Domain boundary for owner-authenticated allowlist changes; policy/profile references come only from core configuration. */
+export class ProjectConfigurationService {
+  constructor(
+    private readonly store: ProjectConfigurationStore,
+    private readonly initialConfiguration: InitialProjectConfigurationSource,
+  ) {}
+
+  async list(): Promise<readonly ProjectConfigurationRecord[]> {
+    return this.store.list();
+  }
+
+  async add(actorId: string, input: NewProjectConfiguration): Promise<ProjectConfigurationRecord> {
+    validateActor(actorId);
+    const object = plainDataObject(input, "Project input");
+    assertClosed(object, ["repositoryId", "installationId", "repositoryOwner", "repositoryName"], "Project input");
+    validateRepositoryId(object.repositoryId);
+    if (typeof object.installationId !== "string" || !UUID.test(object.installationId)) throw new TypeError("Installation identity must be a UUID.");
+    validateRepositoryPart(object.repositoryOwner, "repositoryOwner");
+    validateRepositoryPart(object.repositoryName, "repositoryName");
+    const initial = await this.initialConfiguration.initialConfiguration();
+    validateInitialConfiguration(initial);
+    return this.store.add(actorId, {
+      repositoryId: object.repositoryId,
+      installationId: object.installationId,
+      repositoryOwner: object.repositoryOwner,
+      repositoryName: object.repositoryName,
+    }, initial);
+  }
+
+  async update(actorId: string, repositoryId: string, expectedVersion: number, changes: ProjectConfigurationChanges): Promise<ProjectConfigurationRecord> {
+    validateActor(actorId);
+    validateRepositoryId(repositoryId);
+    validateExpectedVersion(expectedVersion);
+    const object = plainDataObject(changes, "Project changes");
+    assertClosed(object, ["repositoryOwner", "repositoryName", "state"], "Project changes");
+    if (Object.keys(object).length === 0) throw new TypeError("At least one project change is required.");
+    if (object.repositoryOwner !== undefined) validateRepositoryPart(object.repositoryOwner, "repositoryOwner");
+    if (object.repositoryName !== undefined) validateRepositoryPart(object.repositoryName, "repositoryName");
+    if (object.state !== undefined && object.state !== "active" && object.state !== "suspended") {
+      throw new TypeError("Project state must be active or suspended; use removal to revoke authorization.");
+    }
+    return this.store.update(actorId, repositoryId, expectedVersion, {
+      ...(object.repositoryOwner === undefined ? {} : { repositoryOwner: object.repositoryOwner as string }),
+      ...(object.repositoryName === undefined ? {} : { repositoryName: object.repositoryName as string }),
+      ...(object.state === undefined ? {} : { state: object.state as "active" | "suspended" }),
+    });
+  }
+
+  async remove(actorId: string, repositoryId: string, expectedVersion: number): Promise<ProjectConfigurationRecord> {
+    validateActor(actorId);
+    validateRepositoryId(repositoryId);
+    validateExpectedVersion(expectedVersion);
+    return this.store.remove(actorId, repositoryId, expectedVersion);
+  }
+}
+
 async function sha256(value: string): Promise<string> {
   const bytes = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");

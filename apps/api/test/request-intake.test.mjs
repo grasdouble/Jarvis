@@ -13,6 +13,8 @@ test("API boundary requires injected authentication and never takes owner from b
   assert.equal(calls.length, 0);
   assert.equal((await boundary.submit({ auth: { ownerId: "trusted" }, body: { ownerId: "spoof", prompt: "x" }, idempotencyKey: "k" })).status, 422);
   assert.equal((await boundary.submit({ auth: { ownerId: "trusted" }, body: { prompt: "x", repository: "attacker/repo" }, idempotencyKey: "k" })).status, 422);
+  assert.equal((await boundary.submit({ auth: { ownerId: "trusted" }, body: { prompt: "x", actorId: "spoof" }, idempotencyKey: "k" })).status, 422);
+  assert.equal((await boundary.submit({ auth: { ownerId: "trusted" }, body: { prompt: "x", policyHash: "a".repeat(64) }, idempotencyKey: "k" })).status, 422);
   const result = await boundary.submit({ auth: { ownerId: "trusted" }, body: { prompt: "x", projectId: "p1" }, idempotencyKey: "k" });
   assert.equal(result.status, 202);
   assert.equal("prompt" in result.body, false);

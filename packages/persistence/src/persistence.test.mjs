@@ -53,6 +53,7 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   const approvalOrderingMigration = await readFile(new URL("../migrations/002_skill_approval_order.sql", import.meta.url), "utf8");
   const requestIntakeMigration = await readFile(new URL("../migrations/004_project_request_intake.sql", import.meta.url), "utf8");
   const ownerAuthMigration = await readFile(new URL("../migrations/005_owner_auth.sql", import.meta.url), "utf8");
+  const projectConfigMigration = await readFile(new URL("../migrations/006_project_configuration_api.sql", import.meta.url), "utf8");
   assert.match(migration, /CREATE TABLE projects/i);
   assert.match(migration, /UNIQUE\s*\(id, repository_id\)/i);
   assert.match(migration, /FOREIGN KEY\s*\([^)]*repository_id[^)]*\)\s*REFERENCES/i);
@@ -76,6 +77,7 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   assert.match(ownerAuthMigration, /revoked_at timestamptz/i);
   assert.match(ownerAuthMigration, /GRANT SELECT, INSERT, UPDATE ON jarvis\.owner_sessions TO jarvis_app/i);
   assert.doesNotMatch(ownerAuthMigration, /onboarding_secret/i);
+  assert.match(projectConfigMigration, /UNIQUE INDEX projects_repository_id_unique ON jarvis\.projects\(repository_id\)/i);
 });
 
 test("migration runner serializes concurrent callers and records applied versions", async () => {

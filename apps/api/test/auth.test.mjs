@@ -321,3 +321,23 @@ test("HTTPS cookies use Secure host-only session and readable CSRF cookies", asy
   assert.doesNotMatch(sessionCookie, /Domain=/);
   assert.throws(() => api.createOwnerAuthBoundary(service, { origin: "http://0.0.0.0:3000" }), /loopback origin/);
 });
+
+test("owner-only read authorization requires a live session but not a CSRF mutation token", async () => {
+  const { boundary } = await newAuth();
+  const challenge = await boundary.getSession({ headers: {} });
+  const onboarded = await boundary.onboard({
+    headers: headersFor(challenge, challenge.body.csrfToken),
+    body: { secret: onboardingSecret, password },
+  });
+  const sessionCookie = getCookie(onboarded, "jarvis_session");
+  const read = await boundary.authorizeRead({ headers: { origin, cookie: sessionCookie } });
+  assert.equal(read.authorized, true);
+  assert.equal(read.auth.ownerId, "owner");
+  assert.equal(read.headers["cache-control"], "no-store");
+  const foreignOrigin = await boundary.authorizeRead({ headers: { origin: "https://attacker.example", cookie: sessionCookie } });
+  assert.equal(foreignOrigin.authorized, false);
+  assert.equal(foreignOrigin.response.status, 403);
+  const unauthenticated = await boundary.authorizeRead({ headers: { origin } });
+  assert.equal(unauthenticated.authorized, false);
+  assert.equal(unauthenticated.response.status, 401);
+});
