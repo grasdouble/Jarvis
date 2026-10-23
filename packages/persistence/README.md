@@ -10,6 +10,12 @@ After migration, grant the runtime login membership in `jarvis_app` through depl
 
 The migration does not store provider credentials, raw provider sessions, or agent login material. Project-scoped composite foreign keys keep task, request, configuration, report, and checkpoint references within the same repository identity. Numeric GitHub identities use `bigint`; clients must serialize them as strings where JavaScript precision could be lost.
 
+## Local owner authentication
+
+Migration `005_owner_auth` adds one singleton owner credential and server-side session rows. `PostgresOwnerAuthStore` persists only the password hash, session-token digest, CSRF-token digest, inactivity timestamps, and revocation state. The API receives the one-time onboarding secret from trusted startup configuration; the secret is neither stored here nor given a default. The singleton insert is atomic, so only the first successful onboarding can create the account. Sessions are extended only while active and unexpired; the API issues the opaque token only in an HttpOnly cookie. The store has no deletion operation, and `jarvis_app` cannot delete owner/session rows; expired rows require a separately authorized maintenance policy.
+
+The auth store and schema are implementation foundations, not proof that a database migration has been applied to a deployed service. See the API's framework-neutral session boundary; no running API listener or Colima deployment is qualified by these package tests.
+
 ## Durable queue
 
 `PostgresQueueStore` persists queue admission only for a task already created by the core and still bound to an active, authorized project, queued request, current configuration and policy. Its unique event/task keys make replay idempotent and reject identity reuse with changed scheduling parameters. Claims use PostgreSQL row locks with `SKIP LOCKED`, database time, a 60-second maximum lease, attempt history and a strictly increasing fencing epoch. Completion/failure transitions are compare-and-set operations that recheck the current worker, epoch and unexpired lease inside the same transaction as task/request state and outbox updates.

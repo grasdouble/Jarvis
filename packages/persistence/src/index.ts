@@ -387,3 +387,4 @@ export class PostgresPersistence {
 
 export { PostgresQueueStore } from "./queue.js";
 export { PostgresRequestIntakeStore } from "./request-intake.js";
+export { PostgresOwnerAuthStore } from "./auth.js";
