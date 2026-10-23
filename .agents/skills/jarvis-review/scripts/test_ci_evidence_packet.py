@@ -84,6 +84,27 @@ class EvidencePacketTests(unittest.TestCase):
         self.assertEqual(parse_packet(encoded), packet)
         self.assertEqual(len(packet["integrity_sha256"]), 64)
 
+    def test_timestamp_ordering_handles_mixed_fractional_precision(self):
+        candidate = payload()
+        for collection in ("jobs", "checks"):
+            candidate[collection][0]["started_at"] = "2026-10-23T10:00:00Z"
+            candidate[collection][0]["completed_at"] = "2026-10-23T10:00:00.1Z"
+        create_packet(candidate)
+
+        reversed_order = payload()
+        for collection in ("jobs", "checks"):
+            reversed_order[collection][0]["started_at"] = "2026-10-23T10:00:00.1Z"
+            reversed_order[collection][0]["completed_at"] = "2026-10-23T10:00:00Z"
+        with self.assertRaisesRegex(PacketError, "completes before it starts"):
+            create_packet(reversed_order)
+
+        submicrosecond_reverse = payload()
+        for collection in ("jobs", "checks"):
+            submicrosecond_reverse[collection][0]["started_at"] = "2026-10-23T10:00:00.1234568Z"
+            submicrosecond_reverse[collection][0]["completed_at"] = "2026-10-23T10:00:00.1234567Z"
+        with self.assertRaisesRegex(PacketError, "completes before it starts"):
+            create_packet(submicrosecond_reverse)
+
     def test_hash_tampering_is_rejected(self):
         packet = create_packet(payload())
         packet["jobs"][0]["name"] = "changed"

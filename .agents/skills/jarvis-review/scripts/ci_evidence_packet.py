@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
@@ -77,6 +78,13 @@ def _timestamp(value: Any, label: str) -> str:
     except ValueError as exc:
         raise PacketError(f"{label} must be a UTC RFC 3339 timestamp") from exc
     return text
+
+
+def _timestamp_instant(text: str) -> tuple[datetime, Decimal]:
+    """Return an exact UTC instant key for an already validated timestamp."""
+    seconds = datetime.fromisoformat(text[:19] + "+00:00")
+    fraction = Decimal("0." + text[20:-1]) if "." in text else Decimal(0)
+    return seconds, fraction
 
 
 def _url(value: Any, label: str) -> str:
@@ -157,7 +165,7 @@ def _normalize(payload: Mapping[str, Any]) -> dict[str, Any]:
                     raise PacketError(f"{label}.evaluated_sha must be a full lowercase commit SHA")
             row["started_at"] = _timestamp(row["started_at"], f"{label}.started_at")
             row["completed_at"] = _timestamp(row["completed_at"], f"{label}.completed_at")
-            if row["completed_at"] < row["started_at"]:
+            if _timestamp_instant(row["completed_at"]) < _timestamp_instant(row["started_at"]):
                 raise PacketError(f"{label} completes before it starts")
             row["url"] = _url(row["url"], f"{label}.url")
             normalized.append(row)
