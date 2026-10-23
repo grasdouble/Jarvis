@@ -1,6 +1,6 @@
 {
   "name": "@jarvis/web",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": { "build": "vite build", "typecheck": "tsc --noEmit" },
