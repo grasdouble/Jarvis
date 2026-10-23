@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.23 • October 23, 2026 • Companion to the PRD and roadmap
+Document version 1.24 • October 23, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -330,7 +330,7 @@ An API mutation returns `202` for scheduled work, `409` for an outdated version 
 
 Controller routes are separate (`/internal/v1/sandboxes`) and are not published. A local network does not provide authentication: internal mTLS, certificate rotation, service identity verification, and route restrictions remain necessary.
 
-The current source implements these session routes as framework-neutral API boundaries, an injected durable-store contract, and a PostgreSQL adapter; the React shell provides the initial onboarding/login and sign-out flow. The boundaries are not yet mounted on a running API listener. The login limiter is process-local (five failures per 15-minute window per accepted peer address and at most four concurrent password verifications), so multi-instance enforcement and trusted-proxy address handling remain deployment qualifications. This source implementation does not enable project configuration, dashboard, task cancellation, provider dispatch, or GitHub operations.
+The current source implements these session routes as framework-neutral API boundaries, an injected durable-store contract, and a PostgreSQL adapter; the React shell provides the initial onboarding/login and sign-out flow. The owner project-allowlist boundary and PostgreSQL adapter now support internal-list reads and add/update/remove by stable repository ID. Mutations append immutable configuration versions and actor-attributed audit events in the same transaction, with expected-version checks and project-row serialization against request admission. Initial policy/profile references come only from a trusted core configuration source; request and project-mutation bodies cannot supply policy, profile, owner, or actor authority. The public project response omits policy/profile references and credentials. No accepted schema for owner-editable provider, permission, limit, or skill-consent settings is added here. The boundaries are not yet mounted on a running API listener. The login limiter is process-local (five failures per 15-minute window per accepted peer address and at most four concurrent password verifications), so multi-instance enforcement and trusted-proxy address handling remain deployment qualifications. These source contracts do not qualify deployed owner access, provider use, policy/profile behavior, GitHub installation access, project command execution, or any automatic repository/issue/Dependabot ingestion; D02/D03 and other applicable gates remain in force.
 
 ## 9 GitHub App and permissions
 

@@ -1,25 +1,96 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import process from "node:process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
 import {
   CheckpointRejectedError,
   PostgresOwnerAuthStore,
+  PostgresProjectConfigStore,
+  PostgresProjectRequestAuthorization,
   PostgresPersistence,
   PostgresQueueStore,
   PostgresRequestIntakeStore,
 } from "../dist/index.js";
+import { ProjectRequestIntake } from "@jarvis/domain";
 import { QueueError, QueueService } from "@jarvis/queue";
 
 const { Pool } = pg;
 const databaseUrl = process.env.JARVIS_TEST_DATABASE_URL;
+const originalConfig = {
+  schemaVersion: 1,
+  repository: { owner: "owner-a", name: "repo-a" },
+  profileHash: "f".repeat(64),
+};
+const canonical = (value) => Array.isArray(value)
+  ? `[${value.map(canonical).join(",")}]`
+  : value !== null && typeof value === "object"
+    ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+    : JSON.stringify(value);
+const originalConfigHash = createHash("sha256").update(canonical(originalConfig)).digest("hex");
+
+async function waitForBlockedQueries(client, applicationNames, expectedCount = 1) {
+  const names = Array.isArray(applicationNames) ? applicationNames : [applicationNames];
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    await client.query("SELECT pg_stat_clear_snapshot()");
+    const { rows: [result] } = await client.query(`
+      SELECT count(*)::integer AS count
+      FROM pg_stat_activity
+      WHERE datname=current_database() AND pid<>pg_backend_pid()
+        AND wait_event_type='Lock' AND application_name=ANY($1::text[])
+    `, [names]);
+    if (result.count >= expectedCount) return result.count;
+    await delay(10);
+  }
+  await client.query("SELECT pg_stat_clear_snapshot()");
+  const { rows: activity } = await client.query(`
+    SELECT pid, application_name, state, wait_event_type, wait_event, query
+    FROM pg_stat_activity
+    WHERE datname=current_database() AND pid<>pg_backend_pid()
+    ORDER BY pid
+  `);
+  throw new Error(`Timed out waiting for ${expectedCount} PostgreSQL lock waiter(s) from ${names.join(",")}; activity=${JSON.stringify(activity)}`);
+}
+
+async function lockProjectRow(pool, repositoryId) {
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query("BEGIN");
+    open = true;
+    const { rows } = await client.query("SELECT id FROM jarvis.projects WHERE repository_id=$1 FOR UPDATE", [repositoryId]);
+    assert.equal(rows.length, 1, `expected test project ${repositoryId}`);
+  } catch (error) {
+    if (open) await client.query("ROLLBACK").catch(() => undefined);
+    client.release();
+    throw error;
+  }
+  return {
+    client,
+    get open() { return open; },
+    async commit() {
+      if (!open) return;
+      await client.query("COMMIT");
+      open = false;
+      client.release();
+    },
+    async rollback() {
+      if (!open) return;
+      try { await client.query("ROLLBACK"); }
+      finally {
+        open = false;
+        client.release();
+      }
+    },
+  };
+}
 
 test("PostgreSQL migrations and checkpoint authorization work against the real database", {
   skip: databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
 }, async () => {
-  const pool = new Pool({ connectionString: databaseUrl, max: 3 });
+  const pool = new Pool({ connectionString: databaseUrl, max: 5, application_name: "jv201-integration" });
   let client;
   let authClient;
   let lockClient;
@@ -32,7 +103,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api"]);
     lockClient = await pool.connect();
     await lockClient.query("SELECT pg_advisory_lock($1)", [0x4a385445]);
     await pool.query(`
@@ -89,8 +160,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       INSERT INTO jarvis.installations (id, github_id, app_id, state)
       VALUES ($1, 1001, 2001, 'active')`, ["00000000-0000-4000-8000-000000000001"]);
     await client.query(`
-      INSERT INTO jarvis.policies (id, version, canonical_json, hash)
-      VALUES ($1, 1, '{"version":1}', $2)`, ["00000000-0000-4000-8000-000000000002", "b".repeat(64)]);
+      INSERT INTO jarvis.policies (id, version, canonical_json, hash, activated_at)
+      VALUES ($1, 1, '{"version":1}', $2, now())`, ["00000000-0000-4000-8000-000000000002", "b".repeat(64)]);
     await client.query(`
       INSERT INTO jarvis.projects (id, repository_id, installation_id, owner_id, repository_name, state, config_version)
       VALUES ($1, 3001, $2, 'owner-a', 'repo-a', 'active', 1)`, [
@@ -99,8 +170,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await client.query(`
       INSERT INTO jarvis.project_config_versions
         (project_id, repository_id, version, config_json, config_hash, policy_hash, created_by)
-      VALUES ($1, 3001, 1, '{"authorized":true}', $2, $3, 'owner')`, [
-      "00000000-0000-4000-8000-000000000003", "c".repeat(64), "b".repeat(64),
+      VALUES ($1, 3001, 1, $2::jsonb, $3, $4, 'owner')`, [
+      "00000000-0000-4000-8000-000000000003", canonical(originalConfig), originalConfigHash, "b".repeat(64),
     ]);
     await client.query(`
       INSERT INTO jarvis.project_skills (project_id, repository_id, skill_id, revision_digest)
@@ -406,6 +477,217 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     assert.equal(clarified.requestDigest, clarification.requestDigest);
     assert.equal(clarified.clarificationDigest, "f".repeat(64));
 
+    const projectConfigurations = new PostgresProjectConfigStore(pool);
+    const projectAuthorization = new PostgresProjectRequestAuthorization(pool);
+    const projectIntake = new ProjectRequestIntake(intakeStore, projectAuthorization, randomUUID);
+    const addedProject = await projectConfigurations.add("owner", {
+      repositoryId: "3002", installationId: "00000000-0000-4000-8000-000000000001",
+      repositoryOwner: "org", repositoryName: "repo-two",
+    }, { policyHash: "b".repeat(64), profileHash: "f".repeat(64) });
+    assert.equal(addedProject.configVersion, 1);
+    const renamedProject = await projectConfigurations.update("owner", "3002", 1, {
+      repositoryOwner: "renamed-org", repositoryName: "renamed-repo",
+    });
+    assert.equal(renamedProject.repositoryId, "3002");
+    assert.equal(renamedProject.configVersion, 2);
+    const removedProject = await projectConfigurations.remove("owner", "3002", 2);
+    assert.equal(removedProject.state, "removed");
+    assert.equal(removedProject.configVersion, 3);
+    await assert.rejects(() => projectConfigurations.update("owner", "3002", 2, { repositoryName: "stale" }), /PROJECT_CONFIG_VERSION_CONFLICT/);
+    await assert.rejects(() => projectConfigurations.add("owner", {
+      repositoryId: "3002", installationId: "00000000-0000-4000-8000-000000000001",
+      repositoryOwner: "another-org", repositoryName: "duplicate-id",
+    }, { policyHash: "b".repeat(64), profileHash: "f".repeat(64) }), /PROJECT_IDENTITY_CONFLICT/);
+    const { rows: configHistory } = await pool.query(`
+      SELECT version, created_by FROM jarvis.project_config_versions WHERE project_id=$1 ORDER BY version
+    `, [addedProject.projectId]);
+    assert.deepEqual(configHistory, [
+      { version: 1, created_by: "owner" }, { version: 2, created_by: "owner" }, { version: 3, created_by: "owner" },
+    ]);
+    const { rows: configAudit } = await pool.query(`
+      SELECT actor, action FROM jarvis.audit_events WHERE resource='project:3002' ORDER BY action
+    `);
+    assert.deepEqual(configAudit.map(({ actor, action }) => [actor, action]), [
+      ["owner", "project.added"], ["owner", "project.removed"], ["owner", "project.updated"],
+    ]);
+    const { rows: [pendingAfterConfigChange] } = await pool.query(`
+      INSERT INTO jarvis.requests
+        (owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key, config_version, policy_hash,
+         prompt, request_digest, request_kind, clarification, version)
+      VALUES ('owner-a', NULL, NULL, NULL, $1, 'clarification', 'stale-after-remove',  NULL, NULL,
+         'will not queue after removal', $2, 'project', '["project","mode"]'::jsonb, 1)
+      RETURNING id
+    `, ["1".repeat(64), "2".repeat(64)]);
+    const removedOriginal = await projectConfigurations.remove("owner", "3001", 1);
+    assert.equal(removedOriginal.state, "removed");
+    await assert.rejects(() => intakeStore.replaceClarification({
+      id: pendingAfterConfigChange.id, ownerId: "owner-a", projectId: "00000000-0000-4000-8000-000000000003",
+      repositoryId: "3001", mode: "plan", kind: "project", prompt: "will not queue after removal",
+      promptDigest: "1".repeat(64), requestDigest: "2".repeat(64), configVersion: 1, policyHash: "b".repeat(64),
+      profileHash: "f".repeat(64), state: "queued", clarification: [], idempotencyKey: "stale-after-remove",
+      selector: null, explicitMode: null, explicitKind: null, version: 2, clarificationDigest: "3".repeat(64),
+    }, 1), /PROJECT_AUTHORIZATION_STALE/);
+    const { rows: [staleEffects] } = await pool.query(`
+      SELECT state, version, (SELECT count(*) FROM jarvis.tasks WHERE request_id=$1)::integer AS tasks
+      FROM jarvis.requests WHERE id=$1
+    `, [pendingAfterConfigChange.id]);
+    assert.deepEqual(staleEffects, { state: "clarification", version: 1, tasks: 0 });
+
+    const concurrentProject = await projectConfigurations.add("owner", {
+      repositoryId: "3003", installationId: "00000000-0000-4000-8000-000000000001",
+      repositoryOwner: "org", repositoryName: "concurrent-mutations",
+    }, { policyHash: "b".repeat(64), profileHash: "f".repeat(64) });
+    const mutationBlocker = await lockProjectRow(pool, "3003");
+    const mutationPoolOne = new Pool({ connectionString: databaseUrl, max: 1, application_name: "jv201-mutation-one" });
+    const mutationPoolTwo = new Pool({ connectionString: databaseUrl, max: 1, application_name: "jv201-mutation-two" });
+    const mutationStoreOne = new PostgresProjectConfigStore(mutationPoolOne);
+    const mutationStoreTwo = new PostgresProjectConfigStore(mutationPoolTwo);
+    const [{ rows: mutationConnectionOne }, { rows: mutationConnectionTwo }] = await Promise.all([
+      mutationPoolOne.query("SELECT 1 AS connected"), mutationPoolTwo.query("SELECT 1 AS connected"),
+    ]);
+    assert.equal(mutationConnectionOne[0].connected, 1);
+    assert.equal(mutationConnectionTwo[0].connected, 1);
+    let mutationPromises = [];
+    let mutationOutcomes;
+    try {
+      mutationPromises = [
+        mutationStoreOne.update("owner", "3003", 1, { repositoryName: "mutation-one" }),
+        mutationStoreTwo.update("owner", "3003", 1, { repositoryName: "mutation-two" }),
+      ];
+      await waitForBlockedQueries(mutationBlocker.client, ["jv201-mutation-one", "jv201-mutation-two"], 2);
+      await mutationBlocker.commit();
+    } finally {
+      if (mutationBlocker.open) await mutationBlocker.rollback();
+      if (mutationPromises.length) mutationOutcomes = await Promise.allSettled(mutationPromises);
+      await Promise.all([mutationPoolOne.end(), mutationPoolTwo.end()]);
+    }
+    assert.equal(mutationOutcomes.filter(({ status }) => status === "fulfilled").length, 1,
+      "same-version concurrent project updates linearize to exactly one winner");
+    const losingMutation = mutationOutcomes.find(({ status }) => status === "rejected");
+    assert.ok(losingMutation);
+    assert.equal(losingMutation.reason.message, "PROJECT_CONFIG_VERSION_CONFLICT");
+    const { rows: [concurrentProjectVersion] } = await pool.query(`
+      SELECT p.config_version, p.repository_name, p.state,
+        (SELECT count(*) FROM jarvis.project_config_versions c WHERE c.project_id=p.id)::integer AS versions,
+        (SELECT count(*) FROM jarvis.audit_events e WHERE e.resource='project:3003')::integer AS audits
+      FROM jarvis.projects p WHERE p.repository_id=3003
+    `);
+    assert.equal(concurrentProjectVersion.config_version, 2);
+    assert.ok(["mutation-one", "mutation-two"].includes(concurrentProjectVersion.repository_name));
+    assert.equal(concurrentProjectVersion.state, "active");
+    assert.equal(concurrentProjectVersion.versions, 2, "only the winning mutation appends a version");
+    assert.equal(concurrentProjectVersion.audits, 2, "only the winning mutation appends its audit event");
+
+    const pendingRaceClarification = await projectIntake.submit("owner", {
+      idempotencyKey: "clarification-race-key", prompt: "Clarify project after removal", mode: "plan",
+    });
+    assert.equal(pendingRaceClarification.state, "clarification");
+    const clarificationBlocker = await lockProjectRow(pool, "3003");
+    let removalForClarification;
+    let clarificationPromise;
+    let removalAndClarificationOutcomes;
+    try {
+      removalForClarification = projectConfigurations.remove("owner", "3003", 2);
+      await waitForBlockedQueries(clarificationBlocker.client, "jv201-integration");
+      clarificationPromise = projectIntake.clarify("owner", pendingRaceClarification.id, pendingRaceClarification.version, {
+        idempotencyKey: "clarification-race-key",
+        prompt: "Clarify project after removal",
+        projectId: concurrentProject.projectId,
+        mode: "plan",
+      });
+      await waitForBlockedQueries(clarificationBlocker.client, "jv201-integration", 2);
+      await clarificationBlocker.commit();
+    } finally {
+      if (clarificationBlocker.open) await clarificationBlocker.rollback();
+      const pending = [removalForClarification, clarificationPromise].filter(Boolean);
+      if (pending.length) removalAndClarificationOutcomes = await Promise.allSettled(pending);
+    }
+    assert.equal(removalAndClarificationOutcomes[0].status, "fulfilled");
+    assert.equal(removalAndClarificationOutcomes[0].value.state, "removed");
+    assert.equal(removalAndClarificationOutcomes[0].value.configVersion, 3);
+    assert.equal(removalAndClarificationOutcomes[1].status, "rejected");
+    assert.equal(removalAndClarificationOutcomes[1].reason.message, "PROJECT_AUTHORIZATION_STALE");
+    const { rows: [clarificationAfterRemoval] } = await pool.query(`
+      SELECT r.state, r.version,
+        (SELECT count(*) FROM jarvis.tasks t WHERE t.request_id=r.id)::integer AS tasks,
+        (SELECT count(*) FROM jarvis.queue_entries q JOIN jarvis.tasks t ON t.id=q.task_id WHERE t.request_id=r.id)::integer AS queue,
+        (SELECT count(*) FROM jarvis.outbox o JOIN jarvis.tasks t ON t.id=o.aggregate_id WHERE t.request_id=r.id)::integer AS outbox
+      FROM jarvis.requests r WHERE r.id=$1
+    `, [pendingRaceClarification.id]);
+    assert.deepEqual(clarificationAfterRemoval, { state: "clarification", version: 1, tasks: 0, queue: 0, outbox: 0 });
+
+    const admissionRaceProject = await projectConfigurations.add("owner", {
+      repositoryId: "3004", installationId: "00000000-0000-4000-8000-000000000001",
+      repositoryOwner: "org", repositoryName: "admission-removal-race",
+    }, { policyHash: "b".repeat(64), profileHash: "f".repeat(64) });
+    const admissionBlocker = await lockProjectRow(pool, "3004");
+    let removalForAdmission;
+    let admissionPromise;
+    let removalAndAdmissionOutcomes;
+    try {
+      removalForAdmission = projectConfigurations.remove("owner", "3004", 1);
+      await waitForBlockedQueries(admissionBlocker.client, "jv201-integration");
+      admissionPromise = projectIntake.submit("owner", {
+        idempotencyKey: "submit-removal-race-3004",
+        prompt: "Submit while project removal is waiting",
+        projectId: admissionRaceProject.projectId,
+        mode: "plan",
+      });
+      await waitForBlockedQueries(admissionBlocker.client, "jv201-integration", 2);
+      await admissionBlocker.commit();
+    } finally {
+      if (admissionBlocker.open) await admissionBlocker.rollback();
+      const pending = [removalForAdmission, admissionPromise].filter(Boolean);
+      if (pending.length) removalAndAdmissionOutcomes = await Promise.allSettled(pending);
+    }
+    assert.equal(removalAndAdmissionOutcomes[0].status, "fulfilled");
+    assert.equal(removalAndAdmissionOutcomes[0].value.state, "removed");
+    assert.equal(removalAndAdmissionOutcomes[1].status, "rejected");
+    assert.equal(removalAndAdmissionOutcomes[1].reason.message, "PROJECT_AUTHORIZATION_STALE");
+    const { rows: [rejectedAdmissionEffects] } = await pool.query(`
+      SELECT
+        (SELECT count(*) FROM jarvis.requests r WHERE r.owner_id='owner' AND r.idempotency_key='submit-removal-race-3004')::integer AS requests,
+        (SELECT count(*) FROM jarvis.tasks t JOIN jarvis.requests r ON r.id=t.request_id WHERE r.idempotency_key='submit-removal-race-3004')::integer AS tasks,
+        (SELECT count(*) FROM jarvis.queue_entries q JOIN jarvis.tasks t ON t.id=q.task_id JOIN jarvis.requests r ON r.id=t.request_id WHERE r.idempotency_key='submit-removal-race-3004')::integer AS queue,
+        (SELECT count(*) FROM jarvis.outbox o JOIN jarvis.tasks t ON t.id=o.aggregate_id JOIN jarvis.requests r ON r.id=t.request_id WHERE r.idempotency_key='submit-removal-race-3004')::integer AS outbox
+    `);
+    assert.deepEqual(rejectedAdmissionEffects, { requests: 0, tasks: 0, queue: 0, outbox: 0 });
+
+    const admittedBeforeRemoval = await projectConfigurations.add("owner", {
+      repositoryId: "3005", installationId: "00000000-0000-4000-8000-000000000001",
+      repositoryOwner: "org", repositoryName: "admitted-before-removal",
+    }, { policyHash: "b".repeat(64), profileHash: "f".repeat(64) });
+    const admittedTaskRequest = await projectIntake.submit("owner", {
+      idempotencyKey: "submit-before-removal-3005",
+      prompt: "Submit before project removal",
+      projectId: admittedBeforeRemoval.projectId,
+      mode: "plan",
+    });
+    assert.equal(admittedTaskRequest.state, "queued");
+    const { rows: [admittedTask] } = await pool.query(`
+      SELECT t.id FROM jarvis.tasks t WHERE t.request_id=$1
+    `, [admittedTaskRequest.id]);
+    assert.ok(admittedTask);
+    const { rows: [outboxBeforeClaim] } = await pool.query(
+      "SELECT count(*)::integer AS count FROM jarvis.outbox WHERE aggregate_id=$1", [admittedTask.id]);
+    assert.equal(outboxBeforeClaim.count, 1);
+    const removedAfterAdmission = await projectConfigurations.remove("owner", "3005", 1);
+    assert.equal(removedAfterAdmission.state, "removed");
+    assert.equal(await queue.claim("worker-after-project-removal", 60_000), null,
+      "a request admitted before removal is not claimable after the project is removed");
+    const { rows: [unclaimedAfterRemoval] } = await pool.query(`
+      SELECT r.state AS request_state, t.state AS task_state, q.state AS queue_state,
+        (SELECT count(*) FROM jarvis.task_attempts a WHERE a.task_id=t.id)::integer AS attempts,
+        (SELECT count(*) FROM jarvis.outbox o WHERE o.aggregate_id=t.id)::integer AS outbox
+      FROM jarvis.requests r
+      JOIN jarvis.tasks t ON t.request_id=r.id
+      JOIN jarvis.queue_entries q ON q.task_id=t.id
+      WHERE r.id=$1
+    `, [admittedTaskRequest.id]);
+    assert.deepEqual(unclaimedAfterRemoval, {
+      request_state: "queued", task_state: "queued", queue_state: "queued", attempts: 0, outbox: outboxBeforeClaim.count,
+    });
+
     client = await pool.connect();
     await client.query("BEGIN");
     await assert.rejects(
@@ -448,16 +730,17 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'owner_accounts' THEN 0
                   WHEN 'owner_sessions' THEN 0
                   WHEN 'policies' THEN 1
-                  WHEN 'projects' THEN 1
-                  WHEN 'project_config_versions' THEN 1
+                  WHEN 'projects' THEN 5
+                  WHEN 'project_config_versions' THEN 12
+                  WHEN 'audit_events' THEN 11
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
-          WHEN 'requests' THEN 7
-          WHEN 'tasks' THEN 6
+                  WHEN 'requests' THEN 10
+                  WHEN 'tasks' THEN 7
                   WHEN 'task_attempts' THEN 5
                   WHEN 'task_checkpoints' THEN 1
-          WHEN 'queue_entries' THEN 5
-          WHEN 'outbox' THEN 13
+                  WHEN 'queue_entries' THEN 6
+                  WHEN 'outbox' THEN 14
                   ELSE 0
                 END;
                 IF row_count <> expected_count THEN

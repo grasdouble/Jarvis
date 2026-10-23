@@ -269,11 +269,23 @@ export interface OwnerMutationDenial {
   readonly response: OwnerAuthHttpResponse;
 }
 
+export interface OwnerReadAuthorization {
+  readonly authorized: true;
+  readonly auth: { readonly ownerId: string };
+  readonly headers: Readonly<Record<string, string | readonly string[]>>;
+}
+
+export interface OwnerReadDenial {
+  readonly authorized: false;
+  readonly response: OwnerAuthHttpResponse;
+}
+
 export interface OwnerAuthBoundary {
   getSession(request: OwnerAuthHttpRequest): Promise<OwnerAuthHttpResponse>;
   onboard(request: OwnerAuthHttpRequest): Promise<OwnerAuthHttpResponse>;
   login(request: OwnerAuthHttpRequest): Promise<OwnerAuthHttpResponse>;
   logout(request: OwnerAuthHttpRequest): Promise<OwnerAuthHttpResponse>;
+  authorizeRead(request: OwnerAuthHttpRequest): Promise<OwnerReadAuthorization | OwnerReadDenial>;
   authorizeMutation(request: OwnerAuthHttpRequest): Promise<OwnerMutationAuthorization | OwnerMutationDenial>;
 }
 
@@ -510,6 +522,28 @@ export function createOwnerAuthBoundary(service: OwnerAuthService, options: Owne
       }
       await service.logout(token);
       return response(204, undefined, [clearSessionCookie(), clearCsrfCookie()]);
+    },
+
+    async authorizeRead(request): Promise<OwnerReadAuthorization | OwnerReadDenial> {
+      if (!sameOrigin(request, options.origin, false)) {
+        return { authorized: false, response: response(403, { error: "origin_rejected" }) };
+      }
+      const token = sessionTokenFrom(request);
+      if (token === null || !validToken(token)) {
+        return { authorized: false, response: response(401, { error: "unauthenticated" }) };
+      }
+      const refreshed = await service.getSessionCsrf(token);
+      if (refreshed === null || refreshed.ownerId !== OWNER_ID) {
+        return { authorized: false, response: response(401, { error: "unauthenticated" }) };
+      }
+      return {
+        authorized: true,
+        auth: { ownerId: refreshed.ownerId },
+        headers: {
+          "cache-control": "no-store",
+          "set-cookie": [sessionCookie(token), csrfCookie(refreshed.csrfToken)],
+        },
+      };
     },
 
     async authorizeMutation(request): Promise<OwnerMutationAuthorization | OwnerMutationDenial> {

@@ -21,9 +21,17 @@ export type {
   OwnerCredential,
   OwnerMutationAuthorization,
   OwnerMutationDenial,
+  OwnerReadAuthorization,
+  OwnerReadDenial,
   OwnerSessionCredentials,
   OwnerSessionToCreate,
 } from "./auth.js";
+
+export { createAuthenticatedProjectConfigurationBoundary } from "./projects.js";
+export type {
+  AuthenticatedProjectConfigurationBoundary,
+  AuthenticatedProjectConfigurationRequest,
+} from "./projects.js";
 
 export const serviceName = "api";
 
