@@ -255,9 +255,10 @@ export class PostgresPersistence {
             FROM jarvis.tasks t
             JOIN jarvis.task_attempts a
               ON a.task_id = t.id AND a.id = $2 AND a.lease_epoch = $3
-            JOIN jarvis.projects p
-              ON p.id = t.project_id AND p.repository_id = t.repository_id
-            JOIN jarvis.installations i ON i.id = p.installation_id
+             JOIN jarvis.projects p
+               ON p.id = t.project_id AND p.repository_id = t.repository_id
+             JOIN jarvis.installations i ON i.id = p.installation_id
+             JOIN jarvis.stop_controls global_stop ON global_stop.scope = 'global' AND global_stop.project_id IS NULL
             WHERE t.id = $1
               AND t.project_id = $4
               AND t.state = 'running'
@@ -265,7 +266,9 @@ export class PostgresPersistence {
               AND a.lease_until > now()
               AND p.state = 'active'
               AND i.state = 'active'
-              AND i.revoked_at IS NULL
+               AND i.revoked_at IS NULL
+               AND global_stop.stopped = false
+               AND NOT EXISTS (SELECT 1 FROM jarvis.stop_controls project_stop WHERE project_stop.scope = 'project' AND project_stop.project_id = p.id AND project_stop.stopped)
               AND p.config_version = t.config_version
               AND t.config_version = ($7::jsonb ->> 'configVersion')::integer
               AND t.policy_hash = ($7::jsonb ->> 'policyHash')
@@ -337,15 +340,18 @@ export class PostgresPersistence {
         FROM jarvis.task_checkpoints c
         JOIN jarvis.tasks t
           ON t.id = c.task_id AND t.project_id = c.project_id AND t.repository_id = c.repository_id
-        JOIN jarvis.projects p
-          ON p.id = c.project_id AND p.repository_id = c.repository_id
-        JOIN jarvis.installations i ON i.id = p.installation_id
+         JOIN jarvis.projects p
+           ON p.id = c.project_id AND p.repository_id = c.repository_id
+         JOIN jarvis.installations i ON i.id = p.installation_id
+         JOIN jarvis.stop_controls global_stop ON global_stop.scope = 'global' AND global_stop.project_id IS NULL
         WHERE c.task_id = $1
           AND c.project_id = $2
           AND t.state NOT IN ('cancelled', 'failed', 'completed')
           AND p.state = 'active'
           AND i.state = 'active'
           AND i.revoked_at IS NULL
+           AND global_stop.stopped = false
+           AND NOT EXISTS (SELECT 1 FROM jarvis.stop_controls project_stop WHERE project_stop.scope = 'project' AND project_stop.project_id = p.id AND project_stop.stopped)
           AND p.config_version = t.config_version
           AND (c.state_json ->> 'configVersion')::integer = t.config_version
           AND c.state_json ->> 'policyHash' = t.policy_hash
@@ -389,4 +395,6 @@ export { PostgresQueueStore } from "./queue.js";
 export { PostgresRequestIntakeStore } from "./request-intake.js";
 export { PostgresProjectConfigStore, PostgresProjectRequestAuthorization } from "./project-config.js";
 export { PostgresOwnerAuthStore } from "./auth.js";
+export { PostgresStopControlStore } from "./stop-controls.js";
+export type { RestoreStopActivation, StopControlRecord, StopControlSnapshot } from "./stop-controls.js";
 export { PostgresOperationalDashboardReadModel } from "./dashboard.js";

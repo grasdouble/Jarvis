@@ -30,6 +30,8 @@ export type {
 export { createAuthenticatedProjectConfigurationBoundary } from "./projects.js";
 export { createOperationalDashboardBoundary, createOperationalDashboardHttpHandler, createPostgresOperationalDashboardHttpHandler } from "./dashboard.js";
 export { createOperationalDashboardServer } from "./http-server.js";
+export { createStopControlHttpHandler } from "./stop-controls.js";
+export type { StopControlChangedPort } from "./stop-controls.js";
 export type { DashboardHttpRequest, DashboardProject, DashboardPullRequest, DashboardRequest, OperationalDashboardReadModel } from "./dashboard.js";
 export type {
   AuthenticatedProjectConfigurationBoundary,

@@ -5,9 +5,10 @@ import type { DashboardHttpRequest } from "./dashboard.js";
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 export type DashboardHttpHandler = (request: DashboardHttpRequest) => Promise<OwnerAuthHttpResponse>;
+export type StopControlHttpHandler = (request: OwnerAuthHttpRequest & { readonly method: string; readonly projectId?: string }) => Promise<OwnerAuthHttpResponse>;
 
 /** Creates a real listener composing existing owner-session and dashboard boundaries; bind policy belongs to deployment. */
-export function createOperationalDashboardServer(options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary }): Server {
+export function createOperationalDashboardServer(options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler }): Server {
   return createServer((request, response) => {
     void dispatch(request, response, options);
   });
@@ -16,7 +17,7 @@ export function createOperationalDashboardServer(options: { readonly dashboard: 
 async function dispatch(
   request: IncomingMessage,
   response: ServerResponse,
-  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary },
+  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler },
 ): Promise<void> {
   try {
     const body = await readBody(request);
@@ -50,9 +51,15 @@ async function dispatch(
 
 async function dispatchRoute(
   request: DashboardHttpRequest,
-  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary },
+  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler },
 ): Promise<OwnerAuthHttpResponse> {
   const path = request.url.split("?", 1)[0] ?? "/";
+  const stopPath = /^\/api\/v1\/stop(?:\/projects\/([0-9a-f-]{36}))?$/.exec(path);
+  if (stopPath) {
+    if (!options.stopControls) return { status: 404, body: { error: "not_found" } };
+    if (request.method !== "GET" && request.method !== "POST") return { status: 405, body: { error: "method_not_allowed" }, headers: { allow: "GET, POST" } };
+    return options.stopControls({ ...request, method: request.method, ...(stopPath[1] ? { projectId: stopPath[1] } : {}) });
+  }
   const routes: Record<string, { readonly handle: (request: OwnerAuthHttpRequest) => Promise<OwnerAuthHttpResponse> }> = {
     "/api/v1/session": {
       handle: request.method === "GET" ? options.auth.getSession : options.auth.login,

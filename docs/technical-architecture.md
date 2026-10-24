@@ -314,7 +314,8 @@ interface SandboxManager {
 | GET /api/v1/tasks/:id | Request, plan/patch, status and linked PR | Scoped authorization; sanitized output and immutable revision links |
 | GET /api/v1/projects/:id/skills | Inspect candidate skill revisions | Read-only discovery; content remains untrusted and non-executable |
 | PUT /api/v1/projects/:id/skills/:skillId/approval | Approve/revoke exact skill revision | Explicit owner action, digest/version, CSRF, audit; no command permission |
-| POST /api/v1/control/pause | Durable global stop | Prioritized, authenticated, and audited |
+| GET /api/v1/stop and GET /api/v1/stop/projects/:id | Read effective global/project stop state | Owner session; database errors fail closed |
+| POST /api/v1/stop and POST /api/v1/stop/projects/:id | Set or clear global/project stop | Owner session, Origin/CSRF, closed `{stopped, expectedVersion}` body, durable PostgreSQL state and audit actor |
 | GET /api/v1/digests | Digests and costs | Explicit time zone and period |
 | GET /api/v1/usage | Consumption summary and groupings | Authenticated scope, bounded period/groups, IANA zone, currencies and completeness |
 | GET /api/v1/usage/requests | Request usage, attribution and provenance | Authenticated filters, cursor pagination, at most 100 rows, no raw model content |
@@ -325,6 +326,8 @@ interface SandboxManager {
 | DELETE /api/v1/memories/:id | Forget knowledge | Owner session, expected version, CSRF, active-attempt cancellation and purge |
 | GET /api/v1/tasks/:id/events | SSE progress | Session, filtered events, no raw sensitive data |
 | GET /health/live and /health/ready | Internal probes | Details not exposed publicly |
+
+The current source persists a fail-closed initially-stopped global control and optional project controls, exposes owner-authenticated/versioned stop/resume routes and dashboard controls, and blocks PostgreSQL queue admission, claim, and checkpoint writes while either applicable control is stopped. Global control row locking serializes claims with a global transition; project control transitions serialize on the project row. The worker package includes a one-claim queue consumer and an execution boundary with admission/final durable-state reads plus bounded-interval polling during active dispatch. A stop or stop-state read failure aborts dispatch, records the remote effect as unknown, revokes its capability, and requests bounded sandbox cancellation; a pre-dispatch stopped result cancels the lease while an uncertain dispatch remains `reconciliation_required`, never cancelled. The explicit post-restore persistence hook atomically forces global stop on, advances its version and audits `system:restore`; the worker's required restore gate must be released only after that transaction succeeds. Ordinary worker restart does not call the restore hook. The HTTP adapter accepts an optional local stop-notification port, while polling remains authoritative across processes and restarts. These are injected interfaces and local tests, not a deployed runtime: no service factory, concrete API-to-worker notification wiring, provider/GitHub dispatcher, gateway, or sandbox-manager deployment is connected. No live backup restore was run; production restore composition, shutdown/restart semantics and live timing remain unqualified.
 
 An API mutation returns `202` for scheduled work, `409` for an outdated version or revision, `422` for an invalid contract, and `429` for a local limit. Ambiguity is a persisted clarification, while authorization blocks carry stable reason codes. There is no merge endpoint and no runtime publication endpoint; only the core's validated dev-task workflow can request PR publication.
 

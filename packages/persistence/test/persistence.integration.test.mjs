@@ -12,6 +12,7 @@ import {
   PostgresPersistence,
   PostgresQueueStore,
   PostgresRequestIntakeStore,
+  PostgresStopControlStore,
 } from "../dist/index.js";
 import { ProjectRequestIntake } from "@jarvis/domain";
 import { QueueError, QueueService } from "@jarvis/queue";
@@ -103,7 +104,25 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls"]);
+    const { rows: [initialStop] } = await pool.query("SELECT stopped FROM jarvis.stop_controls WHERE scope='global' AND project_id IS NULL");
+    assert.equal(initialStop.stopped, true, "fresh database migration must start fail-closed");
+    const restoreControls = new PostgresStopControlStore(pool);
+    const { rows: [preRestore] } = await pool.query(`UPDATE jarvis.stop_controls
+      SET stopped=false, version=version+1, changed_by='owner'
+      WHERE scope='global' AND project_id IS NULL RETURNING version`);
+    const restored = await restoreControls.suspendAfterRestore();
+    assert.equal(restored.stopped, true, "restoring a backup with a resumed global stop must suspend all projects");
+    assert.equal(restored.version, preRestore.version + 1, "restore invalidates resume tokens from the backup");
+    const { rows: [restoreAudit] } = await pool.query(`SELECT actor, action FROM jarvis.audit_events
+      WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global'`);
+    assert.deepEqual(restoreAudit, { actor: "system:restore", action: "stop.restore_suspend" });
+    await assert.rejects(
+      restoreControls.set({ stopped: false, expectedVersion: preRestore.version, ownerId: "owner" }),
+      { code: "STOP_VERSION_CONFLICT" },
+      "a pre-restore owner version cannot resume the restored deployment",
+    );
+    await restoreControls.set({ stopped: false, expectedVersion: restored.version, ownerId: "owner" });
     lockClient = await pool.connect();
     await lockClient.query("SELECT pg_advisory_lock($1)", [0x4a385445]);
     await pool.query(`
@@ -112,7 +131,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       BEGIN
         FOR table_name IN
           SELECT tablename FROM pg_tables
-          WHERE schemaname = 'jarvis' AND tablename <> 'schema_migrations'
+          WHERE schemaname = 'jarvis' AND tablename NOT IN ('schema_migrations', 'stop_controls', 'audit_events')
         LOOP
           EXECUTE format('SELECT count(*) FROM jarvis.%I', table_name) INTO row_count;
           IF row_count > 0 THEN
@@ -282,6 +301,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
 
     let queueClock = Date.now();
     let queueId = 0;
+    const stopControls = new PostgresStopControlStore(pool);
+    const globalBeforeQueue = await stopControls.get({});
+    await stopControls.set({ stopped: false, expectedVersion: globalBeforeQueue.global.version, ownerId: "owner" });
     const queueStore = new PostgresQueueStore(pool);
     const queue = new QueueService({
       store: queueStore,
@@ -319,6 +341,29 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     assert.equal((await queue.enqueue(request)).id, queued.id, "duplicate inbox events return the canonical task");
     await assert.rejects(queue.enqueue({ ...request, deadline: request.deadline + 1 }), QueueError,
       "reusing an event identity with changed task parameters is rejected");
+
+    const beforeRestore = await stopControls.get({});
+    await stopControls.set({ stopped: false, expectedVersion: beforeRestore.global.version, ownerId: "owner" });
+    const backupResumeVersion = (await stopControls.get({})).global.version;
+    const restoredForQueue = await stopControls.suspendAfterRestore();
+    assert.equal(restoredForQueue.version, backupResumeVersion + 1);
+    assert.equal(await queue.claim("worker-globally-paused", 60_000), null,
+      "restore must suspend queued work even when the backup held a resumed global stop");
+    const globalPaused = await stopControls.get({ projectId: input.projectId });
+    assert.equal(globalPaused.global.stopped, true);
+    await stopControls.set({ projectId: input.projectId, stopped: false, expectedVersion: 0, ownerId: "owner" });
+    assert.equal(await queue.claim("worker-project-resumed-but-global-paused", 60_000), null,
+      "a project-level resume cannot negate the global stop");
+    await assert.rejects(stopControls.set({ stopped: false, expectedVersion: backupResumeVersion, ownerId: "owner" }),
+      { code: "STOP_VERSION_CONFLICT" }, "a backup's old resume version is stale after restore");
+    await stopControls.set({ stopped: false, expectedVersion: restoredForQueue.version, ownerId: "owner" });
+
+    await stopControls.set({ projectId: input.projectId, stopped: true, expectedVersion: 1, ownerId: "owner" });
+    assert.equal(await queue.claim("worker-paused", 60_000), null, "a project stop prevents claim of queued work while global execution is resumed");
+    assert.equal((await stopControls.get({ projectId: input.projectId })).global.stopped, false, "project stop does not alter global state");
+    assert.equal((await new PostgresStopControlStore(pool).get({ projectId: input.projectId })).project.stopped, true,
+      "a newly constructed store observes the persisted pause after process recreation");
+    await stopControls.set({ projectId: input.projectId, stopped: false, expectedVersion: 2, ownerId: "owner" });
 
     const [claimA, claimB] = await Promise.all([
       queue.claim("worker-a", 60_000),
@@ -362,6 +407,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       if (retryReady) queueClock = Number(clock.now_ms);
     }
     assert.equal(retryReady, true, "the retry becomes eligible after backoff/simulated wait");
+    await stopControls.set({ projectId: input.projectId, stopped: true, expectedVersion: 2, ownerId: "owner" });
+    assert.equal(await queue.claim("worker-paused-retry", 60_000), null, "a project stop also prevents a ready retry from being claimed");
+    await stopControls.set({ projectId: input.projectId, stopped: false, expectedVersion: 3, ownerId: "owner" });
     const thirdLease = await queue.claim("worker-c", 60_000);
     assert.ok(thirdLease);
     assert.equal(thirdLease.epoch, 3);

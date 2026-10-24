@@ -54,6 +54,7 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   const requestIntakeMigration = await readFile(new URL("../migrations/004_project_request_intake.sql", import.meta.url), "utf8");
   const ownerAuthMigration = await readFile(new URL("../migrations/005_owner_auth.sql", import.meta.url), "utf8");
   const projectConfigMigration = await readFile(new URL("../migrations/006_project_configuration_api.sql", import.meta.url), "utf8");
+  const stopControlMigration = await readFile(new URL("../migrations/007_durable_stop_controls.sql", import.meta.url), "utf8");
   assert.match(migration, /CREATE TABLE projects/i);
   assert.match(migration, /UNIQUE\s*\(id, repository_id\)/i);
   assert.match(migration, /FOREIGN KEY\s*\([^)]*repository_id[^)]*\)\s*REFERENCES/i);
@@ -78,6 +79,12 @@ test("migrations enforce repository-scoped identity and hide secrets from task s
   assert.match(ownerAuthMigration, /GRANT SELECT, INSERT, UPDATE ON jarvis\.owner_sessions TO jarvis_app/i);
   assert.doesNotMatch(ownerAuthMigration, /onboarding_secret/i);
   assert.match(projectConfigMigration, /UNIQUE INDEX projects_repository_id_unique ON jarvis\.projects\(repository_id\)/i);
+  assert.match(stopControlMigration, /scope text NOT NULL CHECK \(scope IN \('global', 'project'\)\)/i);
+  assert.match(stopControlMigration, /VALUES \('global', NULL, true, 1, 'system'\)/i, "new and migration-based restore state starts suspended");
+  assert.match(stopControlMigration, /stop_controls_project ON jarvis\.stop_controls\(project_id\)/i);
+  assert.match(stopControlMigration, /GRANT SELECT, INSERT, UPDATE ON jarvis\.stop_controls TO jarvis_app/i);
+  assert.doesNotMatch(stopControlMigration, /GRANT[^;]*DELETE[^;]*ON jarvis\.stop_controls/i);
+  assert.match(stopControlMigration, /REVOKE ALL ON jarvis\.stop_controls FROM jarvis_agent/i);
 });
 
 test("migration runner serializes concurrent callers and records applied versions", async () => {
