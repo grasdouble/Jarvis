@@ -67,10 +67,11 @@ test("cleanup records every phase failure and continues later phases", async () 
   });
 });
 
-async function waitForBlockedQueries(client, applicationNames, expectedCount = 1) {
+async function waitForBlockedQueries(client, applicationNames, expectedCount = 1, isOperationSettled = () => false) {
   const names = Array.isArray(applicationNames) ? applicationNames : [applicationNames];
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
+    if (isOperationSettled()) return "settled";
     await client.query("SELECT pg_stat_clear_snapshot()");
     const { rows: [result] } = await client.query(`
       SELECT count(*)::integer AS count
@@ -257,11 +258,14 @@ async function exercisePauseRace(mode, scope) {
         state: { phase: "plan_validated", configVersion: 1, policyHash: fixture.policyHash }, requiredSkills: [],
       });
     let pauseReturned = false;
+    let operationSettled = false;
     let operationCommittedAfterPause = false;
     operationPromise = operationResult.then((value) => {
+      operationSettled = true;
       operationCommittedAfterPause = pauseReturned;
       return { status: "fulfilled", value };
     }, (reason) => {
+      operationSettled = true;
       return { status: "rejected", reason };
     });
     const controls = new PostgresStopControlStore(stopPool);
@@ -275,7 +279,7 @@ async function exercisePauseRace(mode, scope) {
       return { status: "fulfilled" };
     }, (reason) => ({ status: "rejected", reason }));
 
-    await waitForBlockedQueries(blocker, operationName);
+    await waitForBlockedQueries(blocker, operationName, 1, () => operationSettled);
     const pauseState = await waitForStopBlockOrReturn(blocker, stopName, () => pauseReturned);
     await blocker.query("COMMIT");
     blocker.release();
