@@ -177,10 +177,8 @@ test("authenticated dashboard and both reports include canonical stable PR links
 });
 
 test("dashboard and reports disclose omitted counts for every bounded collection", async () => {
-  const observations = Array.from({ length: 101 }, (_, index) => ({ source: "fixture", revision: index + 1, numericUsage: { input: 1 }, coverage: "reported" }));
-  const modelRequests = Array.from({ length: 101 }, (_, index) => ({
-    id: `model-${index}`, observations: index === 0 ? observations : [], ledger: null,
-  }));
+  const observations = Array.from({ length: 101 }, () => ({}));
+  const modelRequests = [{ id: "11111111-1111-4111-8111-111111111111", observations, ledger: null }];
   const attempts = Array.from({ length: 51 }, (_, index) => ({ ordinal: index + 1, state: "failed", observedAt: null }));
   const pullRequests = Array.from({ length: 51 }, (_, index) => ({ number: index + 1, state: "open", observedAt: null }));
   const requests = Array.from({ length: 51 }, (_, index) => ({
@@ -188,7 +186,7 @@ test("dashboard and reports disclose omitted counts for every bounded collection
   }));
   const projects = Array.from({ length: 51 }, (_, index) => ({ ...project, id: `project-${index}`,
     requests: index === 0 ? requests : [], pullRequests: index === 0 ? pullRequests : [],
-    usage: index === 0 ? { modelRequestCount: 101, modelRequestsTruncated: false, modelRequests } : null,
+    usage: index === 0 ? { modelRequestCount: 101, modelRequestsTruncated: true, modelRequests } : null,
   }));
   const boundary = createOperationalDashboardBoundary({ list: async () => projects }, auth);
   const dashboard = await boundary.read({ headers: {} });
@@ -209,4 +207,31 @@ test("dashboard and reports disclose omitted counts for every bounded collection
   assert.match(text.body, /omitted 1 request/i);
   assert.match(text.body, /omitted 1 attempt/i);
   assert.match(text.body, /omitted 1 usage observation/i);
+});
+
+test("dashboard JSON and text export expose safe model-request attribution but no content or hashes", async () => {
+  const usage = { modelRequestCount: 2, allocationLimits: { profileHash: "must-not-leak", configHash: "must-not-leak" }, modelRequests: [{
+    id: "11111111-1111-4111-8111-111111111111", requestId: "22222222-2222-4222-8222-222222222222",
+    taskId: "33333333-3333-4333-8333-333333333333", attemptId: "44444444-4444-4444-8444-444444444444",
+    provider: "OpenAI", model: "gpt-4.1", purpose: "task_execution", profileHash: "must-not-leak", configHash: "must-not-leak", prompt: "must-not-leak",
+    state: "completed", observations: [], ledger: null,
+  }, { provider: "OpenAI\\nInjected", model: "model", purpose: "purpose", prompt: "must-not-leak", configHash: "must-not-leak" }] };
+  const boundary = createOperationalDashboardBoundary({ list: async () => [{ ...project, usage }] }, auth);
+  const dashboard = await boundary.read({ headers: {} });
+  const row = dashboard.body.projects[0].usage.modelRequests[0];
+  assert.deepEqual({ provider: row.provider, model: row.model, purpose: row.purpose, requestId: row.requestId, taskId: row.taskId, attemptId: row.attemptId }, {
+    provider: "OpenAI", model: "gpt-4.1", purpose: "task_execution", requestId: "22222222-2222-4222-8222-222222222222",
+    taskId: "33333333-3333-4333-8333-333333333333", attemptId: "44444444-4444-4444-8444-444444444444",
+  });
+  assert.equal(dashboard.body.projects[0].usage.modelRequests[1].provider ?? null, null);
+  assert.equal(dashboard.body.projects[0].usage.allocationLimits, null);
+  const json = await boundary.export({ headers: {} }, "json");
+  assert.match(json.body, /"provider":"OpenAI"/);
+  const text = await boundary.export({ headers: {} }, "text");
+  assert.match(text.body, /Provider\/model: OpenAI\/gpt-4\.1/);
+  assert.match(text.body, /Purpose: task_execution/);
+  assert.match(text.body, /Request: 22222222-2222-4222-8222-222222222222/);
+  assert.match(text.body, /Task: 33333333-3333-4333-8333-333333333333/);
+  assert.match(text.body, /Attempt: 44444444-4444-4444-8444-444444444444/);
+  assert.doesNotMatch(json.body + text.body, /must-not-leak|Injected/);
 });

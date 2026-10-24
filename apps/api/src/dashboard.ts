@@ -101,14 +101,38 @@ function boundedUsage(value: Readonly<Record<string, unknown>> | null): unknown 
   const usage = value as Record<string, unknown>;
   const sourceRows = Array.isArray(usage.modelRequests) ? usage.modelRequests : [];
   const modelRequests = sourceRows.slice(0, 100).map((entry) => {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
     const row = entry as Record<string, unknown>;
     const sourceObservations = Array.isArray(row.observations) ? row.observations : [];
-    const observations = sourceObservations.slice(0, 100);
+    const observations = sourceObservations.slice(0, 100).flatMap((observation) => {
+      if (observation === null || typeof observation !== "object" || Array.isArray(observation)) return [];
+      const item = observation as Record<string, unknown>;
+      return [{ source: item.source, revision: item.revision, numericUsage: item.numericUsage,
+        mappingVersion: item.mappingVersion, coverage: item.coverage, observedAt: item.observedAt }];
+    });
     const observationsCount = Number.isSafeInteger(row.observationsCount) && (row.observationsCount as number) >= sourceObservations.length
       ? row.observationsCount as number : sourceObservations.length;
+    const ledger = row.ledger !== null && typeof row.ledger === "object" && !Array.isArray(row.ledger)
+      ? row.ledger as Record<string, unknown> : null;
+    const id = safeUsageUuid(row.id);
+    const requestId = safeUsageUuid(row.requestId);
+    const taskId = safeUsageUuid(row.taskId);
+    const attemptId = safeUsageUuid(row.attemptId);
+    const provider = safeAttributionLabel(row.provider);
+    const model = safeAttributionLabel(row.model);
+    const purpose = safeAttributionLabel(row.purpose);
+    const state = safeLabel(row.state);
+    const dispatchedAt = safeUsageTimestamp(row.dispatchedAt);
     return {
-      ...row,
+      ...(id === null ? {} : { id }), ...(requestId === null ? {} : { requestId }),
+      ...(taskId === null ? {} : { taskId }), ...(attemptId === null ? {} : { attemptId }),
+      ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }), ...(purpose === null ? {} : { purpose }),
+      ...(state === null ? {} : { state }), ...(dispatchedAt === null ? {} : { dispatchedAt }),
+      ledger: ledger === null ? null : {
+        reserved: ledger.reserved, tokenCounts: ledger.tokenCounts, fieldStatuses: ledger.fieldStatuses,
+        estimatedCharge: ledger.estimatedCharge, providerReportedCharge: ledger.providerReportedCharge,
+        currency: ledger.currency, reconciliationState: ledger.reconciliationState, updatedAt: ledger.updatedAt,
+      },
       observations,
       observationsCount,
       observationsTruncated: row.observationsTruncated === true || observationsCount > observations.length,
@@ -118,12 +142,32 @@ function boundedUsage(value: Readonly<Record<string, unknown>> | null): unknown 
   const modelRequestCount = Number.isSafeInteger(usage.modelRequestCount) && (usage.modelRequestCount as number) >= modelRequests.length
     ? usage.modelRequestCount as number : null;
   return {
-    ...usage,
+    allocationLimits: null,
+    allocationState: safeLabel(usage.allocationState) ?? "unknown",
+    coverage: safeLabel(usage.coverage) ?? "unknown",
     modelRequestCount,
     modelRequests,
     modelRequestsTruncated: usage.modelRequestsTruncated === true || (modelRequestCount !== null && modelRequestCount > modelRequests.length),
     modelRequestsOmitted: modelRequestCount === null ? null : Math.max(0, modelRequestCount - modelRequests.length),
   };
+}
+
+function safeUsageUuid(value: unknown): string | null {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : null;
+}
+
+function safeAttributionLabel(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/+ -]{0,127}$/.test(value) ? value : null;
+}
+
+function safeUsageTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
+  return date !== null && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function safeLabel(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value) ? value : null;
 }
 
 function canonicalPullRequestUrl(repository: string, number: number): string | null {
@@ -227,7 +271,10 @@ function textUsage(value: unknown): string[] {
     if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
     const modelRequest = item as Record<string, unknown>;
     const id = safeUuidText(modelRequest.id);
-    lines.push(`Model request ${id}: state=${safeCode(modelRequest.state)}; dispatched=${safeTimestampText(modelRequest.dispatchedAt)}`);
+    lines.push(`Model request ${id}: state=${safeCode(modelRequest.state)}; dispatched=${safeTimestampText(modelRequest.dispatchedAt)}`,
+      `  Provider/model: ${safeAttributionText(modelRequest.provider)}/${safeAttributionText(modelRequest.model)}`,
+      `  Purpose: ${safeAttributionText(modelRequest.purpose)}`,
+      `  Request: ${safeUuidText(modelRequest.requestId)}; Task: ${safeUuidText(modelRequest.taskId)}; Attempt: ${safeUuidText(modelRequest.attemptId)}`);
     if (modelRequest.ledger === null || typeof modelRequest.ledger !== "object" || Array.isArray(modelRequest.ledger)) {
       lines.push("  Ledger: unknown / not recorded");
     } else {
@@ -268,6 +315,9 @@ function safeMetricText(value: unknown, mode: "numeric" | "status"): string {
 
 function safeCode(value: unknown): string {
   return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value) ? value : "unknown";
+}
+function safeAttributionText(value: unknown): string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/+ -]{0,127}$/.test(value) ? value : "unknown";
 }
 function safeUuidText(value: unknown): string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : "unknown";

@@ -85,6 +85,9 @@ export function DashboardPanel(props: {
                     const observations = Array.isArray(modelRequest.observations) ? modelRequest.observations : [];
                     return <div key={String(modelRequest.id ?? index)}>
                       <p>Model request {String(modelRequest.id ?? "unknown")}: {String(modelRequest.state ?? "unknown")}; dispatched {String(modelRequest.dispatchedAt ?? "unknown")}</p>
+                      <p>Provider/model: {String(modelRequest.provider ?? "unknown")}/{String(modelRequest.model ?? "unknown")}</p>
+                      <p>Purpose: {String(modelRequest.purpose ?? "unknown")}</p>
+                      <p>Request: {String(modelRequest.requestId ?? "unknown")}; Task: {String(modelRequest.taskId ?? "unknown")}; Attempt: {String(modelRequest.attemptId ?? "unknown")}</p>
                       {ledger === null ? <p>Ledger: unknown / not recorded.</p> : <>
                         <p>Token metrics: {JSON.stringify(ledger.tokenCounts ?? {})}; field status: {JSON.stringify(ledger.fieldStatuses ?? {})}</p>
                         <p>Reserved: {String(ledger.reserved ?? "unknown")}; estimated charge: {String(ledger.estimatedCharge ?? "unknown")}; provider-reported charge: {String(ledger.providerReportedCharge ?? "unknown")}; stored currency: {String(ledger.currency ?? "unknown")}; reconciliation: {String(ledger.reconciliationState ?? "unknown")}</p>

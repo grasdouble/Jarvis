@@ -68,3 +68,35 @@ test("missing or malformed usage evidence remains unknown instead of becoming ze
     assert.equal(project.usage.modelRequests.length, 0);
   }
 });
+
+test("dashboard usage preserves bounded provider/model and request/task/attempt/purpose attribution", async () => {
+  let query = "";
+  const pool = { connect: async () => ({
+    query: async (text) => {
+      query = text;
+      return { rows: [{ project_id: "p1", repository: "safe/repo", state: "active", installation_state: "active", revoked_at: null,
+        config_version: 1, requests: [], pull_requests: [], latest_observed_at: null,
+        usage: { modelRequestCount: 2, modelRequests: [{ id: "11111111-1111-4111-8111-111111111111",
+          requestId: "22222222-2222-4222-8222-222222222222", taskId: "33333333-3333-4333-8333-333333333333",
+          attemptId: "44444444-4444-4444-8444-444444444444", provider: "OpenAI", model: "gpt-4.1", purpose: "task_execution",
+          profileHash: "must-not-leak", prompt: "must-not-leak", state: "completed", observations: [], ledger: null },
+          { provider: "OpenAI\\nInjected", model: "model", purpose: "unknown purpose", taskId: "bad-id", attemptId: null }] } }], rowCount: 1 };
+    }, release() {},
+  }) };
+  const [project] = await new persistence.PostgresOperationalDashboardReadModel(pool).list("owner");
+  const row = project.usage.modelRequests[0];
+  assert.deepEqual({ provider: row.provider, model: row.model, purpose: row.purpose, requestId: row.requestId, taskId: row.taskId, attemptId: row.attemptId }, {
+    provider: "OpenAI", model: "gpt-4.1", purpose: "task_execution", requestId: "22222222-2222-4222-8222-222222222222",
+    taskId: "33333333-3333-4333-8333-333333333333", attemptId: "44444444-4444-4444-8444-444444444444",
+  });
+  assert.equal("profileHash" in row, false);
+  assert.equal("prompt" in row, false);
+  assert.equal(project.usage.modelRequests[1].provider, null);
+  assert.equal(project.usage.modelRequests[1].taskId, null);
+  assert.match(query, /mr\.provider/);
+  assert.match(query, /mr\.model/);
+  assert.match(query, /mr\.purpose/);
+  assert.match(query, /mr\.task_id/);
+  assert.match(query, /mr\.attempt_id/);
+  assert.match(query, /r\.project_id=p\.id AND r\.owner_id=p\.owner_id/);
+});

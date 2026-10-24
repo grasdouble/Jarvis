@@ -81,6 +81,11 @@ export class PostgresOperationalDashboardReadModel {
               SELECT jsonb_agg(jsonb_build_object(
                 'id', mr.id,
                 'requestId', mr.request_id,
+                'taskId', mr.task_id,
+                'attemptId', mr.attempt_id,
+                'provider', mr.provider,
+                'model', mr.model,
+                'purpose', mr.purpose,
                 'state', mr.state,
                 'dispatchedAt', mr.dispatched_at,
                 'observationsCount', (SELECT count(*)::integer FROM jarvis.usage_observations count_uo WHERE count_uo.model_request_id=mr.id),
@@ -189,7 +194,9 @@ function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
     const observationsCount = Number.isSafeInteger(row.observationsCount) && (row.observationsCount as number) >= sourceObservations.length
       ? row.observationsCount as number : sourceObservations.length;
     return {
-      id: safeUuid(row.id), requestId: safeUuid(row.requestId), state: safeLabel(row.state),
+      id: safeUuid(row.id), requestId: safeUuid(row.requestId), taskId: safeUuid(row.taskId), attemptId: safeUuid(row.attemptId),
+      provider: safeAttribution(row.provider), model: safeAttribution(row.model), purpose: safeAttribution(row.purpose),
+      state: safeLabel(row.state),
       dispatchedAt: safeTimestamp(row.dispatchedAt),
       ledger: ledger === null ? null : {
         reserved: safeDecimal(ledger.reserved), tokenCounts: safeMap(ledger.tokenCounts, true),
@@ -216,6 +223,9 @@ function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
 
 function safeLabel(value: unknown): string | null {
   return typeof value === "string" && /^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/.test(value) ? value : null;
+}
+function safeAttribution(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:@/+ -]{0,127}$/.test(value) ? value : null;
 }
 function safeTimestamp(value: unknown): string | null {
   if (value === null || value === undefined) return null;
