@@ -68,7 +68,6 @@ def exercise() -> None:
                     "private": True,
                     "version": "1.0.0",
                     "scripts": {"changeset": "changeset"},
-                    "devDependencies": {"@changesets/cli": "3.0.3"},
                 }
             ),
             encoding="utf-8",
