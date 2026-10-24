@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/versions.env"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/docker-cli-version.sh"
 PROFILE=jarvis
 REQUIRE_UI=false
 
@@ -46,8 +48,9 @@ expected_socket="unix://${COLIMA_HOME:-$HOME/.colima}/jarvis/docker.sock"
   exit 1
 }
 
-[[ "$(docker --context colima-jarvis version --format '{{.Client.Version}}')" == "$DOCKER_CLI_VERSION" ]] || {
-  printf 'jarvis-colima: Docker CLI version mismatch\n' >&2
+docker_cli_actual="$(docker --context colima-jarvis version --format '{{.Client.Version}}')"
+docker_cli_version_is_compatible "$docker_cli_actual" || {
+  printf 'jarvis-colima: Docker CLI version must be a valid %s.x.y release (selected baseline: %s); found %s\n' "$DOCKER_CLI_COMPATIBLE_MAJOR" "$DOCKER_CLI_VERSION" "${docker_cli_actual:-unknown}" >&2
   exit 1
 }
 [[ "$(docker --context colima-jarvis version --format '{{.Server.Version}}')" == "$DOCKER_ENGINE_VERSION" ]] || {
@@ -119,4 +122,4 @@ elif [[ -z "$container_ids" ]]; then
   printf 'jarvis-colima: no application containers deployed; UI and authentication remain unverified\n' >&2
 fi
 
-printf 'jarvis-colima: profile, pinned runtime, ARM64 engine, no-share, SSH-agent, and host-canary checks passed.\n'
+printf 'jarvis-colima: profile passed with Docker CLI major %s (selected baseline %s), pinned runtime, ARM64 engine, no-share, SSH-agent, and host-canary checks.\n' "$DOCKER_CLI_COMPATIBLE_MAJOR" "$DOCKER_CLI_VERSION"

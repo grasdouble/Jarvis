@@ -34,6 +34,7 @@ class ColimaBootstrapTests(unittest.TestCase):
         self.assertEqual(values["COLIMA_VERSION"], "0.10.3")
         self.assertEqual(values["LIMA_VERSION"], "2.2.1")
         self.assertEqual(values["DOCKER_CLI_VERSION"], "29.9.1")
+        self.assertEqual(values["DOCKER_CLI_COMPATIBLE_MAJOR"], "29")
         self.assertEqual(values["DOCKER_ENGINE_VERSION"], "29.5.2")
         self.assertEqual(values["DOCKER_ENGINE_API_VERSION"], "1.54")
         self.assertEqual(values["COMPOSE_VERSION"], "5.6.0")
@@ -84,7 +85,7 @@ class ColimaBootstrapTests(unittest.TestCase):
         self.assertIn("**", dockerignore)
         self.assertIn("!apps/sandbox-manager/dist/**", dockerignore)
 
-    def test_preflight_accepts_supported_host_and_reports_pins(self):
+    def test_preflight_accepts_compatible_docker_cli_versions_and_reports_pins(self):
         script = INFRA / "bootstrap.sh"
         with tempfile.TemporaryDirectory() as temporary:
             fake_bin = Path(temporary)
@@ -95,12 +96,41 @@ class ColimaBootstrapTests(unittest.TestCase):
             self._write_command(fake_bin, "colima", 'echo "colima version ${TEST_COLIMA_VERSION:-0.10.3}"')
             self._write_command(fake_bin, "limactl", 'echo "limactl version ${TEST_LIMA_VERSION:-2.2.1}"')
             self._write_command(fake_bin, "docker", 'echo "Docker version ${TEST_DOCKER_VERSION:-29.9.1}, build mock"')
-            env = os.environ | {"PATH": f"{fake_bin}:{os.environ['PATH']}"}
-            result = subprocess.run(["bash", str(script), "--check-host"], env=env,
-                                    capture_output=True, text=True, check=False)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("Colima 0.10.3", result.stdout)
-            self.assertIn("40 GiB", result.stdout)
+            for docker_version in ("29.9.1", "29.9.2"):
+                with self.subTest(docker_version=docker_version):
+                    env = os.environ | {
+                        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                        "TEST_DOCKER_VERSION": docker_version,
+                    }
+                    result = subprocess.run(["bash", str(script), "--check-host"], env=env,
+                                            capture_output=True, text=True, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("Colima 0.10.3", result.stdout)
+                    self.assertIn("Docker CLI major 29 (selected baseline 29.9.1)", result.stdout)
+                    self.assertIn("40 GiB", result.stdout)
+
+    def test_preflight_rejects_incompatible_or_malformed_docker_cli_versions(self):
+        script = INFRA / "bootstrap.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_bin = Path(temporary)
+            self._write_command(fake_bin, "uname", 'case "$1" in -s) echo Darwin;; -m) echo arm64;; esac')
+            self._write_command(fake_bin, "sw_vers", 'echo 27.0.1')
+            self._write_command(fake_bin, "sysctl", 'echo 34359738368')
+            self._write_command(fake_bin, "df", 'printf "Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/mock 100000000 1 100000000 1%% /\\n"')
+            self._write_command(fake_bin, "colima", 'echo "colima version 0.10.3"')
+            self._write_command(fake_bin, "limactl", 'echo "limactl version 2.2.1"')
+            self._write_command(fake_bin, "docker", 'printf "Docker version %s, build mock\\n" "${TEST_DOCKER_VERSION}"')
+            for docker_version in ("28.9.1", "30.0.0", "unknown", "29.9", "v29.9.1"):
+                with self.subTest(docker_version=docker_version):
+                    env = os.environ | {
+                        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                        "TEST_DOCKER_VERSION": docker_version,
+                    }
+                    result = subprocess.run(["bash", str(script), "--check-host"], env=env,
+                                            capture_output=True, text=True, check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Docker CLI version must be a valid 29.x.y release", result.stderr)
+                    self.assertIn(docker_version, result.stderr)
 
     def test_preflight_rejects_insufficient_host_resources(self):
         script = INFRA / "bootstrap.sh"

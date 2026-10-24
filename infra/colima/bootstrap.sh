@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # This file contains trusted, reviewable literal pins only.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/versions.env"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/docker-cli-version.sh"
 
 PROFILE=jarvis
 COLIMA_HOME="${COLIMA_HOME:-$HOME/.colima}"
@@ -51,14 +53,14 @@ check_host() {
   docker_actual="$(docker --version | sed -E 's/^Docker version ([^,]+).*/\1/')"
   [[ "$colima_actual" == "$COLIMA_VERSION" ]] || fail "Colima $COLIMA_VERSION required; found ${colima_actual:-unknown}"
   [[ "$lima_actual" == "$LIMA_VERSION" ]] || fail "Lima $LIMA_VERSION required; found ${lima_actual:-unknown}"
-  [[ "$docker_actual" == "$DOCKER_CLI_VERSION" ]] || fail "Docker CLI $DOCKER_CLI_VERSION required; found ${docker_actual:-unknown}"
+  docker_cli_version_is_compatible "$docker_actual" || fail "Docker CLI version must be a valid ${DOCKER_CLI_COMPATIBLE_MAJOR}.x.y release (selected baseline: $DOCKER_CLI_VERSION); found ${docker_actual:-unknown}"
 }
 
 case "${1:---check-host}" in
   --check-host)
     check_host
-    printf 'Host preflight passed. Colima %s, Lima %s, Docker CLI %s, Engine %s, Compose %s; profile %s uses 4 CPU/8 GiB/80 GiB with a 40 GiB host-free-space floor.\n' \
-      "$COLIMA_VERSION" "$LIMA_VERSION" "$DOCKER_CLI_VERSION" "$DOCKER_ENGINE_VERSION" "$COMPOSE_VERSION" "$PROFILE"
+    printf 'Host preflight passed. Colima %s, Lima %s, Docker CLI major %s (selected baseline %s), Engine %s, Compose %s; profile %s uses 4 CPU/8 GiB/80 GiB with a 40 GiB host-free-space floor.\n' \
+      "$COLIMA_VERSION" "$LIMA_VERSION" "$DOCKER_CLI_COMPATIBLE_MAJOR" "$DOCKER_CLI_VERSION" "$DOCKER_ENGINE_VERSION" "$COMPOSE_VERSION" "$PROFILE"
     ;;
   --apply)
     check_host
