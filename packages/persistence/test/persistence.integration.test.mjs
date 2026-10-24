@@ -237,6 +237,7 @@ async function exercisePauseRace(mode, scope) {
   let blocker;
   let operationPromise;
   let pausePromise;
+  let testFailure;
   try {
     fixture = await createStopRaceFixture(fixturePool, mode);
     blocker = await blockerPool.connect();
@@ -292,24 +293,30 @@ async function exercisePauseRace(mode, scope) {
         assert.ok(operationOutcome.reason instanceof CheckpointRejectedError);
       }
     }
-  } finally {
-    if (blocker) {
-      await blocker.query("ROLLBACK").catch(() => undefined);
-      blocker.release();
-    }
-    if (operationPromise || pausePromise) {
-      await Promise.allSettled([operationPromise, pausePromise].filter(Boolean));
-    }
-    const cleanupFailures = [];
-    for (const closePool of [operationPool, stopPool, blockerPool]) {
-      try { await closePool.end(); } catch (error) { cleanupFailures.push(error); }
-    }
-    if (fixture) {
-      try { await resetStopRaceFixture(fixturePool); } catch (error) { cleanupFailures.push(error); }
-    }
-    try { await fixturePool.end(); } catch (error) { cleanupFailures.push(error); }
-    if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "PostgreSQL race fixture cleanup failed");
+  } catch (error) {
+    testFailure = error;
   }
+
+  const cleanupFailures = await runCleanupSteps([
+    async () => { if (blocker) await blocker.query("ROLLBACK"); },
+    async () => {
+      if (blocker) {
+        blocker.release();
+        blocker = undefined;
+      }
+    },
+    async () => {
+      if (operationPromise || pausePromise) {
+        await Promise.allSettled([operationPromise, pausePromise].filter(Boolean));
+      }
+    },
+    async () => operationPool.end(),
+    async () => stopPool.end(),
+    async () => blockerPool.end(),
+    async () => { if (fixture) await resetStopRaceFixture(fixturePool); },
+    async () => fixturePool.end(),
+  ]);
+  throwCollectedFailures(testFailure, cleanupFailures);
 }
 
 test("PostgreSQL migrations and checkpoint authorization work against the real database", {
