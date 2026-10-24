@@ -99,7 +99,7 @@ jobs:
         run: |
           test "$ACTUAL_SLUG" = "$EXPECTED_SLUG" || { echo '::error::The token belongs to an unexpected GitHub App.'; exit 1; }
           test "$ACTUAL_INSTALLATION_ID" = "$EXPECTED_INSTALLATION_ID" || { echo '::error::The token belongs to an unexpected installation.'; exit 1; }
-      - name: Authorize the managed Changesets branch and PR before Lufa writes
+      - name: Verify release ruleset and authorize managed Changesets branch before Lufa writes
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           PACKAGE_RELEASE_APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}

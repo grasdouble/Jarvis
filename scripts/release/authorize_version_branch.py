@@ -10,6 +10,77 @@ from release_common import GitHubReleaseClient, ReleaseError
 REPOSITORY = "grasdouble/Jarvis"
 VERSION_BRANCH = "changeset-release/main"
 VERSION_PR_TITLE = "build(release): update package versions"
+RELEASE_RULESET_NAME = "Changesets release branch — package release App"
+RELEASE_BRANCH_REF = "refs/heads/changeset-release/main"
+REQUIRED_RULE_TYPES = {"creation", "update", "deletion", "non_fast_forward"}
+
+
+def verify_release_branch_ruleset(api) -> None:
+    """Verify the uniquely named active ruleset and exact managed branch scope."""
+    listing_status, rulesets = api.request(
+        "GET", "rulesets?per_page=100&includes_parents=true"
+    )
+    if listing_status != 200 or not isinstance(rulesets, list):
+        raise ReleaseError(
+            f"Could not read repository rulesets (HTTP {listing_status}); refusing Lufa writes."
+        )
+    if len(rulesets) >= 100:
+        raise ReleaseError("Repository ruleset listing may be truncated; refusing Lufa writes.")
+
+    matches = [
+        ruleset
+        for ruleset in rulesets
+        if isinstance(ruleset, dict) and ruleset.get("name") == RELEASE_RULESET_NAME
+    ]
+    if len(matches) != 1:
+        raise ReleaseError(
+            f"The required release ruleset {RELEASE_RULESET_NAME!r} was not found uniquely."
+        )
+    ruleset_id = matches[0].get("id")
+    if not isinstance(ruleset_id, int) or ruleset_id <= 0:
+        raise ReleaseError("The required release ruleset has malformed identity metadata.")
+
+    detail_status, ruleset = api.request(
+        "GET", f"rulesets/{ruleset_id}?includes_parents=true"
+    )
+    if detail_status != 200 or not isinstance(ruleset, dict):
+        raise ReleaseError(
+            f"Could not read release ruleset details (HTTP {detail_status}); refusing Lufa writes."
+        )
+    if (
+        ruleset.get("id") != ruleset_id
+        or ruleset.get("name") != RELEASE_RULESET_NAME
+        or ruleset.get("source_type") != "Repository"
+    ):
+        raise ReleaseError("The required release ruleset is not repository-scoped.")
+    if ruleset.get("enforcement") != "active":
+        raise ReleaseError("The release branch ruleset is not active.")
+    if ruleset.get("target") != "branch":
+        raise ReleaseError("The release branch ruleset target is not branch.")
+
+    conditions = ruleset.get("conditions")
+    if (
+        not isinstance(conditions, dict)
+        or set(conditions) != {"ref_name"}
+        or not isinstance(conditions.get("ref_name"), dict)
+        or conditions["ref_name"].get("include") != [RELEASE_BRANCH_REF]
+        or conditions["ref_name"].get("exclude") != []
+    ):
+        raise ReleaseError("The release branch ruleset does not target exactly the managed branch.")
+
+    rules = ruleset.get("rules")
+    if not isinstance(rules, list):
+        raise ReleaseError("The release branch ruleset does not expose its required rules.")
+    found_rules = {
+        item.get("type") for item in rules if isinstance(item, dict)
+    }
+    missing_rules = REQUIRED_RULE_TYPES - found_rules
+    if missing_rules:
+        raise ReleaseError(
+            "The release branch ruleset is missing required rules: "
+            + ", ".join(sorted(missing_rules))
+            + "."
+        )
 
 
 def authorize_version_branch_update(api, app_slug: str) -> None:
@@ -115,6 +186,7 @@ def authorize_version_branch_update(api, app_slug: str) -> None:
 def main() -> int:
     try:
         api = GitHubReleaseClient(os.environ.get("GH_TOKEN", ""))
+        verify_release_branch_ruleset(api)
         authorize_version_branch_update(
             api, os.environ.get("PACKAGE_RELEASE_APP_SLUG", "")
         )

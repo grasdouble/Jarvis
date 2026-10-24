@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 import yaml
 
-from authorize_version_branch import authorize_version_branch_update
+from authorize_version_branch import (
+    authorize_version_branch_update,
+    verify_release_branch_ruleset,
+)
 from run_changeset_version import run as run_changeset_version
 from release_common import (
     GitHubReleaseClient,
@@ -64,6 +67,11 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         steps = version_pr["steps"]
         preflight = next(step for step in steps if step.get("name") == "Verify trusted event and exact checkout revision")
         app_token = next(i for i, step in enumerate(steps) if step.get("id") == "app")
+        identity_index = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Verify the installed package-release App identity"
+        )
         action_index = next(i for i, step in enumerate(steps) if "changesets-release" in step.get("uses", ""))
         preflight_index = steps.index(preflight)
         self.assertLess(preflight_index, app_token)
@@ -75,10 +83,11 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         branch_authorizer = next(
             step
             for step in steps
-            if step.get("name") == "Authorize the managed Changesets branch and PR before Lufa writes"
+            if step.get("name") == "Verify release ruleset and authorize managed Changesets branch before Lufa writes"
         )
         authorizer_index = steps.index(branch_authorizer)
         self.assertLess(app_token, authorizer_index)
+        self.assertLess(identity_index, authorizer_index)
         self.assertLess(authorizer_index, action_index)
         self.assertEqual(
             {
@@ -137,6 +146,27 @@ class ReleaseAutomationContractTests(unittest.TestCase):
 
 
 class ReleaseBehaviorTests(unittest.TestCase):
+    def test_release_branch_ruleset_requires_unique_active_exact_scope_and_rules(self) -> None:
+        api = FakeRulesetClient([valid_release_ruleset()])
+        verify_release_branch_ruleset(api)
+
+        for label, mutate, expected_error in (
+            ("missing", lambda rules: rules.clear(), "not found uniquely"),
+            ("disabled", lambda rules: rules[0].update(enforcement="disabled"), "not active"),
+            ("wrong target", lambda rules: rules[0]["conditions"]["ref_name"].update(include=["refs/heads/main"]), "does not target exactly"),
+            ("missing rule", lambda rules: rules[0]["rules"].pop(), "missing required rules"),
+        ):
+            with self.subTest(case=label):
+                rules = [valid_release_ruleset()]
+                mutate(rules)
+                with self.assertRaisesRegex(ReleaseError, expected_error):
+                    verify_release_branch_ruleset(FakeRulesetClient(rules))
+
+        with self.assertRaisesRegex(ReleaseError, "not found uniquely"):
+            verify_release_branch_ruleset(
+                FakeRulesetClient([valid_release_ruleset(), valid_release_ruleset()])
+            )
+
     def test_version_branch_authorization_allows_first_run_and_verified_reruns(self) -> None:
         api = FakeVersionBranchClient(branch_sha=None, pulls=[])
         authorize_version_branch_update(api, "package-release-app")
@@ -434,6 +464,45 @@ class FakeVersionBranchClient:
                 "commit": {"message": "build(release): update package versions"},
             }
         raise AssertionError(f"unexpected API request: {endpoint}")
+
+
+class FakeRulesetClient:
+    def __init__(self, rulesets: list[dict]) -> None:
+        self.rulesets = rulesets
+        self.requests: list[tuple[str, str]] = []
+
+    def request(self, method: str, endpoint: str, payload: dict | None = None):
+        self.requests.append((method, endpoint))
+        if method != "GET" or payload is not None:
+            raise AssertionError("ruleset preflight must be read-only")
+        if endpoint.startswith("rulesets?"):
+            return 200, [{"id": item["id"], "name": item["name"]} for item in self.rulesets]
+        if endpoint == "rulesets/25784220?includes_parents=true":
+            if not self.rulesets:
+                return 404, None
+            return 200, self.rulesets[0]
+        raise AssertionError(f"unexpected API request: {endpoint}")
+
+
+def valid_release_ruleset() -> dict:
+    return {
+        "id": 25784220,
+        "name": "Changesets release branch — package release App",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "grasdouble/Jarvis",
+        "enforcement": "active",
+        "conditions": {
+            "ref_name": {
+                "include": ["refs/heads/changeset-release/main"],
+                "exclude": [],
+            }
+        },
+        "rules": [
+            {"type": rule_type}
+            for rule_type in ("creation", "update", "deletion", "non_fast_forward")
+        ],
+    }
 
 
 def managed_version_pr(
