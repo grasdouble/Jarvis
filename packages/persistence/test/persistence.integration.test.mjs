@@ -31,6 +31,41 @@ const canonical = (value) => Array.isArray(value)
     : JSON.stringify(value);
 const originalConfigHash = createHash("sha256").update(canonical(originalConfig)).digest("hex");
 
+async function runCleanupSteps(steps) {
+  const failures = [];
+  for (const step of steps) {
+    try { await step(); }
+    catch (error) { failures.push(error); }
+  }
+  return failures;
+}
+
+function throwCollectedFailures(testFailure, cleanupFailures) {
+  const failures = [...(testFailure ? [testFailure] : []), ...cleanupFailures];
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "integration test and cleanup failed");
+}
+
+test("cleanup records every phase failure and continues later phases", async () => {
+  const events = [];
+  const firstFailure = new Error("rollback failed");
+  const secondFailure = new Error("pool close failed");
+  const failures = await runCleanupSteps([
+    async () => { events.push("rollback"); throw firstFailure; },
+    async () => { events.push("release"); throw secondFailure; },
+    async () => { events.push("later cleanup"); },
+  ]);
+
+  assert.deepEqual(events, ["rollback", "release", "later cleanup"]);
+  assert.deepEqual(failures, [firstFailure, secondFailure]);
+  const testFailure = new Error("test assertion failed");
+  assert.throws(() => throwCollectedFailures(testFailure, failures), (error) => {
+    assert.ok(error instanceof AggregateError);
+    assert.deepEqual(error.errors, [testFailure, firstFailure, secondFailure]);
+    return true;
+  });
+});
+
 async function waitForBlockedQueries(client, applicationNames, expectedCount = 1) {
   const names = Array.isArray(applicationNames) ? applicationNames : [applicationNames];
   const deadline = Date.now() + 15_000;
@@ -97,7 +132,6 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
   let lockClient;
   let fixtureCommitted = false;
   let testFailure;
-  let cleanupFailure;
   try {
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
     assert.match(database.name, /^jarvis_issue8_/);
@@ -746,24 +780,40 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     );
   } catch (error) {
     testFailure = error;
-  } finally {
-    try {
+  }
+
+  let fixtureCleanupClient;
+  let cleanupTransactionAttempted = false;
+  let cleanupVerified = false;
+  let cleanupTruncated = false;
+  let cleanupCommitted = false;
+  const cleanupFailures = await runCleanupSteps([
+    async () => { if (client) await client.query("ROLLBACK"); },
+    async () => {
       if (client) {
-        await client.query("ROLLBACK").catch(() => undefined);
-        client.release();
+        const currentClient = client;
+        client = undefined;
+        currentClient.release();
       }
+    },
+    async () => { if (authClient) await authClient.query("ROLLBACK"); },
+    async () => {
       if (authClient) {
-        await authClient.query("ROLLBACK").catch(() => undefined);
-        authClient.release();
+        const currentClient = authClient;
+        authClient = undefined;
+        currentClient.release();
       }
-      if (fixtureCommitted) {
-        client = await pool.connect();
-        let cleanupCommitted = false;
-        let cleanupVerified = false;
-        try {
-          await client.query("BEGIN");
-          try {
-            await client.query(`
+    },
+    async () => { if (fixtureCommitted) fixtureCleanupClient = await pool.connect(); },
+    async () => {
+      if (fixtureCleanupClient) {
+        cleanupTransactionAttempted = true;
+        await fixtureCleanupClient.query("BEGIN");
+      }
+    },
+    async () => {
+      if (cleanupTransactionAttempted) {
+        await fixtureCleanupClient.query(`
             DO $$
             DECLARE table_name text; row_count bigint; expected_count bigint;
             BEGIN
@@ -805,11 +855,12 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
               END LOOP;
             END $$
             `);
-            cleanupVerified = true;
-          } catch (cleanupError) {
-            cleanupFailure = cleanupError;
-          }
-          if (cleanupVerified) await client.query(`
+        cleanupVerified = true;
+      }
+    },
+    async () => {
+      if (cleanupVerified) {
+        await fixtureCleanupClient.query(`
             DO $$
             DECLARE truncate_tables text;
             BEGIN
@@ -820,25 +871,34 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
               EXECUTE 'TRUNCATE TABLE ' || truncate_tables;
             END $$
           `);
-          await client.query("COMMIT");
-          cleanupCommitted = true;
-        } finally {
-          if (!cleanupCommitted) await client.query("ROLLBACK").catch(() => undefined);
-          client.release();
-          client = undefined;
-        }
+        cleanupTruncated = true;
       }
-    } finally {
+    },
+    async () => {
+      if (cleanupVerified && cleanupTruncated) {
+        await fixtureCleanupClient.query("COMMIT");
+        cleanupCommitted = true;
+      }
+    },
+    async () => {
+      if (cleanupTransactionAttempted && !cleanupCommitted) await fixtureCleanupClient.query("ROLLBACK");
+    },
+    async () => {
+      if (fixtureCleanupClient) {
+        const currentClient = fixtureCleanupClient;
+        fixtureCleanupClient = undefined;
+        currentClient.release();
+      }
+    },
+    async () => { if (lockClient) await lockClient.query("SELECT pg_advisory_unlock($1)", [0x4a385445]); },
+    async () => {
       if (lockClient) {
-        await lockClient.query("SELECT pg_advisory_unlock($1)", [0x4a385445]).catch(() => undefined);
-        lockClient.release();
+        const currentClient = lockClient;
+        lockClient = undefined;
+        currentClient.release();
       }
-      await pool.end();
-    }
-  }
-  if (testFailure && cleanupFailure) {
-    throw new AggregateError([testFailure, cleanupFailure], "integration test failed and fixture cleanup could not verify expected row counts");
-  }
-  if (testFailure) throw testFailure;
-  if (cleanupFailure) throw cleanupFailure;
+    },
+    async () => { await pool.end(); },
+  ]);
+  throwCollectedFailures(testFailure, cleanupFailures);
 });
