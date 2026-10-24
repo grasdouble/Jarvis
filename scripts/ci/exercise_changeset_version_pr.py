@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -46,6 +45,7 @@ def exercise() -> None:
                     "private": True,
                     "version": "1.0.0",
                     "scripts": {"changeset": "changeset"},
+                    "devDependencies": {"@changesets/cli": "3.0.3"},
                 }
             ),
             encoding="utf-8",
@@ -84,9 +84,9 @@ def exercise() -> None:
             (root / ".changeset" / name).write_text(
                 "---\n---\nNo package release.\n", encoding="utf-8"
             )
-        os.symlink(REPO_ROOT / "node_modules", root / "node_modules", target_is_directory=True)
-
-        run(["pnpm", "install", "--offline", "--lockfile-only"], root, expect_success=True)
+        # Keep all package installation state inside the disposable fixture. A symlink
+        # to the repository's node_modules is unsafe: PNPM manages this path itself.
+        run(["pnpm", "install"], root, expect_success=True)
 
         def git(*args: str) -> str:
             return subprocess.run(
@@ -124,6 +124,27 @@ def exercise() -> None:
                 "Changesets version command did not update the internal workspace range"
             )
         run(["pnpm", "install", "--offline", "--lockfile-only"], root, expect_success=True)
+        working_gate = run(
+            [sys.executable, str(VERSION_PR_GATE), "--working-tree-generated-candidate", base_sha],
+            root,
+            expect_success=True,
+        )
+        if "working-tree candidate validated" not in working_gate.stdout:
+            raise AssertionError("Dirty Changesets version output was not validated")
+        (root / "unexpected.txt").write_text("unrelated candidate mutation\n", encoding="utf-8")
+        run(
+            [sys.executable, str(VERSION_PR_GATE), "--working-tree-generated-candidate", base_sha],
+            root,
+            expect_success=False,
+        )
+        git("add", "unexpected.txt")
+        run(
+            [sys.executable, str(VERSION_PR_GATE), "--working-tree-generated-candidate", base_sha],
+            root,
+            expect_success=False,
+        )
+        git("reset", "--quiet", "--", "unexpected.txt")
+        (root / "unexpected.txt").unlink()
         git("add", "-A")
         git("commit", "--quiet", "-m", "generated Changesets version PR")
 
