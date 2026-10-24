@@ -86,14 +86,29 @@ export class PostgresQueueStore implements QueueStore<QueuePayload> {
     let committed = false;
     try {
       await begin(client);
+      const { rows: taskProjects } = await client.query<{ project_id: string }>(
+        "SELECT project_id FROM jarvis.tasks WHERE id = $1", [task.taskId],
+      );
+      const projectId = taskProjects[0]?.project_id;
+      if (projectId === undefined) {
+        throw new QueueError("TASK_NOT_AUTHORIZED", "Only an active, core-authorized durable queued task can enter the queue");
+      }
+      // Coordinate with global stop mutations before taking project locks. The
+      // authorization read below gets a fresh READ COMMITTED snapshot after
+      // both gates have been acquired.
+      await client.query("SELECT pg_advisory_xact_lock_shared(1246849618)");
+      await client.query("SELECT id FROM jarvis.projects WHERE id = $1 FOR SHARE", [projectId]);
       const { rows: authorized } = await client.query<{ id: string }>(`
         SELECT t.id
         FROM jarvis.tasks t
         JOIN jarvis.requests r ON r.id = t.request_id AND r.project_id = t.project_id AND r.repository_id = t.repository_id
-        JOIN jarvis.projects p ON p.id = t.project_id AND p.repository_id = t.repository_id
-        JOIN jarvis.installations i ON i.id = p.installation_id
-        WHERE t.id = $1 AND t.state = 'queued' AND r.state = 'queued'
-          AND p.state = 'active' AND i.state = 'active' AND i.revoked_at IS NULL
+         JOIN jarvis.projects p ON p.id = t.project_id AND p.repository_id = t.repository_id
+         JOIN jarvis.installations i ON i.id = p.installation_id
+         JOIN jarvis.stop_controls global_stop ON global_stop.scope = 'global' AND global_stop.project_id IS NULL
+         WHERE t.id = $1 AND t.state = 'queued' AND r.state = 'queued'
+           AND p.state = 'active' AND i.state = 'active' AND i.revoked_at IS NULL
+           AND global_stop.stopped = false
+           AND NOT EXISTS (SELECT 1 FROM jarvis.stop_controls project_stop WHERE project_stop.scope = 'project' AND project_stop.project_id = p.id AND project_stop.stopped)
           AND p.config_version = t.config_version AND t.config_version = r.config_version
           AND t.policy_hash = r.policy_hash
         FOR KEY SHARE OF t, r, p, i
@@ -159,16 +174,19 @@ export class PostgresQueueStore implements QueueStore<QueuePayload> {
         FROM jarvis.queue_entries q
         JOIN jarvis.tasks t ON t.id = q.task_id
         JOIN jarvis.requests r ON r.id = t.request_id AND r.project_id = t.project_id AND r.repository_id = t.repository_id
-        JOIN jarvis.projects p ON p.id = t.project_id AND p.repository_id = t.repository_id
-        JOIN jarvis.installations i ON i.id = p.installation_id
+         JOIN jarvis.projects p ON p.id = t.project_id AND p.repository_id = t.repository_id
+         JOIN jarvis.installations i ON i.id = p.installation_id
+         JOIN jarvis.stop_controls global_stop ON global_stop.scope = 'global' AND global_stop.project_id IS NULL
         WHERE ((q.state = 'queued' AND q.available_at <= clock_timestamp())
            OR (q.state = 'leased' AND q.lease_until <= clock_timestamp()))
           AND r.state IN ('queued', 'running')
-          AND p.state = 'active' AND i.state = 'active' AND i.revoked_at IS NULL
+           AND p.state = 'active' AND i.state = 'active' AND i.revoked_at IS NULL
+           AND global_stop.stopped = false
+           AND NOT EXISTS (SELECT 1 FROM jarvis.stop_controls project_stop WHERE project_stop.scope = 'project' AND project_stop.project_id = p.id AND project_stop.stopped)
           AND p.config_version = t.config_version AND t.config_version = r.config_version
           AND t.policy_hash = r.policy_hash
         ORDER BY q.available_at, q.created_at, q.id
-        FOR UPDATE OF q, t, r, p, i SKIP LOCKED
+         FOR UPDATE OF q, t, r, p, i, global_stop SKIP LOCKED
         LIMIT 1
       `);
       const candidate = rows[0];

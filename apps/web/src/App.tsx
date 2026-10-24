@@ -10,6 +10,10 @@ interface SessionView {
 
 const SESSION_PATH = "/api/v1/session";
 const DASHBOARD_PATH = "/api/v1/dashboard";
+const STOP_PATH = "/api/v1/stop";
+
+interface StopControl { readonly stopped: boolean; readonly version: number }
+interface StopView { readonly global: StopControl; readonly projects: Readonly<Record<string, StopControl>> }
 
 async function readResponse(response: Response): Promise<SessionView | { readonly error?: string }> {
   try {
@@ -27,6 +31,7 @@ export function App(): ReactElement {
   const [busy, setBusy] = useState(false);
   const initialSessionRequest = useRef<Promise<SessionView> | null>(null);
   const [dashboard, setDashboard] = useState<DashboardView | null>(null);
+  const [stop, setStop] = useState<StopView | null>(null);
 
   async function fetchSession(): Promise<SessionView> {
     const response = await fetch(SESSION_PATH, { credentials: "same-origin", cache: "no-store" });
@@ -130,6 +135,44 @@ export function App(): ReactElement {
     return (): void => { active = false; };
   }, [session?.authenticated]);
 
+  useEffect(() => {
+    if (!session?.authenticated) { setStop(null); return; }
+    let active = true;
+    void Promise.all([
+      fetch(STOP_PATH, { credentials: "same-origin", cache: "no-store" }).then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<{ global: StopControl }>; }),
+      fetch(DASHBOARD_PATH, { credentials: "same-origin", cache: "no-store" }).then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<DashboardView>; }),
+    ]).then(async ([globalView, dashboardView]): Promise<void> => {
+      if ("error" in dashboardView) throw new Error();
+      const entries = await Promise.all(dashboardView.projects.map(async (project) => {
+        const response = await fetch(`${STOP_PATH}/projects/${encodeURIComponent(project.id)}`, { credentials: "same-origin", cache: "no-store" });
+        if (!response.ok) throw new Error();
+        const state = await response.json() as { project: StopControl | null };
+        return [project.id, state.project ?? { stopped: false, version: 0 }] as const;
+      }));
+      if (active) setStop({ global: globalView.global, projects: Object.fromEntries(entries) });
+    })
+      .catch(() => { if (active) setStop(null); });
+    return (): void => { active = false; };
+  }, [session?.authenticated]);
+
+  async function changeStop(projectId: string | undefined, current: { stopped: boolean; version: number }): Promise<void> {
+    if (!session?.authenticated) return;
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(projectId ? `${STOP_PATH}/projects/${encodeURIComponent(projectId)}` : STOP_PATH, {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "content-type": "application/json", "x-csrf-token": session.csrfToken },
+        body: JSON.stringify({ stopped: !current.stopped, expectedVersion: current.version }),
+      });
+      if (response.status === 409) throw new Error("Stop state changed in another session; refresh and try again.");
+      if (!response.ok) throw new Error("Stop control could not be updated.");
+      const latest = await response.json() as { global?: StopControl; project?: StopControl | null };
+      if (projectId === undefined) setStop((previous) => previous && latest.global ? { ...previous, global: latest.global } : null);
+      else setStop((previous) => previous && latest.project ? { ...previous, projects: { ...previous.projects, [projectId]: latest.project } } : null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Stop control could not be updated."); }
+    finally { setBusy(false); }
+  }
+
   async function downloadExport(format: "json" | "txt"): Promise<void> {
     try {
       const response = await fetch(`${DASHBOARD_PATH}/export.${format}`, { credentials: "same-origin", cache: "no-store" });
@@ -155,6 +198,18 @@ export function App(): ReactElement {
         <h1>JARVIS</h1>
         <p>Signed in as the local owner.</p>
         <DashboardPanel dashboard={dashboard} onExport={(format) => void downloadExport(format)} />
+        <section aria-label="Emergency stop controls">
+          <h2>Emergency stop</h2>
+          {stop === null ? <p role="status">Stop state unavailable; execution remains fail-closed.</p> : <>
+            <p>Global stop: {stop.global.stopped ? "Paused" : "Running"} (version {stop.global.version})</p>
+            <button type="button" disabled={busy} onClick={() => void changeStop(undefined, stop.global)}>{stop.global.stopped ? "Resume all projects" : "Pause all projects"}</button>
+            {dashboard && "projects" in dashboard && dashboard.projects.map((project) => {
+              const value = stop.projects[project.id];
+              return <div key={project.id}><p>{project.repository}: {value?.stopped ? "Paused" : "Running"} (version {value?.version ?? 0})</p>
+                <button type="button" disabled={busy || value === undefined} onClick={() => value && void changeStop(project.id, value)}>{value?.stopped ? "Resume project" : "Pause project"}</button></div>;
+            })}
+          </>}
+        </section>
         <button type="button" onClick={() => void logout()} disabled={busy}>Sign out</button>
         {error && <p role="alert">{error}</p>}
       </main>
