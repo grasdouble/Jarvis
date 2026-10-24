@@ -243,9 +243,12 @@ export class PostgresPersistence {
     try {
       await client.query("BEGIN");
       transactionStarted = true;
-      // Approval inserts take an UPDATE lock on this project row. Acquire the
-      // matching SHARE lock in a separate statement so a waiter gets a fresh
-      // READ COMMITTED snapshot for the authorization query below.
+      // Global stop mutations take the exclusive form of this transaction lock.
+      // Acquire its shared form before the project row to keep a consistent lock
+      // order and prevent checkpoints from passing a committed global pause.
+      await client.query("SELECT pg_advisory_xact_lock_shared(1246849618)");
+      // Approval and project-stop mutations update this row. Lock it separately
+      // so a waiter gets a fresh READ COMMITTED snapshot for authorization below.
       await client.query("SELECT id FROM jarvis.projects WHERE id = $1 FOR SHARE", [input.projectId]);
       ({ rows } = await client.query<SavedCheckpoint>(`
           WITH eligible AS MATERIALIZED (

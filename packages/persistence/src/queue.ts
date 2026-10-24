@@ -86,6 +86,18 @@ export class PostgresQueueStore implements QueueStore<QueuePayload> {
     let committed = false;
     try {
       await begin(client);
+      const { rows: taskProjects } = await client.query<{ project_id: string }>(
+        "SELECT project_id FROM jarvis.tasks WHERE id = $1", [task.taskId],
+      );
+      const projectId = taskProjects[0]?.project_id;
+      if (projectId === undefined) {
+        throw new QueueError("TASK_NOT_AUTHORIZED", "Only an active, core-authorized durable queued task can enter the queue");
+      }
+      // Coordinate with global stop mutations before taking project locks. The
+      // authorization read below gets a fresh READ COMMITTED snapshot after
+      // both gates have been acquired.
+      await client.query("SELECT pg_advisory_xact_lock_shared(1246849618)");
+      await client.query("SELECT id FROM jarvis.projects WHERE id = $1 FOR SHARE", [projectId]);
       const { rows: authorized } = await client.query<{ id: string }>(`
         SELECT t.id
         FROM jarvis.tasks t

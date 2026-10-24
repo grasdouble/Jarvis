@@ -23,6 +23,7 @@ test("checkpoint writes require the current lease and current project and skill 
   const pool = createPool([
     { rows: [], rowCount: 0 },
     { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 1 },
     { rows: [{ id: "checkpoint-1" }], rowCount: 1 },
     { rows: [], rowCount: 0 },
   ]);
@@ -44,8 +45,9 @@ test("checkpoint writes require the current lease and current project and skill 
   assert.match(sql, /project_id\s*=\s*\$4/i);
   assert.match(sql, /revoked_at\s+IS\s+NULL/i);
   assert.match(sql, /revision_digest/i);
-  assert.deepEqual(pool.calls[2].values.slice(0, 4), ["task-1", "attempt-1", 4, "project-1"]);
-  assert.match(pool.calls[1].text, /FOR SHARE/i);
+  assert.deepEqual(pool.calls[3].values.slice(0, 4), ["task-1", "attempt-1", 4, "project-1"]);
+  assert.match(pool.calls[1].text, /pg_advisory_xact_lock_shared\(1246849618\)/i);
+  assert.match(pool.calls[2].text, /FOR SHARE/i);
 });
 
 test("migrations enforce repository-scoped identity and hide secrets from task state", async () => {

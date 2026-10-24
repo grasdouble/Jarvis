@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -46,6 +46,7 @@ function throwCollectedFailures(testFailure, cleanupFailures) {
   if (failures.length > 1) throw new AggregateError(failures, "integration test and cleanup failed");
 }
 
+describe("PostgreSQL persistence integration", { concurrency: false }, () => {
 test("cleanup records every phase failure and continues later phases", async () => {
   const events = [];
   const firstFailure = new Error("rollback failed");
@@ -123,6 +124,194 @@ async function lockProjectRow(pool, repositoryId) {
   };
 }
 
+async function createStopRaceFixture(pool, mode) {
+  await new PostgresPersistence(pool).migrate();
+  const fixture = {
+    installationId: randomUUID(),
+    policyId: randomUUID(),
+    projectId: randomUUID(),
+    requestId: randomUUID(),
+    taskId: randomUUID(),
+    attemptId: randomUUID(),
+    repositoryId: Math.floor(Math.random() * 1_000_000_000) + 1_000_000_000,
+    policyHash: "b".repeat(64),
+    profileHash: "f".repeat(64),
+    promptDigest: "e".repeat(64),
+    state: mode === "checkpoint" ? "running" : "queued",
+  };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET CONSTRAINTS ALL DEFERRED");
+    await client.query(`INSERT INTO jarvis.installations(id, github_id, app_id, state)
+      VALUES ($1, $2, 2001, 'active')`, [fixture.installationId, fixture.repositoryId]);
+    await client.query(`INSERT INTO jarvis.policies(id, version, canonical_json, hash, activated_at)
+      VALUES ($1, 1, '{"version":1}', $2, now())`, [fixture.policyId, fixture.policyHash]);
+    await client.query(`INSERT INTO jarvis.projects(id, repository_id, installation_id, owner_id, repository_name, state, config_version)
+      VALUES ($1, $2, $3, 'owner-race', 'stop-race', 'active', 1)`, [fixture.projectId, fixture.repositoryId, fixture.installationId]);
+    await client.query(`INSERT INTO jarvis.project_config_versions
+      (project_id, repository_id, version, config_json, config_hash, policy_hash, created_by)
+      VALUES ($1, $2, 1, '{"schemaVersion":1}', $3, $4, 'owner-race')`, [
+      fixture.projectId, fixture.repositoryId, "a".repeat(64), fixture.policyHash,
+    ]);
+    await client.query(`INSERT INTO jarvis.requests
+      (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key, config_version, policy_hash)
+      VALUES ($1, 'owner-race', $2, $3, 'plan', $4, $5, $6, 1, $7)`, [
+      fixture.requestId, fixture.projectId, fixture.repositoryId, fixture.promptDigest,
+      mode === "checkpoint" ? "running" : "queued", `stop-race-${fixture.taskId}`, fixture.policyHash,
+    ]);
+    await client.query(`INSERT INTO jarvis.tasks
+      (id, request_id, project_id, repository_id, mode, profile_hash, policy_hash, config_version, state, dedupe_key)
+      VALUES ($1, $2, $3, $4, 'plan', $5, $6, 1, $7, $8)`, [
+      fixture.taskId, fixture.requestId, fixture.projectId, fixture.repositoryId, fixture.profileHash,
+      fixture.policyHash, fixture.state, `stop-race-${fixture.taskId}`,
+    ]);
+    if (mode === "checkpoint") {
+      await client.query(`INSERT INTO jarvis.task_attempts
+        (id, task_id, project_id, repository_id, ordinal, lease_epoch, lease_until, state)
+        VALUES ($1, $2, $3, $4, 1, 1, now() + interval '1 hour', 'active')`, [
+        fixture.attemptId, fixture.taskId, fixture.projectId, fixture.repositoryId,
+      ]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  const controls = new PostgresStopControlStore(pool);
+  try {
+    const { global } = await controls.get({ projectId: fixture.projectId });
+    await controls.set({ stopped: false, expectedVersion: global.version, ownerId: "owner" });
+  } catch (error) {
+    await resetStopRaceFixture(pool).catch(() => undefined);
+    throw error;
+  }
+  return fixture;
+}
+
+async function resetStopRaceFixture(pool) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DO $$ DECLARE tables text; BEGIN
+      SELECT string_agg(format('jarvis.%I', tablename), ', ') INTO tables
+      FROM pg_tables WHERE schemaname = 'jarvis' AND tablename <> 'schema_migrations';
+      EXECUTE 'TRUNCATE TABLE ' || tables;
+    END $$`);
+    await client.query(`INSERT INTO jarvis.stop_controls(scope, project_id, stopped, version, changed_by)
+      VALUES ('global', NULL, true, 1, 'system')`);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function waitForStopBlockOrReturn(inspector, applicationName, isReturned) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (isReturned()) return "returned";
+    const { rows: [activity] } = await inspector.query(`
+      SELECT count(*)::integer AS count FROM pg_stat_activity
+      WHERE datname = current_database() AND application_name = $1
+        AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()
+    `, [applicationName]);
+    if (activity.count > 0) return "blocked";
+    await delay(5);
+  }
+  throw new Error(`Stop mutation from ${applicationName} neither returned nor blocked on a database lock`);
+}
+
+async function exercisePauseRace(mode, scope) {
+  const operationName = `jv203-${mode}-operation`;
+  const stopName = `jv203-${mode}-stop`;
+  const fixturePool = new Pool({ connectionString: databaseUrl, max: 5, application_name: "jv203-race-fixture" });
+  const operationPool = new Pool({ connectionString: databaseUrl, max: 2, application_name: operationName });
+  const stopPool = new Pool({ connectionString: databaseUrl, max: 2, application_name: stopName });
+  const blockerPool = new Pool({ connectionString: databaseUrl, max: 1, application_name: "jv203-race-blocker" });
+  let fixture;
+  let blocker;
+  let operationPromise;
+  let pausePromise;
+  try {
+    fixture = await createStopRaceFixture(fixturePool, mode);
+    blocker = await blockerPool.connect();
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM jarvis.tasks WHERE id = $1 FOR UPDATE", [fixture.taskId]);
+
+    const operationResult = mode === "enqueue"
+      ? new PostgresQueueStore(operationPool).enqueue({
+        id: fixture.taskId, eventId: `stop-race-${fixture.taskId}`, taskId: fixture.taskId,
+        payload: { taskId: fixture.taskId }, status: "queued", createdAt: Date.now(), availableAt: Date.now(),
+        deadline: Date.now() + 60_000, maxAttempts: 3, attempt: 0, epoch: 0,
+        retry: { baseDelay: 100, maxDelay: 1_000 },
+      }, `stop-race-${fixture.taskId}`)
+      : new PostgresPersistence(operationPool).saveCheckpoint({
+        taskId: fixture.taskId, attemptId: fixture.attemptId, projectId: fixture.projectId, leaseEpoch: 1,
+        step: "stop-race-checkpoint", schemaVersion: 1,
+        state: { phase: "plan_validated", configVersion: 1, policyHash: fixture.policyHash }, requiredSkills: [],
+      });
+    let pauseReturned = false;
+    let operationCommittedAfterPause = false;
+    operationPromise = operationResult.then((value) => {
+      operationCommittedAfterPause = pauseReturned;
+      return { status: "fulfilled", value };
+    }, (reason) => {
+      return { status: "rejected", reason };
+    });
+    const controls = new PostgresStopControlStore(stopPool);
+    const snapshot = await controls.get({ projectId: fixture.projectId });
+    const expectedVersion = scope === "global" ? snapshot.global.version : snapshot.project?.version ?? 0;
+    pausePromise = controls.set({
+      ...(scope === "project" ? { projectId: fixture.projectId } : {}),
+      stopped: true, expectedVersion, ownerId: "owner",
+    }).then(() => {
+      pauseReturned = true;
+      return { status: "fulfilled" };
+    }, (reason) => ({ status: "rejected", reason }));
+
+    await waitForBlockedQueries(blocker, operationName);
+    const pauseState = await waitForStopBlockOrReturn(blocker, stopName, () => pauseReturned);
+    await blocker.query("COMMIT");
+    blocker.release();
+    blocker = undefined;
+    const [operationOutcome, pauseOutcome] = await Promise.all([operationPromise, pausePromise]);
+    assert.equal(pauseOutcome.status, "fulfilled", "pause mutation should complete successfully");
+    assert.equal(operationCommittedAfterPause, false, `${mode} must not commit after ${scope} pause returns`);
+    if (pauseState === "blocked") {
+      assert.equal(operationOutcome.status, "fulfilled", `${mode} should finish before the waiting ${scope} pause returns`);
+    } else {
+      assert.equal(operationOutcome.status, "rejected", `${mode} must fail closed when ${scope} pause wins the lock race`);
+      if (mode === "enqueue") {
+        assert.equal(operationOutcome.reason?.code, "TASK_NOT_AUTHORIZED");
+      } else {
+        assert.ok(operationOutcome.reason instanceof CheckpointRejectedError);
+      }
+    }
+  } finally {
+    if (blocker) {
+      await blocker.query("ROLLBACK").catch(() => undefined);
+      blocker.release();
+    }
+    if (operationPromise || pausePromise) {
+      await Promise.allSettled([operationPromise, pausePromise].filter(Boolean));
+    }
+    const cleanupFailures = [];
+    for (const closePool of [operationPool, stopPool, blockerPool]) {
+      try { await closePool.end(); } catch (error) { cleanupFailures.push(error); }
+    }
+    if (fixture) {
+      try { await resetStopRaceFixture(fixturePool); } catch (error) { cleanupFailures.push(error); }
+    }
+    try { await fixturePool.end(); } catch (error) { cleanupFailures.push(error); }
+    if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "PostgreSQL race fixture cleanup failed");
+  }
+}
+
 test("PostgreSQL migrations and checkpoint authorization work against the real database", {
   skip: databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
 }, async () => {
@@ -133,6 +322,10 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
   let fixtureCommitted = false;
   let testFailure;
   try {
+    for (const scope of ["global", "project"]) {
+      await exercisePauseRace("enqueue", scope);
+      await exercisePauseRace("checkpoint", scope);
+    }
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
     assert.match(database.name, /^jarvis_issue8_/);
 
@@ -901,4 +1094,5 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     async () => { await pool.end(); },
   ]);
   throwCollectedFailures(testFailure, cleanupFailures);
+});
 });
