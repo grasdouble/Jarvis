@@ -4,7 +4,7 @@ This directory provisions the JARVIS-only Colima profile. It never changes or ac
 
 ## Selected baseline
 
-`versions.env` is the reviewed version lock: Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 (Ubuntu Noble ARM64 packages, API 1.54), containerd 2.2.4, and Docker Compose 5.6.0. Compose is downloaded for `linux-aarch64`, checked against its release SHA-256, then streamed over Colima SSH into the guest. The Compose manifest pins PostgreSQL 18.6-bookworm by multi-platform digest and explicitly selects `linux/arm64`.
+`versions.env` records the selected baseline: Colima 0.10.3, Lima 2.2.1, Docker CLI 29.9.1, Docker Engine 29.5.2 (Ubuntu Noble ARM64 packages, API 1.54), containerd 2.2.4, and Docker Compose 5.6.0. The host preflight and profile verifier accept any syntactically valid Docker CLI `29.x.y` version; 29.9.1 remains the selected/tested baseline, not an exact host CLI requirement. All other listed tool, guest engine/package, API, and Compose pins remain exact. Compose is downloaded for `linux-aarch64`, checked against its release SHA-256, then streamed over Colima SSH into the guest. The Compose manifest pins PostgreSQL 18.6-bookworm by multi-platform digest and explicitly selects `linux/arm64`.
 
 The owner-selected resource baseline is 4 VM CPUs, 8 GiB RAM, an 80 GiB VM disk, at least 40 GiB free on the Mac before provisioning, and a 2-CPU/4-GiB per-sandbox target. The bootstrap refuses a host below those CPU, memory, architecture, macOS, or free-space requirements. These are selected targets, not a claim that product sandbox quotas are implemented or qualified.
 
