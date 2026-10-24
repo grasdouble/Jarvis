@@ -104,6 +104,18 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "absent from the PR-head workspace set.*@jarvis/api"):
                 validate("main", root)
 
+    def test_unchanged_base_changeset_with_stale_target_does_not_block_unrelated_source_pr(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(
+                Path(temporary),
+                None,
+                delete_api_workspace=True,
+                stale_base_changeset=True,
+                unrelated_source_change=True,
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(validate("main", root), "passed")
+
     def test_validation_ignores_deleted_changeset_files_without_reading_them(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(
@@ -209,6 +221,8 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         rename_api_package: bool = False,
         move_api_workspace: bool = False,
         move_api_file_to_domain: bool = False,
+        stale_base_changeset: bool = False,
+        unrelated_source_change: bool = False,
     ) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         (root / ".changeset").mkdir()
@@ -241,7 +255,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             )
         api_file = root / api_root / "index.js"
         api_file.write_text("export const existing = true;\n", encoding="utf-8")
-        if delete_base_changeset:
+        if delete_base_changeset or stale_base_changeset:
             (root / ".changeset/base.md").write_text(
                 "---\n'@jarvis/api': patch\n---\nBase release entry.\n", encoding="utf-8"
             )
@@ -257,6 +271,8 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         git("switch", "--quiet", "--create", "pr")
         if delete_base_changeset:
             (root / ".changeset/base.md").unlink()
+        if unrelated_source_change:
+            (root / "README.md").write_text("Unrelated repository documentation change.\n", encoding="utf-8")
         if add_changeset_config_in_pr:
             (root / ".changeset/config.json").write_text(
                 json.dumps({"privatePackages": {"version": True}, "ignore": []}), encoding="utf-8"

@@ -195,12 +195,14 @@ def parse_changeset(text: str) -> set[str] | None:
     return set(frontmatter)
 
 
-def head_changeset_targets(root: Path, head_sha: str) -> set[str]:
-    """Return all release targets in Changesets present at the exact PR head."""
-    paths = _git(root, "ls-tree", "-r", "--name-only", "-z", head_sha, ".changeset").split("\0")
+def head_changeset_targets(
+    root: Path, head_sha: str, changed_changeset_paths: Iterable[PurePosixPath]
+) -> set[str]:
+    """Return release targets from changed Changeset files as stored at exact PR head."""
     targets: set[str] = set()
-    for raw_path in paths:
-        if not raw_path or not raw_path.endswith(".md") or raw_path == ".changeset/README.md":
+    for path in changed_changeset_paths:
+        raw_path = path.as_posix()
+        if path.parent != PurePosixPath(".changeset") or path.suffix != ".md" or raw_path == ".changeset/README.md":
             continue
         parsed = parse_changeset(_git(root, "show", f"{head_sha}:{raw_path}"))
         if parsed is not None:
@@ -237,7 +239,12 @@ def validate(
     paths = changed_file_paths(base_sha, head_sha, root)
     head_packages = workspace_packages(root, head_sha, versionable_only=False)
     head_names = set(head_packages.values())
-    stale_targets = head_changeset_targets(root, head_sha) - head_names
+    changed_changeset_paths = [
+        path
+        for status, path in changes
+        if status != "D" and path.parent == PurePosixPath(".changeset") and path.suffix == ".md"
+    ]
+    stale_targets = head_changeset_targets(root, head_sha, changed_changeset_paths) - head_names
     if stale_targets:
         raise ValueError(
             "Changesets at PR head target packages absent from the PR-head workspace set: "
@@ -254,10 +261,8 @@ def validate(
         ):
             changed.add(name)
     entries = []
-    for status, path in changes:
-        if status == "D" or path.parent != PurePosixPath(".changeset") or path.suffix != ".md":
-            continue
-        parsed = parse_changeset((root / path).read_text(encoding="utf-8"))
+    for path in changed_changeset_paths:
+        parsed = parse_changeset(_git(root, "show", f"{head_sha}:{path.as_posix()}"))
         if parsed is not None:
             entries.append(parsed)
     error = changeset_coverage_error(changed, entries)
