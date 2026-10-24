@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import yaml
 
+from authorize_version_branch import authorize_version_branch_update
 from run_changeset_version import run as run_changeset_version
 from release_common import (
     GitHubReleaseClient,
@@ -71,6 +72,22 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("git rev-parse HEAD", preflight["run"])
         self.assertIn("$CHECKOUT_SHA\" = \"$EVENT_SHA", preflight["run"])
         self.assertEqual({"EVENT_REF": "${{ github.ref }}", "EVENT_SHA": "${{ github.sha }}"}, preflight["env"])
+        branch_authorizer = next(
+            step
+            for step in steps
+            if step.get("name") == "Authorize the managed Changesets branch and PR before Lufa writes"
+        )
+        authorizer_index = steps.index(branch_authorizer)
+        self.assertLess(app_token, authorizer_index)
+        self.assertLess(authorizer_index, action_index)
+        self.assertEqual(
+            {
+                "GH_TOKEN": "${{ steps.app.outputs.token }}",
+                "PACKAGE_RELEASE_APP_SLUG": "${{ vars.PACKAGE_RELEASE_APP_SLUG }}",
+            },
+            branch_authorizer["env"],
+        )
+        self.assertEqual("python3 scripts/release/authorize_version_branch.py", branch_authorizer["run"])
         action_steps = [step for step in version_pr["steps"] if "uses" in step and "changesets-release" in step["uses"]]
         self.assertEqual(1, len(action_steps))
         action_step = action_steps[0]
@@ -120,6 +137,40 @@ class ReleaseAutomationContractTests(unittest.TestCase):
 
 
 class ReleaseBehaviorTests(unittest.TestCase):
+    def test_version_branch_authorization_allows_first_run_and_verified_reruns(self) -> None:
+        api = FakeVersionBranchClient(branch_sha=None, pulls=[])
+        authorize_version_branch_update(api, "package-release-app")
+
+        api.branch_sha = "b" * 40
+        api.pulls = [managed_version_pr("b" * 40)]
+        authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls[0].update(state="closed", merged=True, merged_at="2026-10-24T00:00:00Z")
+        authorize_version_branch_update(api, "package-release-app")
+
+    def test_version_branch_authorization_rejects_preexisting_unverified_state(self) -> None:
+        api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[])
+        with self.assertRaisesRegex(ReleaseError, "no matching managed PR"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("b" * 40, author="ordinary-user")]
+        with self.assertRaisesRegex(ReleaseError, "configured release App"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("c" * 40)]
+        with self.assertRaisesRegex(ReleaseError, "does not match the PR head"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("b" * 40)]
+        api.commit_author = "ordinary-user"
+        with self.assertRaisesRegex(ReleaseError, "not authored by the configured release App"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("b" * 40, state="closed", merged=False)]
+        api.commit_author = "package-release-app[bot]"
+        with self.assertRaisesRegex(ReleaseError, "not open or confirmed merged"):
+            authorize_version_branch_update(api, "package-release-app")
+
     def test_lufa_version_command_runs_validated_generation_without_write_credentials(self) -> None:
         sha = "a" * 40
         with patch.dict(
@@ -357,6 +408,54 @@ class FakePullClient:
         if method == "GET" and endpoint == "pulls/42":
             return 200, self.pull
         return 404, None
+
+
+class FakeVersionBranchClient:
+    def __init__(self, *, branch_sha: str | None, pulls: list[dict]) -> None:
+        self.branch_sha = branch_sha
+        self.pulls = pulls
+        self.commit_author = "package-release-app[bot]"
+        self.requests: list[tuple[str, str]] = []
+
+    def request(self, method: str, endpoint: str, payload: dict | None = None):
+        self.requests.append((method, endpoint))
+        if method != "GET" or payload is not None:
+            raise AssertionError("authorization preflight must be read-only")
+        if endpoint == "git/ref/heads/changeset-release/main":
+            if self.branch_sha is None:
+                return 404, None
+            return 200, {"object": {"sha": self.branch_sha}}
+        if endpoint.startswith("pulls?"):
+            return 200, self.pulls
+        if endpoint.startswith("commits/"):
+            return 200, {
+                "author": {"login": self.commit_author},
+                "committer": {"login": self.commit_author},
+                "commit": {"message": "build(release): update package versions"},
+            }
+        raise AssertionError(f"unexpected API request: {endpoint}")
+
+
+def managed_version_pr(
+    head_sha: str,
+    *,
+    author: str = "package-release-app[bot]",
+    state: str = "open",
+    merged: bool = False,
+) -> dict:
+    return {
+        "state": state,
+        "merged": merged,
+        "merged_at": None,
+        "title": "build(release): update package versions",
+        "user": {"login": author},
+        "head": {
+            "ref": "changeset-release/main",
+            "sha": head_sha,
+            "repo": {"full_name": "grasdouble/Jarvis"},
+        },
+        "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},
+    }
 
 
 def valid_pull_request() -> dict:
