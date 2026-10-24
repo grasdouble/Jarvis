@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import yaml
 
-from create_version_pr import authorize_branch_update
+from run_changeset_version import run as run_changeset_version
 from release_common import (
     GitHubReleaseClient,
     PackageRelease,
@@ -59,6 +59,27 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             "needs.detect.outputs.pending == 'true'",
             document["jobs"]["version-pr"]["if"],
         )
+        version_pr = document["jobs"]["version-pr"]
+        steps = version_pr["steps"]
+        preflight = next(step for step in steps if step.get("name") == "Verify trusted event and exact checkout revision")
+        app_token = next(i for i, step in enumerate(steps) if step.get("id") == "app")
+        action_index = next(i for i, step in enumerate(steps) if "changesets-release" in step.get("uses", ""))
+        preflight_index = steps.index(preflight)
+        self.assertLess(preflight_index, app_token)
+        self.assertLess(preflight_index, action_index)
+        self.assertIn("refs/heads/main", preflight["run"])
+        self.assertIn("git rev-parse HEAD", preflight["run"])
+        self.assertIn("$CHECKOUT_SHA\" = \"$EVENT_SHA", preflight["run"])
+        self.assertEqual({"EVENT_REF": "${{ github.ref }}", "EVENT_SHA": "${{ github.sha }}"}, preflight["env"])
+        action_steps = [step for step in version_pr["steps"] if "uses" in step and "changesets-release" in step["uses"]]
+        self.assertEqual(1, len(action_steps))
+        action_step = action_steps[0]
+        self.assertRegex(action_step["uses"], r"@([0-9a-f]{40})$")
+        self.assertEqual("", action_step["with"]["publish-command"])
+        self.assertEqual("false", action_step["with"]["create-github-releases"])
+        self.assertIn("run_changeset_version.py", action_step["with"]["version-command"])
+        self.assertIn("release-token", action_step["with"])
+        self.assertNotIn("packages", version_pr["permissions"])
 
     def test_release_workflow_only_handles_a_merged_changesets_version_pr(self) -> None:
         document = yaml.load(
@@ -70,19 +91,16 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         condition = release_job["if"]
         self.assertIn("pull_request.merged", condition)
         self.assertIn("changesets/version", condition)
+        self.assertIn("changeset-release/main", condition)
         self.assertIn("base.ref == 'main'", condition)
         self.assertIn("head.repo.full_name == 'grasdouble/Jarvis'", condition)
         self.assertEqual(
             {"contents": "write", "pull-requests": "read"}, release_job["permissions"]
         )
 
-    def test_release_and_version_pr_logic_are_local_reviewed_scripts(self) -> None:
-        self.assertTrue((ROOT / "scripts/release/create_version_pr.py").is_file())
+    def test_release_logic_is_local_and_version_generation_uses_validated_runner(self) -> None:
+        self.assertTrue((ROOT / "scripts/release/run_changeset_version.py").is_file())
         self.assertTrue((ROOT / "scripts/release/publish_releases.py").is_file())
-        version_script = (ROOT / "scripts/release/create_version_pr.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("--force", version_script)
 
     def test_credentials_and_destinations_are_documented_without_registry_publication(
         self,
@@ -102,6 +120,34 @@ class ReleaseAutomationContractTests(unittest.TestCase):
 
 
 class ReleaseBehaviorTests(unittest.TestCase):
+    def test_lufa_version_command_runs_validated_generation_without_write_credentials(self) -> None:
+        sha = "a" * 40
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_SHA": sha,
+                "GH_TOKEN": "app-token",
+                "GITHUB_TOKEN": "app-token",
+                "GH_ENTERPRISE_TOKEN": "other-token",
+            },
+            clear=True,
+        ), patch("run_changeset_version.safe_process") as process:
+            run_changeset_version()
+
+        self.assertEqual(3, process.call_count)
+        for call in process.call_args_list:
+            self.assertNotIn("GH_TOKEN", call.kwargs["env"])
+            self.assertNotIn("GITHUB_TOKEN", call.kwargs["env"])
+            self.assertNotIn("GH_ENTERPRISE_TOKEN", call.kwargs["env"])
+        self.assertEqual(["pnpm", "changeset", "version"], process.call_args_list[0].args[0])
+        self.assertEqual(["pnpm", "install", "--lockfile-only"], process.call_args_list[1].args[0])
+        self.assertEqual(sha, process.call_args_list[2].args[0][-1])
+
+    def test_lufa_version_command_rejects_missing_base_revision(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ReleaseError, "GITHUB_SHA"):
+                run_changeset_version()
+
     def test_git_environment_replaces_personal_credentials_with_the_supplied_app_token(
         self,
     ) -> None:
@@ -169,6 +215,9 @@ class ReleaseBehaviorTests(unittest.TestCase):
 
     def test_release_requires_the_configured_app_merged_same_repo_version_pr(self) -> None:
         client = FakePullClient(valid_pull_request())
+        verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
+
+        client.pull["head"]["ref"] = "changeset-release/main"
         verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
 
         client.pull["user"]["login"] = "human-user"
@@ -242,59 +291,6 @@ class ReleaseBehaviorTests(unittest.TestCase):
             publish_release(client, release, "a" * 40)
 
         self.assertEqual({}, client.tags)
-
-    def test_version_branch_updates_require_an_app_owned_open_or_merged_pr(self) -> None:
-        open_pull = version_pull(state="open", merged=False)
-        authorize_branch_update(open_pull, None, "b" * 40, "a" * 40, "package-release-app")
-        authorize_branch_update(
-            None,
-            version_pull(state="closed", merged=True),
-            "b" * 40,
-            "a" * 40,
-            "package-release-app",
-        )
-        authorize_branch_update(None, None, "a" * 40, "a" * 40, "package-release-app")
-
-        with self.assertRaisesRegex(ReleaseError, "not owned by the configured"):
-            authorize_branch_update(
-                version_pull(state="open", merged=False, author="human"),
-                None,
-                "b" * 40,
-                "a" * 40,
-                "package-release-app",
-            )
-        with self.assertRaisesRegex(ReleaseError, "will not be reopened"):
-            authorize_branch_update(
-                None,
-                version_pull(state="closed", merged=False),
-                "b" * 40,
-                "a" * 40,
-                "package-release-app",
-            )
-        with self.assertRaisesRegex(ReleaseError, "refusing to overwrite"):
-            authorize_branch_update(None, None, "b" * 40, "a" * 40, "package-release-app")
-
-    def test_merged_list_response_authorizes_reserved_branch_update(self) -> None:
-        # GitHub's list-pulls endpoint reports `merged: null` even for a merged
-        # PR; `merged_at` is the list response's merge evidence.
-        merged_list_response = version_pull(state="closed", merged=None)
-        merged_list_response["merged_at"] = "2026-10-20T15:29:15Z"
-
-        authorize_branch_update(
-            None, merged_list_response, "b" * 40, "a" * 40, "package-release-app"
-        )
-
-        closed_unmerged_list_response = version_pull(state="closed", merged=None)
-        closed_unmerged_list_response["merged_at"] = None
-        with self.assertRaisesRegex(ReleaseError, "will not be reopened"):
-            authorize_branch_update(
-                None,
-                closed_unmerged_list_response,
-                "b" * 40,
-                "a" * 40,
-                "package-release-app",
-            )
-
 
 def artifact(package: str, version: str) -> PackageRelease:
     return PackageRelease(
@@ -375,14 +371,6 @@ def valid_pull_request() -> dict:
         },
         "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},
     }
-
-
-def version_pull(*, state: str, merged: bool, author: str = "package-release-app[bot]") -> dict:
-    pull = valid_pull_request()
-    pull["state"] = state
-    pull["merged"] = merged
-    pull["user"]["login"] = author
-    return pull
 
 
 if __name__ == "__main__":

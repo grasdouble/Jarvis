@@ -56,7 +56,7 @@ In the `Jarvis` repository, open **Settings → Environments → New environment
 package-releases
 ```
 
-The two release workflows reference this environment directly. Add these **environment variables** (not repository-level variables):
+The two release workflows reference this environment directly. The version-PR job invokes the pinned Lufa Changesets release action from trusted `main`; the action is configured with an empty publish command and GitHub Releases disabled. The existing post-merge workflow remains the only path that creates package tags and GitHub Releases. Add these **environment variables** (not repository-level variables):
 
 | Variable | Value and where to find it |
 | --- | --- |
@@ -74,7 +74,7 @@ Do not add an environment approval gate or ruleset bypass for this setup. Existi
 
 ## 5. Verify safely
 
-The [Package version PR workflow](../.github/workflows/package-version-pr.yml) runs from trusted `main` when Changesets are detected. The [Package releases workflow](../.github/workflows/package-releases.yml) runs only after a `changesets/version` PR is confirmed merged into `main`.
+The [Package version PR workflow](../.github/workflows/package-version-pr.yml) runs from trusted `main` when Changesets are detected and uses the immutable Lufa action with publication disabled. It creates or updates a reviewable `changeset-release/main` PR; the action's built-in force update is limited to that generated branch. The previously closed, unmerged #195 uses `changesets/version`, which the new action does not target. The [Package releases workflow](../.github/workflows/package-releases.yml) runs only after a supported version PR is confirmed merged into `main`.
 
 For a real package change, verify the version workflow's environment checks, App-token creation, and App slug/installation identity check. A successful run that only validates credentials does **not** prove that it created or updated a version PR. Actual version-PR and post-merge tag/Release writes are verified only when a legitimate package Changeset flows through the reviewed version PR and its protected merge. Do not add an artificial package bump or test Release to exercise production credentials.
 

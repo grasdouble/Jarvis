@@ -19,7 +19,8 @@ jobs:
       github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == 'grasdouble/Jarvis' &&
-      github.event.pull_request.head.ref == 'changesets/version'
+      (github.event.pull_request.head.ref == 'changeset-release/main' ||
+       github.event.pull_request.head.ref == 'changesets/version')
     environment: package-releases
     runs-on: ubuntu-24.04
     timeout-minutes: 20
