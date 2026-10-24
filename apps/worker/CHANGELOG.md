@@ -1,0 +1,12 @@
+# @jarvis/worker
+
+## 0.0.1
+
+### Patch Changes
+
+- Updated dependencies [0137ae3]
+- Updated dependencies [e258d63]
+- Updated dependencies [493b5bf]
+  - @jarvis/domain@0.1.0
+  - @jarvis/queue@0.1.0
+  - @jarvis/contracts@0.0.1
