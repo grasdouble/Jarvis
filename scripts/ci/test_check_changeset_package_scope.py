@@ -41,6 +41,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
 
     def test_every_changed_workspace_requires_its_own_changeset_coverage(self):
         error = changeset_coverage_error({"@jarvis/api", "@jarvis/domain"}, [{"@jarvis/api"}])
+        self.assertIsNotNone(error)
         self.assertIn("@jarvis/domain", error)
 
     def test_no_changed_versionable_packages_needs_no_changeset(self):
