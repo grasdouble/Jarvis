@@ -167,7 +167,7 @@ def authorize_version_branch_update(api, app_slug: str) -> None:
         or not isinstance(commit_author, dict)
         or commit_author.get("login") != f"{app_slug}[bot]"
         or not isinstance(commit_committer, dict)
-        or commit_committer.get("login") != f"{app_slug}[bot]"
+        or commit_committer.get("login") not in {f"{app_slug}[bot]", "web-flow"}
         or not isinstance(commit.get("message"), str)
         or commit["message"].splitlines()[0] != VERSION_PR_TITLE
     ):

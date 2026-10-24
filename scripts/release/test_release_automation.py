@@ -178,6 +178,46 @@ class ReleaseBehaviorTests(unittest.TestCase):
         api.pulls[0].update(state="closed", merged=True, merged_at="2026-10-24T00:00:00Z")
         authorize_version_branch_update(api, "package-release-app")
 
+    def test_version_branch_accepts_github_web_flow_committer_for_app_authored_commit(self) -> None:
+        """GitHub API evidence: PR + commit author are the App; committer is web-flow."""
+        api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[managed_version_pr("b" * 40)])
+        api.commit_author = "package-release-app[bot]"
+        api.commit_committer = "web-flow"
+
+        authorize_version_branch_update(api, "package-release-app")
+
+    def test_version_branch_committer_and_commit_author_are_fail_closed(self) -> None:
+        for label, committer, author in (
+            ("unknown committer", "ordinary-user", "package-release-app[bot]"),
+            ("missing committer", None, "package-release-app[bot]"),
+            ("missing commit author", "web-flow", None),
+            ("non-App commit author", "web-flow", "ordinary-user"),
+        ):
+            with self.subTest(case=label):
+                api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[managed_version_pr("b" * 40)])
+                api.commit_author = author
+                api.commit_committer = committer
+                with self.assertRaisesRegex(ReleaseError, "not authored by the configured release App"):
+                    authorize_version_branch_update(api, "package-release-app")
+
+    def test_version_branch_web_flow_exception_does_not_relax_managed_pr_guards(self) -> None:
+        for label, mutate, expected_error in (
+            ("PR owner", lambda api: api.pulls[0]["user"].update(login="ordinary-user"), "configured release App"),
+            ("PR title", lambda api: api.pulls[0].update(title="unexpected"), "configured release App"),
+            ("head SHA", lambda api: api.pulls[0]["head"].update(sha="c" * 40), "does not match the PR head SHA"),
+        ):
+            with self.subTest(case=label):
+                api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[managed_version_pr("b" * 40)])
+                api.commit_committer = "web-flow"
+                mutate(api)
+                with self.assertRaisesRegex(ReleaseError, expected_error):
+                    authorize_version_branch_update(api, "package-release-app")
+
+        api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[managed_version_pr("b" * 40)])
+        api.commit_committer = "web-flow"
+        with self.assertRaisesRegex(ReleaseError, "not found uniquely"):
+            verify_release_branch_ruleset(FakeRulesetClient([]))
+
     def test_version_branch_authorization_rejects_preexisting_unverified_state(self) -> None:
         api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[])
         with self.assertRaisesRegex(ReleaseError, "no matching managed PR"):
@@ -445,7 +485,8 @@ class FakeVersionBranchClient:
     def __init__(self, *, branch_sha: str | None, pulls: list[dict]) -> None:
         self.branch_sha = branch_sha
         self.pulls = pulls
-        self.commit_author = "package-release-app[bot]"
+        self.commit_author: str | None = "package-release-app[bot]"
+        self.commit_committer: str | None = "package-release-app[bot]"
         self.requests: list[tuple[str, str]] = []
 
     def request(self, method: str, endpoint: str, payload: dict | None = None):
@@ -460,8 +501,8 @@ class FakeVersionBranchClient:
             return 200, self.pulls
         if endpoint.startswith("commits/"):
             return 200, {
-                "author": {"login": self.commit_author},
-                "committer": {"login": self.commit_author},
+                "author": {"login": self.commit_author} if self.commit_author is not None else None,
+                "committer": {"login": self.commit_committer} if self.commit_committer is not None else None,
                 "commit": {"message": "build(release): update package versions"},
             }
         raise AssertionError(f"unexpected API request: {endpoint}")
