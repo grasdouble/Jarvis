@@ -25,6 +25,30 @@ test("an active stop prevents dispatch after a task is admitted", async () => {
   assert.ok(preventionMs <= 2_000, `fake durable read prevented dispatch in ${preventionMs.toFixed(2)} ms (test abstraction)`);
 });
 
+test("stop during the initial admission read prevents later dispatch", async () => {
+  let releaseAdmission;
+  let admissionStarted;
+  const admission = new Promise((resolve) => { releaseAdmission = resolve; });
+  const started = new Promise((resolve) => { admissionStarted = resolve; });
+  const events = [];
+  const executor = worker.createStopAwareExecutor({
+    readStop: async () => { admissionStarted(); return admission; },
+    dispatch: async () => { events.push("dispatch"); return "unexpected"; },
+    revokeCapability: async () => events.push("revoked"),
+    stopSandbox: async () => { events.push("sandbox-stopped"); return "stopped"; },
+    recordAcceptedEffectUnknown: async () => events.push("unknown"),
+  });
+
+  const execution = executor.execute({ taskId: "initial-admission-stop", projectId: "p1", capability: "cap" });
+  await started;
+  await executor.stop("p1");
+  releaseAdmission({ stopped: false, version: 1 });
+
+  assert.deepEqual(await execution, { kind: "stopped" });
+  assert.deepEqual(events, ["unknown", "revoked", "sandbox-stopped"]);
+  assert.deepEqual(executor.activeTaskIds(), []);
+});
+
 test("durable stop persisted during a long dispatch is observed without a manual stop call", async () => {
   let stopped = false;
   let dispatchedSignal;
@@ -58,13 +82,15 @@ test("durable stop persisted during a long dispatch is observed without a manual
 });
 
 test("unresponsive sandbox-manager returns unknown at its bounded test timeout", async () => {
+  let dispatchStarted;
+  const started = new Promise((resolve) => { dispatchStarted = resolve; });
   const executor = worker.createStopAwareExecutor({
-    readStop: async () => ({ stopped: false, version: 1 }), dispatch: async () => new Promise(() => {}),
+    readStop: async () => ({ stopped: false, version: 1 }), dispatch: async () => { dispatchStarted(); return new Promise(() => {}); },
     revokeCapability: async () => undefined, stopSandbox: async () => new Promise(() => {}),
     recordAcceptedEffectUnknown: async () => undefined,
   }, { shutdownTimeoutMs: 20 });
   void executor.execute({ taskId: "task-3", projectId: "p1", capability: "c" });
-  while (executor.activeTaskIds().length === 0) await yieldTurn();
+  await started;
   const start = performance.now();
   await executor.stop();
   const elapsed = performance.now() - start;
@@ -74,17 +100,19 @@ test("unresponsive sandbox-manager returns unknown at its bounded test timeout",
 test("active stop revokes the capability, aborts dispatch and terminates the sandbox", async () => {
   const events = [];
   let finish;
+  let dispatchStarted;
+  const started = new Promise((resolve) => { dispatchStarted = resolve; });
   const executor = worker.createStopAwareExecutor({
     readStop: async () => ({ stopped: false, version: 1 }),
-    dispatch: async (_capability, signal) => new Promise((resolve) => {
+    dispatch: async (_capability, signal) => { dispatchStarted(); return new Promise((resolve) => {
       signal.addEventListener("abort", () => { events.push("aborted"); finish = resolve; }, { once: true });
-    }),
+    }); },
     revokeCapability: async (task) => { events.push(`revoked:${task}`); },
     stopSandbox: async (task, timeout) => { events.push(`sandbox:${task}:${timeout}`); return "stopped"; },
     recordAcceptedEffectUnknown: async (task) => { events.push(`unknown:${task}`); },
   });
   const execution = executor.execute({ taskId: "task-2", projectId: "p1", capability: "secret-capability" });
-  while (executor.activeTaskIds().length === 0) await yieldTurn();
+  await started;
   const startedAt = performance.now();
   await executor.stop("p1");
   const shutdownMs = performance.now() - startedAt;
@@ -96,14 +124,17 @@ test("active stop revokes the capability, aborts dispatch and terminates the san
 
 test("project stop leaves other projects running", async () => {
   const stopped = [];
+  let dispatches = 0;
+  let bothDispatched;
+  const started = new Promise((resolve) => { bothDispatched = resolve; });
   const executor = worker.createStopAwareExecutor({
-    readStop: async () => ({ stopped: false, version: 1 }), dispatch: async () => new Promise(() => {}),
+    readStop: async () => ({ stopped: false, version: 1 }), dispatch: async () => { if (++dispatches === 2) bothDispatched(); return new Promise(() => {}); },
     revokeCapability: async (task) => stopped.push(task), stopSandbox: async () => "stopped",
     recordAcceptedEffectUnknown: async () => undefined,
   }, { shutdownTimeoutMs: 5 });
   void executor.execute({ taskId: "one", projectId: "p1", capability: "c1" });
   void executor.execute({ taskId: "two", projectId: "p2", capability: "c2" });
-  while (executor.activeTaskIds().length < 2) await yieldTurn();
+  await started;
   await executor.stop("p1");
   assert.deepEqual(stopped, ["one"]);
   assert.deepEqual(executor.activeTaskIds(), ["one", "two"]);

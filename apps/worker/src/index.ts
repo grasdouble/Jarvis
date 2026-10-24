@@ -55,8 +55,6 @@ export function createStopAwareExecutor<C, R>(ports: StopAwareExecutionPorts<C, 
 
   return {
     async execute(task: StopAwareTask<C>): Promise<{ readonly kind: "dispatched"; readonly result: R } | { readonly kind: "stopped" | "stop_unknown" }> {
-      const admission = await ports.readStop(task.projectId).catch(() => null);
-      if (admission === null || admission.stopped) return { kind: admission === null ? "stop_unknown" : "stopped" };
       const controller = new AbortController();
       const running = { controller, projectId: task.projectId, unknownRecorded: false };
       active.set(task.taskId, running);
@@ -64,6 +62,11 @@ export function createStopAwareExecutor<C, R>(ports: StopAwareExecutionPorts<C, 
       let finish!: () => void;
       const done = new Promise<void>((resolve) => { finish = resolve; });
       try {
+        // Register before the first asynchronous admission read so stop() can
+        // abort this execution even while durable admission is unresolved.
+        const admission = await ports.readStop(task.projectId).catch(() => null);
+        if (controller.signal.aborted) return { kind: "stopped" };
+        if (admission === null || admission.stopped) return { kind: admission === null ? "stop_unknown" : "stopped" };
         // Final gate deliberately has no await between this read and invoking provider dispatch.
         const final = await ports.readStop(task.projectId).catch(() => null);
         if (final === null || final.stopped) return { kind: final === null ? "stop_unknown" : "stopped" };

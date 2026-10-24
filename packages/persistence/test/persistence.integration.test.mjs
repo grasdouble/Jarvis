@@ -97,6 +97,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
   let lockClient;
   let fixtureCommitted = false;
   let testFailure;
+  let cleanupFailure;
   try {
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
     assert.match(database.name, /^jarvis_issue8_/);
@@ -745,7 +746,6 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     );
   } catch (error) {
     testFailure = error;
-    throw error;
   } finally {
     try {
       if (client) {
@@ -759,6 +759,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       if (fixtureCommitted) {
         client = await pool.connect();
         let cleanupCommitted = false;
+        let cleanupVerified = false;
         try {
           await client.query("BEGIN");
           try {
@@ -804,16 +805,11 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
               END LOOP;
             END $$
             `);
+            cleanupVerified = true;
           } catch (cleanupError) {
-            if (testFailure) {
-              throw new AggregateError(
-                [testFailure, cleanupError],
-                "integration test failed and fixture cleanup could not verify expected row counts",
-              );
-            }
-            throw cleanupError;
+            cleanupFailure = cleanupError;
           }
-          await client.query(`
+          if (cleanupVerified) await client.query(`
             DO $$
             DECLARE truncate_tables text;
             BEGIN
@@ -840,4 +836,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await pool.end();
     }
   }
+  if (testFailure && cleanupFailure) {
+    throw new AggregateError([testFailure, cleanupFailure], "integration test failed and fixture cleanup could not verify expected row counts");
+  }
+  if (testFailure) throw testFailure;
+  if (cleanupFailure) throw cleanupFailure;
 });
