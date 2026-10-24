@@ -42,6 +42,6 @@ The API/UI image and its authentication are not implemented in the current works
 
 ## Recovery and limitations
 
-The active `default` profile was observed running before implementation; it is intentionally untouched. If `jarvis` already exists, inspect it manually and do not delete it to make the script pass. Recreate a profile only under an explicit owner-directed recovery procedure after preserving any data. The bootstrap checks an exact Colima/Lima/CLI version and fails closed on drift; it does not install or upgrade host tools.
+The active `default` profile was observed running before implementation; it is intentionally untouched. If `jarvis` already exists, inspect it manually and do not delete it to make the script pass. Recreate a profile only under an explicit owner-directed recovery procedure after preserving any data. The bootstrap requires exact Colima and Lima versions, and accepts Docker CLI versions compatible with major 29 (29.x.y); Docker CLI 29.9.1 remains the selected baseline. It fails closed on other version drift and does not install or upgrade host tools.
 
 No runtime profile is automatically started by CI. Static tests cover the checked-in configuration and mocked host guards; effective VM mounts, canary denial, engine package pins, port-forward behavior, authenticated access, and LAN reachability require direct platform evidence from the selected Mac and remain separate from static checks.
