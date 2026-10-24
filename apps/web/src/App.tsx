@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactElement } from "react";
+import { DashboardPanel, type DashboardView } from "./DashboardPanel.js";
 
 interface SessionView {
   readonly authenticated: boolean;
@@ -8,6 +9,7 @@ interface SessionView {
 }
 
 const SESSION_PATH = "/api/v1/session";
+const DASHBOARD_PATH = "/api/v1/dashboard";
 
 async function readResponse(response: Response): Promise<SessionView | { readonly error?: string }> {
   try {
@@ -24,6 +26,7 @@ export function App(): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const initialSessionRequest = useRef<Promise<SessionView> | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardView | null>(null);
 
   async function fetchSession(): Promise<SessionView> {
     const response = await fetch(SESSION_PATH, { credentials: "same-origin", cache: "no-store" });
@@ -114,6 +117,34 @@ export function App(): ReactElement {
     }
   }
 
+  useEffect(() => {
+    if (!session?.authenticated) { setDashboard(null); return; }
+    let active = true;
+    void fetch(DASHBOARD_PATH, { credentials: "same-origin", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Dashboard unavailable");
+        return response.json() as Promise<DashboardView>;
+      })
+      .then((value) => { if (active) setDashboard(value); })
+      .catch(() => { if (active) setDashboard({ error: "Operational data is unavailable." }); });
+    return (): void => { active = false; };
+  }, [session?.authenticated]);
+
+  async function downloadExport(format: "json" | "txt"): Promise<void> {
+    try {
+      const response = await fetch(`${DASHBOARD_PATH}/export.${format}`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error("Export unavailable");
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `jarvis-dashboard.${format}`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch {
+      setError("Dashboard export is unavailable.");
+    }
+  }
+
   if (session === null) {
     return <main aria-busy="true"><h1>JARVIS</h1><p role="status">Checking local owner session…</p>{error && <p role="alert">{error}</p>}</main>;
   }
@@ -123,6 +154,7 @@ export function App(): ReactElement {
       <main>
         <h1>JARVIS</h1>
         <p>Signed in as the local owner.</p>
+        <DashboardPanel dashboard={dashboard} onExport={(format) => void downloadExport(format)} />
         <button type="button" onClick={() => void logout()} disabled={busy}>Sign out</button>
         {error && <p role="alert">{error}</p>}
       </main>

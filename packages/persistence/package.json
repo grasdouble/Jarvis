@@ -3,6 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "scripts": {
     "build": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/queue run build && tsc",
     "typecheck": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/queue run build && tsc --noEmit",

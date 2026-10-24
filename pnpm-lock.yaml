@@ -193,6 +193,9 @@ importers:
       '@jarvis/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@jarvis/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
 
   apps/llm-gateway:
     dependencies:
