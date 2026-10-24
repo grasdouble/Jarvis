@@ -2,9 +2,47 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createOperationalDashboardBoundary } from "../dist/dashboard.js";
 import * as api from "../dist/index.js";
+import { once } from "node:events";
 
 test("dashboard provides a routable authenticated read-only HTTP adapter", () => {
   assert.equal(typeof api.createOperationalDashboardHttpHandler, "function");
+});
+
+test("running HTTP server mounts authenticated dashboard and both exports end-to-end", async (context) => {
+  assert.equal(typeof api.createOperationalDashboardServer, "function", "API package exposes a runnable HTTP composition");
+  const route = api.createOperationalDashboardHttpHandler(createOperationalDashboardBoundary({ list: async () => [project] }, {
+    authorizeRead: async (request) => request.headers.cookie === "jarvis-session=valid"
+      ? { authorized: true, auth: { ownerId: "owner" }, headers: { "set-cookie": ["first=1; HttpOnly", "second=2; HttpOnly"] } }
+      : { authorized: false, response: { status: 401, body: { error: "unauthenticated" } } },
+  }));
+  const server = api.createOperationalDashboardServer({ dashboard: route });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const denied = await globalThis.fetch(`${origin}/api/v1/dashboard`);
+  assert.equal(denied.status, 401);
+  assert.match(denied.headers.get("content-type") ?? "", /^application\/json/);
+  assert.equal(denied.headers.get("cache-control"), "no-store");
+  const options = { headers: { cookie: "jarvis-session=valid" } };
+  const dashboard = await globalThis.fetch(`${origin}/api/v1/dashboard`, options);
+  assert.equal(dashboard.status, 200);
+  assert.deepEqual(dashboard.headers.getSetCookie(), ["first=1; HttpOnly", "second=2; HttpOnly"]);
+  assert.equal(dashboard.headers.get("cache-control"), "no-store");
+  assert.deepEqual((await dashboard.json()).projects[0].id, "p1");
+  const json = await globalThis.fetch(`${origin}/api/v1/dashboard/export.json`, options);
+  assert.equal(json.status, 200);
+  assert.match(json.headers.get("content-type") ?? "", /^application\/json/);
+  assert.match(await json.text(), /persisted operational read model/);
+  const text = await globalThis.fetch(`${origin}/api/v1/dashboard/export.txt`, options);
+  assert.equal(text.status, 200);
+  assert.match(text.headers.get("content-type") ?? "", /^text\/plain/);
+  assert.match(await text.text(), /Project: owner\/repo/);
+  const mutation = await globalThis.fetch(`${origin}/api/v1/dashboard`, { method: "POST", ...options });
+  assert.equal(mutation.status, 405);
+  assert.equal(mutation.headers.get("allow"), "GET");
 });
 
 test("HTTP adapter routes authenticated dashboard and both exports, rejects mutations", async () => {
