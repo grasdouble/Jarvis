@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -340,17 +341,23 @@ def is_working_tree_changesets_version_candidate(base_sha: str, root: Path) -> b
     return _is_changesets_version_pr(base_sha, root, working_tree_changes(base_sha, root))
 
 
-def run_gate(base_sha: str, root: Path) -> None:
+def run_gate(
+    base_sha: str,
+    root: Path,
+    excluded_paths: list[str] | None = None,
+    workspace_head_sha: str = "HEAD",
+) -> bool:
     if is_changesets_version_pr(base_sha, root):
         print(
             "Generated Changesets version PR detected: its consumed release entries and generated "
             "version/changelog changes are exempt from the source-PR Changesets gate."
         )
-        return
+        return True
     subprocess.run(
         ["pnpm", "changeset", "status", f"--since={base_sha}"], cwd=root, check=True
     )
-    validate(base_sha, root)
+    validate(base_sha, root, excluded_paths, workspace_head_sha)
+    return False
 
 
 def run_working_tree_gate(base_sha: str, root: Path) -> None:
@@ -373,6 +380,14 @@ def main() -> int:
         metavar="GITHUB_SHA",
         help="derive the current target from the checked-out GitHub PR merge candidate",
     )
+    parser.add_argument(
+        "--exclude-path", action="append", default=[],
+        help="Workflow-configured workspace path glob exempt only when all changed paths match",
+    )
+    parser.add_argument(
+        "--workspace-head-sha",
+        help="Exact PR head used for head-only workspace discovery and changed-path mapping",
+    )
     args = parser.parse_args()
     try:
         root = Path.cwd()
@@ -384,7 +399,13 @@ def main() -> int:
         if args.working_tree_generated_candidate:
             run_working_tree_gate(base_sha, root)
         else:
-            run_gate(base_sha, root)
+            generated = run_gate(
+                base_sha, root, args.exclude_path, args.workspace_head_sha or "HEAD"
+            )
+            output = os.environ.get("GITHUB_OUTPUT")
+            if output:
+                with Path(output).open("a", encoding="utf-8") as github_output:
+                    github_output.write(f"generated-version-pr={str(generated).lower()}\n")
     except (OSError, subprocess.CalledProcessError, ValueError, yaml.YAMLError) as error:
         print(f"Changeset PR gate failed: {error}", file=sys.stderr)
         return 1

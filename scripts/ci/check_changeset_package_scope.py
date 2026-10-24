@@ -1,4 +1,4 @@
-"""Require a PR Changeset to cover at least one changed versionable workspace."""
+"""Require a PR Changeset for every changed versionable workspace."""
 
 from __future__ import annotations
 
@@ -23,9 +23,11 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout
 
 
-def changed_paths(base_sha: str, root: Path) -> list[tuple[str, PurePosixPath]]:
+def changed_paths(base_sha: str, root: Path, head_sha: str = "HEAD") -> list[tuple[str, PurePosixPath]]:
     """Return status/path pairs, disabling rename detection so both sides are visible."""
-    fields = _git(root, "diff", "--name-status", "-z", "--no-renames", f"{base_sha}...HEAD").split("\0")
+    fields = _git(
+        root, "diff", "--name-status", "-z", "--no-renames", f"{base_sha}...{head_sha}"
+    ).split("\0")
     changes: list[tuple[str, PurePosixPath]] = []
     index = 0
     while index < len(fields) and fields[index]:
@@ -36,6 +38,12 @@ def changed_paths(base_sha: str, root: Path) -> list[tuple[str, PurePosixPath]]:
             changes.append((status[0], PurePosixPath(path)))
         index += path_count
     return changes
+
+
+def changed_file_paths(base_sha: str, head_sha: str, root: Path) -> list[PurePosixPath]:
+    """Match the pinned Lufa action's diff-visible paths, including rename handling."""
+    fields = _git(root, "diff", "--name-only", "-z", f"{base_sha}...{head_sha}").split("\0")
+    return [PurePosixPath(path) for path in fields if path]
 
 
 def _workspace_manifest_paths(root: Path, ref: str, patterns: list[str]) -> list[PurePosixPath]:
@@ -134,17 +142,22 @@ def _path_matches_glob(path: str, pattern: str) -> bool:
     return re.match("".join(parts), path) is not None
 
 
-def workspace_packages(root: Path, ref: str = "HEAD") -> dict[PurePosixPath, str]:
-    """Discover versionable workspace packages at an exact Git revision."""
+def workspace_packages(
+    root: Path, ref: str = "HEAD", versionable_only: bool = True
+) -> dict[PurePosixPath, str]:
+    """Discover named workspace packages at an exact Git revision."""
     workspace = yaml.safe_load(_git(root, "show", f"{ref}:pnpm-workspace.yaml"))
-    try:
-        changeset_config = _package_data(root, ref, ".changeset/config.json")
-    except subprocess.CalledProcessError:
-        # The Changesets config may itself be introduced by the PR; use the
-        # candidate policy to classify the base-side workspace manifests.
-        changeset_config = _package_data(root, "HEAD", ".changeset/config.json")
-    private_versions = changeset_config.get("privatePackages", {}).get("version", False)
-    ignored = set(changeset_config.get("ignore", []))
+    if versionable_only:
+        try:
+            changeset_config = _package_data(root, ref, ".changeset/config.json")
+        except subprocess.CalledProcessError:
+            # Fall back only for legacy generated-release fixtures without candidate config.
+            changeset_config = _package_data(root, "HEAD", ".changeset/config.json")
+        private_versions = changeset_config.get("privatePackages", {}).get("version", False)
+        ignored = set(changeset_config.get("ignore", []))
+    else:
+        private_versions = True
+        ignored = set()
     packages: dict[PurePosixPath, str] = {}
     patterns = workspace.get("packages", [])
     for manifest_path in _workspace_manifest_paths(root, ref, patterns):
@@ -182,49 +195,74 @@ def parse_changeset(text: str) -> set[str] | None:
     return set(frontmatter)
 
 
+def head_changeset_targets(
+    root: Path, head_sha: str, changed_changeset_paths: Iterable[PurePosixPath]
+) -> set[str]:
+    """Return release targets from changed Changeset files as stored at exact PR head."""
+    targets: set[str] = set()
+    for path in changed_changeset_paths:
+        raw_path = path.as_posix()
+        if path.parent != PurePosixPath(".changeset") or path.suffix != ".md" or raw_path == ".changeset/README.md":
+            continue
+        parsed = parse_changeset(_git(root, "show", f"{head_sha}:{raw_path}"))
+        if parsed is not None:
+            targets.update(parsed)
+    return targets
+
+
 def changeset_coverage_error(changed: set[str], entries: list[set[str]]) -> str | None:
     if not changed:
         return None
-    if any(not targets for targets in entries):
-        return None
     covered = set().union(*entries) if entries else set()
-    if changed & covered:
+    missing = changed - covered
+    if not missing:
         return None
-    changed_list = ", ".join(sorted(changed))
+    changed_list = ", ".join(sorted(missing))
     if covered:
         covered_list = ", ".join(sorted(covered))
         return (
             f"Changed versionable workspaces ({changed_list}) are not targeted by the PR's Changesets "
-            f"({covered_list}). Add a Changeset for an impacted package, or an explicit empty Changeset "
-            "if the package changes have no release impact."
+            f"({covered_list}). Add a Changeset targeting each changed workspace."
         )
     return (
-        f"Changed versionable workspaces ({changed_list}) need a Changeset targeting an impacted package, "
-        "or an explicit empty Changeset if the changes have no release impact."
+        f"Changed versionable workspaces ({changed_list}) need individual Changeset coverage."
     )
 
 
-def validate(base_sha: str, root: Path) -> str:
-    changes = changed_paths(base_sha, root)
-    paths = [path for _, path in changes]
-    base_packages = workspace_packages(root, base_sha)
-    head_packages = workspace_packages(root, "HEAD")
-    changed = changed_workspace_names(paths, base_packages)
-    changed.update(changed_workspace_names(paths, head_packages))
-    if PurePosixPath("pnpm-workspace.yaml") in paths:
-        for package_root in base_packages.keys() | head_packages.keys():
-            base_name = base_packages.get(package_root)
-            head_name = head_packages.get(package_root)
-            if base_name != head_name:
-                if base_name:
-                    changed.add(base_name)
-                if head_name:
-                    changed.add(head_name)
+def validate(
+    base_sha: str,
+    root: Path,
+    excluded_paths: list[str] | None = None,
+    head_sha: str = "HEAD",
+) -> str:
+    changes = changed_paths(base_sha, root, head_sha)
+    paths = changed_file_paths(base_sha, head_sha, root)
+    head_packages = workspace_packages(root, head_sha, versionable_only=False)
+    head_names = set(head_packages.values())
+    changed_changeset_paths = [
+        path
+        for status, path in changes
+        if status != "D" and path.parent == PurePosixPath(".changeset") and path.suffix == ".md"
+    ]
+    stale_targets = head_changeset_targets(root, head_sha, changed_changeset_paths) - head_names
+    if stale_targets:
+        raise ValueError(
+            "Changesets at PR head target packages absent from the PR-head workspace set: "
+            + ", ".join(sorted(stale_targets))
+            + ". Remove stale targets."
+        )
+    excluded_paths = excluded_paths or []
+    changed: set[str] = set()
+    for package_root, name in head_packages.items():
+        package_paths = [path for path in paths if package_root in path.parents]
+        if any(
+            not any(_path_matches_glob(path.as_posix(), pattern) for pattern in excluded_paths)
+            for path in package_paths
+        ):
+            changed.add(name)
     entries = []
-    for status, path in changes:
-        if status == "D" or path.parent != PurePosixPath(".changeset") or path.suffix != ".md":
-            continue
-        parsed = parse_changeset((root / path).read_text(encoding="utf-8"))
+    for path in changed_changeset_paths:
+        parsed = parse_changeset(_git(root, "show", f"{head_sha}:{path.as_posix()}"))
         if parsed is not None:
             entries.append(parsed)
     error = changeset_coverage_error(changed, entries)
@@ -240,9 +278,13 @@ def validate(base_sha: str, root: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base_sha", help="Exact base commit SHA from the pull_request event")
+    parser.add_argument(
+        "--exclude-path", action="append", default=[],
+        help="Workflow-configured workspace path glob; exempt only when every changed path matches one",
+    )
     args = parser.parse_args()
     try:
-        validate(args.base_sha, Path.cwd())
+        validate(args.base_sha, Path.cwd(), args.exclude_path)
     except (OSError, subprocess.CalledProcessError, ValueError, yaml.YAMLError) as error:
         print(f"Changeset package coverage failed: {error}", file=sys.stderr)
         return 1
