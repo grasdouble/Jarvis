@@ -16,8 +16,6 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 REPOSITORY = "grasdouble/Jarvis"
-VERSION_BRANCH = "changesets/version"
-VERSION_PR_TITLE = "build(release): update package versions"
 GITHUB_API = "https://api.github.com"
 
 

@@ -50,14 +50,21 @@ jobs:
           ref: refs/heads/main
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify pinned Python and provisioned release App settings
+      - name: Verify trusted event and exact checkout revision
+        env:
+          EVENT_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          test "$EVENT_REF" = 'refs/heads/main' || { echo '::error::Release generation requires a main event.'; exit 1; }
+          CHECKOUT_SHA="$(git rev-parse HEAD)"
+          test "$CHECKOUT_SHA" = "$EVENT_SHA" || { echo '::error::The main checkout does not match the triggering event revision.'; exit 1; }
+      - name: Verify provisioned release App settings
         env:
           APP_CLIENT_ID: ${{ vars.PACKAGE_RELEASE_APP_CLIENT_ID }}
           APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
           INSTALLATION_ID: ${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}
           APP_PRIVATE_KEY: ${{ secrets.PACKAGE_RELEASE_APP_PRIVATE_KEY }}
         run: |
-          python3 -c 'import sys; assert sys.version_info[:2] == (3, 12)'
           test -n "$APP_CLIENT_ID" || { echo '::error::PACKAGE_RELEASE_APP_CLIENT_ID is not provisioned.'; exit 1; }
           test -n "$APP_SLUG" || { echo '::error::PACKAGE_RELEASE_APP_SLUG is not provisioned.'; exit 1; }
           test -n "$INSTALLATION_ID" || { echo '::error::PACKAGE_RELEASE_APP_INSTALLATION_ID is not provisioned.'; exit 1; }
@@ -92,13 +99,17 @@ jobs:
         run: |
           test "$ACTUAL_SLUG" = "$EXPECTED_SLUG" || { echo '::error::The token belongs to an unexpected GitHub App.'; exit 1; }
           test "$ACTUAL_INSTALLATION_ID" = "$EXPECTED_INSTALLATION_ID" || { echo '::error::The token belongs to an unexpected installation.'; exit 1; }
-      - name: Generate or update the reviewed version PR
+      - name: Verify release ruleset and authorize managed Changesets branch before Lufa writes
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF: ${{ github.ref }}
           PACKAGE_RELEASE_APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
-          PACKAGE_RELEASE_APP_INSTALLATION_ID: ${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}
-          RELEASE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
-          RELEASE_TOKEN_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
-        run: python3 scripts/release/create_version_pr.py
+        run: python3 scripts/release/authorize_version_branch.py
+      - name: Generate or update the reviewed version PR
+        uses: grasdouble/Lufa-CICD/actions/changesets-release@320fce890fbd7bcb347141648174d1c3f7b786ad # immutable Lufa action; wraps changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
+        with:
+          release-token: ${{ steps.app.outputs.token }}
+          version-command: python3 scripts/release/run_changeset_version.py
+          publish-command: ''
+          pr-title: 'build(release): update package versions'
+          commit-message: 'build(release): update package versions'
+          create-github-releases: 'false'

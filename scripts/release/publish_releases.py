@@ -140,7 +140,7 @@ def verify_merged_version_pr(
         or pull.get("merged") is not True
         or pull.get("merge_commit_sha") != merge_commit_sha
         or not isinstance(head, dict)
-        or head.get("ref") != "changesets/version"
+        or head.get("ref") not in {"changeset-release/main", "changesets/version"}
         or not isinstance(head_repo, dict)
         or head_repo.get("full_name") != "grasdouble/Jarvis"
         or not isinstance(base, dict)

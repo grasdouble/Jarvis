@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 import yaml
 
-from create_version_pr import authorize_branch_update
+from authorize_version_branch import (
+    authorize_version_branch_update,
+    verify_release_branch_ruleset,
+)
+from run_changeset_version import run as run_changeset_version
 from release_common import (
     GitHubReleaseClient,
     PackageRelease,
@@ -59,6 +63,49 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             "needs.detect.outputs.pending == 'true'",
             document["jobs"]["version-pr"]["if"],
         )
+        version_pr = document["jobs"]["version-pr"]
+        steps = version_pr["steps"]
+        preflight = next(step for step in steps if step.get("name") == "Verify trusted event and exact checkout revision")
+        app_token = next(i for i, step in enumerate(steps) if step.get("id") == "app")
+        identity_index = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Verify the installed package-release App identity"
+        )
+        action_index = next(i for i, step in enumerate(steps) if "changesets-release" in step.get("uses", ""))
+        preflight_index = steps.index(preflight)
+        self.assertLess(preflight_index, app_token)
+        self.assertLess(preflight_index, action_index)
+        self.assertIn("refs/heads/main", preflight["run"])
+        self.assertIn("git rev-parse HEAD", preflight["run"])
+        self.assertIn("$CHECKOUT_SHA\" = \"$EVENT_SHA", preflight["run"])
+        self.assertEqual({"EVENT_REF": "${{ github.ref }}", "EVENT_SHA": "${{ github.sha }}"}, preflight["env"])
+        branch_authorizer = next(
+            step
+            for step in steps
+            if step.get("name") == "Verify release ruleset and authorize managed Changesets branch before Lufa writes"
+        )
+        authorizer_index = steps.index(branch_authorizer)
+        self.assertLess(app_token, authorizer_index)
+        self.assertLess(identity_index, authorizer_index)
+        self.assertLess(authorizer_index, action_index)
+        self.assertEqual(
+            {
+                "GH_TOKEN": "${{ steps.app.outputs.token }}",
+                "PACKAGE_RELEASE_APP_SLUG": "${{ vars.PACKAGE_RELEASE_APP_SLUG }}",
+            },
+            branch_authorizer["env"],
+        )
+        self.assertEqual("python3 scripts/release/authorize_version_branch.py", branch_authorizer["run"])
+        action_steps = [step for step in version_pr["steps"] if "uses" in step and "changesets-release" in step["uses"]]
+        self.assertEqual(1, len(action_steps))
+        action_step = action_steps[0]
+        self.assertRegex(action_step["uses"], r"@([0-9a-f]{40})$")
+        self.assertEqual("", action_step["with"]["publish-command"])
+        self.assertEqual("false", action_step["with"]["create-github-releases"])
+        self.assertIn("run_changeset_version.py", action_step["with"]["version-command"])
+        self.assertIn("release-token", action_step["with"])
+        self.assertNotIn("packages", version_pr["permissions"])
 
     def test_release_workflow_only_handles_a_merged_changesets_version_pr(self) -> None:
         document = yaml.load(
@@ -70,19 +117,16 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         condition = release_job["if"]
         self.assertIn("pull_request.merged", condition)
         self.assertIn("changesets/version", condition)
+        self.assertIn("changeset-release/main", condition)
         self.assertIn("base.ref == 'main'", condition)
         self.assertIn("head.repo.full_name == 'grasdouble/Jarvis'", condition)
         self.assertEqual(
             {"contents": "write", "pull-requests": "read"}, release_job["permissions"]
         )
 
-    def test_release_and_version_pr_logic_are_local_reviewed_scripts(self) -> None:
-        self.assertTrue((ROOT / "scripts/release/create_version_pr.py").is_file())
+    def test_release_logic_is_local_and_version_generation_uses_validated_runner(self) -> None:
+        self.assertTrue((ROOT / "scripts/release/run_changeset_version.py").is_file())
         self.assertTrue((ROOT / "scripts/release/publish_releases.py").is_file())
-        version_script = (ROOT / "scripts/release/create_version_pr.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("--force", version_script)
 
     def test_credentials_and_destinations_are_documented_without_registry_publication(
         self,
@@ -102,6 +146,89 @@ class ReleaseAutomationContractTests(unittest.TestCase):
 
 
 class ReleaseBehaviorTests(unittest.TestCase):
+    def test_release_branch_ruleset_requires_unique_active_exact_scope_and_rules(self) -> None:
+        api = FakeRulesetClient([valid_release_ruleset()])
+        verify_release_branch_ruleset(api)
+
+        for label, mutate, expected_error in (
+            ("missing", lambda rules: rules.clear(), "not found uniquely"),
+            ("disabled", lambda rules: rules[0].update(enforcement="disabled"), "not active"),
+            ("wrong target", lambda rules: rules[0]["conditions"]["ref_name"].update(include=["refs/heads/main"]), "does not target exactly"),
+            ("missing rule", lambda rules: rules[0]["rules"].pop(), "missing required rules"),
+        ):
+            with self.subTest(case=label):
+                rules = [valid_release_ruleset()]
+                mutate(rules)
+                with self.assertRaisesRegex(ReleaseError, expected_error):
+                    verify_release_branch_ruleset(FakeRulesetClient(rules))
+
+        with self.assertRaisesRegex(ReleaseError, "not found uniquely"):
+            verify_release_branch_ruleset(
+                FakeRulesetClient([valid_release_ruleset(), valid_release_ruleset()])
+            )
+
+    def test_version_branch_authorization_allows_first_run_and_verified_reruns(self) -> None:
+        api = FakeVersionBranchClient(branch_sha=None, pulls=[])
+        authorize_version_branch_update(api, "package-release-app")
+
+        api.branch_sha = "b" * 40
+        api.pulls = [managed_version_pr("b" * 40)]
+        authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls[0].update(state="closed", merged=True, merged_at="2026-10-24T00:00:00Z")
+        authorize_version_branch_update(api, "package-release-app")
+
+    def test_version_branch_authorization_rejects_preexisting_unverified_state(self) -> None:
+        api = FakeVersionBranchClient(branch_sha="b" * 40, pulls=[])
+        with self.assertRaisesRegex(ReleaseError, "no matching managed PR"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("b" * 40, author="ordinary-user")]
+        with self.assertRaisesRegex(ReleaseError, "configured release App"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("c" * 40)]
+        with self.assertRaisesRegex(ReleaseError, "does not match the PR head"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("b" * 40)]
+        api.commit_author = "ordinary-user"
+        with self.assertRaisesRegex(ReleaseError, "not authored by the configured release App"):
+            authorize_version_branch_update(api, "package-release-app")
+
+        api.pulls = [managed_version_pr("b" * 40, state="closed", merged=False)]
+        api.commit_author = "package-release-app[bot]"
+        with self.assertRaisesRegex(ReleaseError, "not open or confirmed merged"):
+            authorize_version_branch_update(api, "package-release-app")
+
+    def test_lufa_version_command_runs_validated_generation_without_write_credentials(self) -> None:
+        sha = "a" * 40
+        with patch.dict(
+            os.environ,
+            {
+                "GITHUB_SHA": sha,
+                "GH_TOKEN": "app-token",
+                "GITHUB_TOKEN": "app-token",
+                "GH_ENTERPRISE_TOKEN": "other-token",
+            },
+            clear=True,
+        ), patch("run_changeset_version.safe_process") as process:
+            run_changeset_version()
+
+        self.assertEqual(3, process.call_count)
+        for call in process.call_args_list:
+            self.assertNotIn("GH_TOKEN", call.kwargs["env"])
+            self.assertNotIn("GITHUB_TOKEN", call.kwargs["env"])
+            self.assertNotIn("GH_ENTERPRISE_TOKEN", call.kwargs["env"])
+        self.assertEqual(["pnpm", "changeset", "version"], process.call_args_list[0].args[0])
+        self.assertEqual(["pnpm", "install", "--lockfile-only"], process.call_args_list[1].args[0])
+        self.assertEqual(sha, process.call_args_list[2].args[0][-1])
+
+    def test_lufa_version_command_rejects_missing_base_revision(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ReleaseError, "GITHUB_SHA"):
+                run_changeset_version()
+
     def test_git_environment_replaces_personal_credentials_with_the_supplied_app_token(
         self,
     ) -> None:
@@ -169,6 +296,9 @@ class ReleaseBehaviorTests(unittest.TestCase):
 
     def test_release_requires_the_configured_app_merged_same_repo_version_pr(self) -> None:
         client = FakePullClient(valid_pull_request())
+        verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
+
+        client.pull["head"]["ref"] = "changeset-release/main"
         verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
 
         client.pull["user"]["login"] = "human-user"
@@ -243,59 +373,6 @@ class ReleaseBehaviorTests(unittest.TestCase):
 
         self.assertEqual({}, client.tags)
 
-    def test_version_branch_updates_require_an_app_owned_open_or_merged_pr(self) -> None:
-        open_pull = version_pull(state="open", merged=False)
-        authorize_branch_update(open_pull, None, "b" * 40, "a" * 40, "package-release-app")
-        authorize_branch_update(
-            None,
-            version_pull(state="closed", merged=True),
-            "b" * 40,
-            "a" * 40,
-            "package-release-app",
-        )
-        authorize_branch_update(None, None, "a" * 40, "a" * 40, "package-release-app")
-
-        with self.assertRaisesRegex(ReleaseError, "not owned by the configured"):
-            authorize_branch_update(
-                version_pull(state="open", merged=False, author="human"),
-                None,
-                "b" * 40,
-                "a" * 40,
-                "package-release-app",
-            )
-        with self.assertRaisesRegex(ReleaseError, "will not be reopened"):
-            authorize_branch_update(
-                None,
-                version_pull(state="closed", merged=False),
-                "b" * 40,
-                "a" * 40,
-                "package-release-app",
-            )
-        with self.assertRaisesRegex(ReleaseError, "refusing to overwrite"):
-            authorize_branch_update(None, None, "b" * 40, "a" * 40, "package-release-app")
-
-    def test_merged_list_response_authorizes_reserved_branch_update(self) -> None:
-        # GitHub's list-pulls endpoint reports `merged: null` even for a merged
-        # PR; `merged_at` is the list response's merge evidence.
-        merged_list_response = version_pull(state="closed", merged=None)
-        merged_list_response["merged_at"] = "2026-10-20T15:29:15Z"
-
-        authorize_branch_update(
-            None, merged_list_response, "b" * 40, "a" * 40, "package-release-app"
-        )
-
-        closed_unmerged_list_response = version_pull(state="closed", merged=None)
-        closed_unmerged_list_response["merged_at"] = None
-        with self.assertRaisesRegex(ReleaseError, "will not be reopened"):
-            authorize_branch_update(
-                None,
-                closed_unmerged_list_response,
-                "b" * 40,
-                "a" * 40,
-                "package-release-app",
-            )
-
-
 def artifact(package: str, version: str) -> PackageRelease:
     return PackageRelease(
         package,
@@ -363,6 +440,93 @@ class FakePullClient:
         return 404, None
 
 
+class FakeVersionBranchClient:
+    def __init__(self, *, branch_sha: str | None, pulls: list[dict]) -> None:
+        self.branch_sha = branch_sha
+        self.pulls = pulls
+        self.commit_author = "package-release-app[bot]"
+        self.requests: list[tuple[str, str]] = []
+
+    def request(self, method: str, endpoint: str, payload: dict | None = None):
+        self.requests.append((method, endpoint))
+        if method != "GET" or payload is not None:
+            raise AssertionError("authorization preflight must be read-only")
+        if endpoint == "git/ref/heads/changeset-release/main":
+            if self.branch_sha is None:
+                return 404, None
+            return 200, {"object": {"sha": self.branch_sha}}
+        if endpoint.startswith("pulls?"):
+            return 200, self.pulls
+        if endpoint.startswith("commits/"):
+            return 200, {
+                "author": {"login": self.commit_author},
+                "committer": {"login": self.commit_author},
+                "commit": {"message": "build(release): update package versions"},
+            }
+        raise AssertionError(f"unexpected API request: {endpoint}")
+
+
+class FakeRulesetClient:
+    def __init__(self, rulesets: list[dict]) -> None:
+        self.rulesets = rulesets
+        self.requests: list[tuple[str, str]] = []
+
+    def request(self, method: str, endpoint: str, payload: dict | None = None):
+        self.requests.append((method, endpoint))
+        if method != "GET" or payload is not None:
+            raise AssertionError("ruleset preflight must be read-only")
+        if endpoint.startswith("rulesets?"):
+            return 200, [{"id": item["id"], "name": item["name"]} for item in self.rulesets]
+        if endpoint == "rulesets/25784220?includes_parents=true":
+            if not self.rulesets:
+                return 404, None
+            return 200, self.rulesets[0]
+        raise AssertionError(f"unexpected API request: {endpoint}")
+
+
+def valid_release_ruleset() -> dict:
+    return {
+        "id": 25784220,
+        "name": "Changesets release branch — package release App",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "grasdouble/Jarvis",
+        "enforcement": "active",
+        "conditions": {
+            "ref_name": {
+                "include": ["refs/heads/changeset-release/main"],
+                "exclude": [],
+            }
+        },
+        "rules": [
+            {"type": rule_type}
+            for rule_type in ("creation", "update", "deletion", "non_fast_forward")
+        ],
+    }
+
+
+def managed_version_pr(
+    head_sha: str,
+    *,
+    author: str = "package-release-app[bot]",
+    state: str = "open",
+    merged: bool = False,
+) -> dict:
+    return {
+        "state": state,
+        "merged": merged,
+        "merged_at": None,
+        "title": "build(release): update package versions",
+        "user": {"login": author},
+        "head": {
+            "ref": "changeset-release/main",
+            "sha": head_sha,
+            "repo": {"full_name": "grasdouble/Jarvis"},
+        },
+        "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},
+    }
+
+
 def valid_pull_request() -> dict:
     return {
         "state": "closed",
@@ -375,14 +539,6 @@ def valid_pull_request() -> dict:
         },
         "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},
     }
-
-
-def version_pull(*, state: str, merged: bool, author: str = "package-release-app[bot]") -> dict:
-    pull = valid_pull_request()
-    pull["state"] = state
-    pull["merged"] = merged
-    pull["user"]["login"] = author
-    return pull
 
 
 if __name__ == "__main__":
