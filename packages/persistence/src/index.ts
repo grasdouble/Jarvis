@@ -389,3 +389,4 @@ export { PostgresQueueStore } from "./queue.js";
 export { PostgresRequestIntakeStore } from "./request-intake.js";
 export { PostgresProjectConfigStore, PostgresProjectRequestAuthorization } from "./project-config.js";
 export { PostgresOwnerAuthStore } from "./auth.js";
+export { PostgresOperationalDashboardReadModel } from "./dashboard.js";
