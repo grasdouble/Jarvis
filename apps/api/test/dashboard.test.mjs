@@ -15,7 +15,8 @@ test("running HTTP server mounts authenticated dashboard and both exports end-to
       ? { authorized: true, auth: { ownerId: "owner" }, headers: { "set-cookie": ["first=1; HttpOnly", "second=2; HttpOnly"] } }
       : { authorized: false, response: { status: 401, body: { error: "unauthenticated" } } },
   }));
-  const server = api.createOperationalDashboardServer({ dashboard: route });
+  const unusedAuth = { getSession: async () => ({ status: 404 }), login: async () => ({ status: 404 }), onboard: async () => ({ status: 404 }), logout: async () => ({ status: 404 }) };
+  const server = api.createOperationalDashboardServer({ dashboard: route, auth: unusedAuth });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   context.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));

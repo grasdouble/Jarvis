@@ -1,22 +1,22 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { OwnerAuthHttpResponse } from "./auth.js";
+import type { OwnerAuthBoundary, OwnerAuthHttpRequest, OwnerAuthHttpResponse } from "./auth.js";
 import type { DashboardHttpRequest } from "./dashboard.js";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 export type DashboardHttpHandler = (request: DashboardHttpRequest) => Promise<OwnerAuthHttpResponse>;
 
-/** Creates a real Node HTTP listener for the dashboard routes only; host/bind policy belongs to deployment. */
-export function createOperationalDashboardServer(options: { readonly dashboard: DashboardHttpHandler }): Server {
+/** Creates a real listener composing existing owner-session and dashboard boundaries; bind policy belongs to deployment. */
+export function createOperationalDashboardServer(options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary }): Server {
   return createServer((request, response) => {
-    void dispatch(request, response, options.dashboard);
+    void dispatch(request, response, options);
   });
 }
 
 async function dispatch(
   request: IncomingMessage,
   response: ServerResponse,
-  dashboard: DashboardHttpHandler,
+  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary },
 ): Promise<void> {
   try {
     const body = await readBody(request);
@@ -33,18 +33,41 @@ async function dispatch(
       }
     }
     const headers = normalizeHeaders(request.headers);
-    const result = await dashboard({
+    const httpRequest: DashboardHttpRequest = {
       method: request.method ?? "",
       url: request.url ?? "/",
       headers,
       ...(parsedBody === undefined ? {} : { body: parsedBody }),
       ...(request.socket.remoteAddress === undefined ? {} : { remoteAddress: request.socket.remoteAddress }),
-    });
+    };
+    const result = await dispatchRoute(httpRequest, options);
     send(response, result);
   } catch {
     if (!response.headersSent) send(response, { status: 500, body: { error: "internal_error" } });
     else response.destroy();
   }
+}
+
+async function dispatchRoute(
+  request: DashboardHttpRequest,
+  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary },
+): Promise<OwnerAuthHttpResponse> {
+  const path = request.url.split("?", 1)[0] ?? "/";
+  const routes: Record<string, { readonly handle: (request: OwnerAuthHttpRequest) => Promise<OwnerAuthHttpResponse> }> = {
+    "/api/v1/session": {
+      handle: request.method === "GET" ? options.auth.getSession : options.auth.login,
+    },
+    "/api/v1/session/onboard": { handle: options.auth.onboard },
+    "/api/v1/session/logout": { handle: options.auth.logout },
+  };
+  if (path in routes) {
+    const route = routes[path]!;
+    const methodAllowed = path === "/api/v1/session" ? request.method === "GET" || request.method === "POST" : request.method === "POST";
+    if (!methodAllowed) return { status: 405, body: { error: "method_not_allowed" }, headers: { allow: path === "/api/v1/session" ? "GET, POST" : "POST" } };
+    return route.handle(request);
+  }
+  if (path.startsWith("/api/v1/session/")) return { status: 404, body: { error: "not_found" } };
+  return options.dashboard(request);
 }
 
 async function readBody(request: IncomingMessage): Promise<Buffer | null> {
@@ -77,7 +100,8 @@ function normalizeHeaders(headers: IncomingHttpHeaders): Record<string, string |
 
 function send(response: ServerResponse, result: OwnerAuthHttpResponse): void {
   const status = Number.isInteger(result.status) && result.status >= 100 && result.status <= 599 ? result.status : 500;
-  const payload = typeof result.body === "string" ? result.body : JSON.stringify(result.body ?? null);
+  const bodyAllowed = status !== 204 && status !== 304;
+  const payload = !bodyAllowed ? "" : typeof result.body === "string" ? result.body : JSON.stringify(result.body ?? null);
   response.statusCode = status;
   const headers = result.headers ?? {};
   for (const [name, rawValue] of Object.entries(headers)) {
@@ -89,7 +113,9 @@ function send(response: ServerResponse, result: OwnerAuthHttpResponse): void {
     else response.setHeader(name, safeValues.join(", "));
   }
   response.setHeader("cache-control", "no-store");
-  if (!response.hasHeader("content-type")) response.setHeader("content-type", "application/json; charset=utf-8");
-  response.setHeader("content-length", Buffer.byteLength(payload, "utf8"));
+  if (bodyAllowed) {
+    if (!response.hasHeader("content-type")) response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("content-length", Buffer.byteLength(payload, "utf8"));
+  }
   response.end(payload);
 }

@@ -136,3 +136,81 @@ test("loopback HTTP adapter issues HttpOnly SameSite cookies and completes onboa
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test("operational server composes the existing auth boundary with dashboard HTTP routes", async () => {
+  const portProbe = createServer();
+  await new Promise((resolve) => portProbe.listen(0, "127.0.0.1", resolve));
+  const probeAddress = portProbe.address();
+  assert.ok(probeAddress && typeof probeAddress === "object");
+  const port = probeAddress.port;
+  await new Promise((resolve, reject) => portProbe.close((error) => error ? reject(error) : resolve()));
+  const store = new MemoryOwnerAuthStore();
+  const service = api.createOwnerAuthService({ store, onboardingSecret: "composition-test-onboarding-secret-with-randomness" });
+  const origin = `http://127.0.0.1:${port}`;
+  const auth = api.createOwnerAuthBoundary(service, { origin });
+  const dashboard = api.createOperationalDashboardHttpHandler(api.createOperationalDashboardBoundary({ list: async () => [] }, auth));
+  const server = api.createOperationalDashboardServer({ dashboard, auth });
+  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const publicOrigin = `http://127.0.0.1:${address.port}`;
+  try {
+    const response = await globalThis.fetch(`${publicOrigin}/api/v1/session`, { cache: "no-store" });
+    assert.equal(response.status, 200, "listener mounts the owner session GET route");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const initial = await response.json();
+    assert.equal(initial.authenticated, false);
+    assert.equal(typeof initial.csrfToken, "string");
+    const initialCookies = response.headers.getSetCookie();
+    assert.ok(initialCookies.length >= 1);
+
+    const onboarding = await globalThis.fetch(`${publicOrigin}/api/v1/session/onboard`, {
+      method: "POST",
+      headers: {
+        origin: publicOrigin,
+        cookie: cookiePairs(initialCookies),
+        "x-csrf-token": initial.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ secret: "composition-test-onboarding-secret-with-randomness", password: "a composition owner password phrase" }),
+    });
+    assert.equal(onboarding.status, 201);
+    assert.match(onboarding.headers.get("content-type") ?? "", /^application\/json/);
+    const credentials = await onboarding.json();
+    assert.equal(JSON.stringify(credentials).includes("composition-test-onboarding-secret"), false);
+    const authCookies = onboarding.headers.getSetCookie();
+    assert.ok(authCookies.some((cookie) => cookie.startsWith("jarvis_session=")));
+    assert.ok(authCookies.some((cookie) => cookie.startsWith("jarvis_csrf=")));
+    const cookie = cookiePairs(authCookies);
+
+    const dashboardResponse = await globalThis.fetch(`${publicOrigin}/api/v1/dashboard`, { headers: { cookie } });
+    assert.equal(dashboardResponse.status, 200);
+    assert.deepEqual((await dashboardResponse.json()).projects, []);
+    assert.equal(dashboardResponse.headers.get("cache-control"), "no-store");
+    const jsonExport = await globalThis.fetch(`${publicOrigin}/api/v1/dashboard/export.json`, { headers: { cookie } });
+    assert.equal(jsonExport.status, 200);
+    assert.match(jsonExport.headers.get("content-type") ?? "", /^application\/json/);
+    assert.deepEqual(JSON.parse(await jsonExport.text()).projects, []);
+    const textExport = await globalThis.fetch(`${publicOrigin}/api/v1/dashboard/export.txt`, { headers: { cookie } });
+    assert.equal(textExport.status, 200);
+    assert.match(textExport.headers.get("content-type") ?? "", /^text\/plain/);
+    assert.match(await textExport.text(), /persisted operational read model/);
+
+    const logout = await globalThis.fetch(`${publicOrigin}/api/v1/session/logout`, {
+      method: "POST",
+      headers: { origin: publicOrigin, cookie, "x-csrf-token": credentials.csrfToken },
+    });
+    assert.equal(logout.status, 204);
+    assert.ok(logout.headers.getSetCookie().some((value) => /Max-Age=0/.test(value)));
+    const afterLogout = await globalThis.fetch(`${publicOrigin}/api/v1/dashboard`, { headers: { cookie } });
+    assert.equal(afterLogout.status, 401);
+
+    const wrongMethod = await globalThis.fetch(`${publicOrigin}/api/v1/session/onboard`, { method: "GET" });
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(wrongMethod.headers.get("allow"), "POST");
+    const unknown = await globalThis.fetch(`${publicOrigin}/api/v1/session/unrecognized`);
+    assert.equal(unknown.status, 404);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
