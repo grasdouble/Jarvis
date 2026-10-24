@@ -68,8 +68,49 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/exercise_changeset_version_pr.py
       - name: Require Changesets for changed packages
+        id: changeset-validation
         if: github.event_name == 'pull_request'
-        run: python3 scripts/ci/check_changeset_pr.py --pull-request-merge-base "$GITHUB_SHA"
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          python3 scripts/ci/check_changeset_pr.py
+          --pull-request-merge-base "$GITHUB_SHA"
+          --workspace-head-sha "$PR_HEAD_SHA"
+          --exclude-path '**/test/**'
+          --exclude-path '**/tests/**'
+          --exclude-path '**/__tests__/**'
+          --exclude-path '**/*.test.*'
+          --exclude-path '**/*.spec.*'
+          --exclude-path '**/*.md'
+          --exclude-path '**/*.adoc'
+      - name: Checkout PR head for head-only workspace discovery
+        if: github.event_name == 'pull_request' && steps.changeset-validation.outputs.generated-version-pr != 'true'
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git checkout --detach "$PR_HEAD_SHA"
+      - name: Check Changeset coverage with Lufa-CICD
+        id: changeset-coverage
+        if: github.event_name == 'pull_request' && steps.changeset-validation.outputs.generated-version-pr != 'true'
+        uses: grasdouble/Lufa-CICD/actions/check-changesets@9e985a3bb7fd2892e1075bed1c87acd4c1f527d8
+        with:
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          ignore-patterns: |
+            **/test/**
+            **/tests/**
+            **/__tests__/**
+            **/*.test.*
+            **/*.spec.*
+            **/*.md
+            **/*.adoc
+      - name: Restore PR merge candidate checkout
+        if: always() && github.event_name == 'pull_request' && steps.changeset-validation.outputs.generated-version-pr != 'true'
+        run: git checkout --detach "$GITHUB_SHA"
+      - name: Fail when changed workspaces lack Changesets
+        if: github.event_name == 'pull_request' && steps.changeset-validation.outputs.generated-version-pr != 'true' && steps.changeset-coverage.outputs.missing-count != '0'
+        run: |
+          echo "One or more changed workspaces are missing Changeset coverage."
+          exit 1
       - name: Test the sandbox-manager contracts
         run: pnpm --filter @jarvis/sandbox-manager test
       - name: Test PostgreSQL persistence against the ephemeral database

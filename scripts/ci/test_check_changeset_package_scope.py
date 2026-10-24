@@ -37,7 +37,11 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         self.assertIn("@jarvis/domain", error)
 
     def test_explicit_empty_changeset_allows_no_release_package_change(self):
-        self.assertIsNone(changeset_coverage_error({"@jarvis/api"}, [set()]))
+        self.assertIsNotNone(changeset_coverage_error({"@jarvis/api"}, [set()]))
+
+    def test_every_changed_workspace_requires_its_own_changeset_coverage(self):
+        error = changeset_coverage_error({"@jarvis/api", "@jarvis/domain"}, [{"@jarvis/api"}])
+        self.assertIn("@jarvis/domain", error)
 
     def test_no_changed_versionable_packages_needs_no_changeset(self):
         self.assertIsNone(changeset_coverage_error(set(), []))
@@ -50,7 +54,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
     def test_validation_rejects_a_changeset_for_an_untouched_package(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch")
-            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+            with self.assertRaisesRegex(ValueError, "@jarvis/api"):
                 validate("main", root)
 
     def test_validation_maps_recursive_workspace_globs_like_pnpm(self):
@@ -58,7 +62,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             root = self.make_fixture(
                 Path(temporary), "'@jarvis/domain': patch", recursive_workspace_glob=True
             )
-            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+            with self.assertRaisesRegex(ValueError, "@jarvis/api"):
                 validate("main", root)
 
     def test_recursive_workspace_negation_is_not_overridden_by_later_inclusion(self):
@@ -72,25 +76,31 @@ class ChangesetPackageScopeTests(unittest.TestCase):
     def test_validation_rejects_an_unrelated_changeset_for_deleted_package_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", delete_api_file=True)
-            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+            with self.assertRaisesRegex(ValueError, "@jarvis/api"):
                 validate("main", root)
 
-    def test_validation_rejects_changeset_for_rename_away_from_workspace(self):
+    def test_move_out_of_all_head_workspaces_does_not_require_coverage(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", rename_api_file_to_docs=True)
-            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+            root = self.make_fixture(Path(temporary), None, rename_api_file_to_docs=True)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(validate("main", root), "passed")
+
+    def test_moved_file_is_mapped_to_head_workspace_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, move_api_file_to_domain=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/domain"):
                 validate("main", root)
 
-    def test_validation_rejects_unrelated_changeset_for_removed_workspace(self):
+    def test_validation_does_not_require_changeset_for_removed_workspace(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", delete_api_workspace=True)
-            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
-                validate("main", root)
+            root = self.make_fixture(Path(temporary), None, delete_api_workspace=True)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(validate("main", root), "passed")
 
-    def test_validation_rejects_unrelated_changeset_when_workspace_pattern_removes_package(self):
+    def test_stale_changeset_target_for_package_absent_at_head_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = self.make_fixture(Path(temporary), "'@jarvis/domain': patch", exclude_api_workspace=True)
-            with self.assertRaisesRegex(ValueError, "@jarvis/api.*@jarvis/domain"):
+            root = self.make_fixture(Path(temporary), "'@jarvis/api': patch", delete_api_workspace=True)
+            with self.assertRaisesRegex(ValueError, "absent from the PR-head workspace set.*@jarvis/api"):
                 validate("main", root)
 
     def test_validation_ignores_deleted_changeset_files_without_reading_them(self):
@@ -98,7 +108,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             root = self.make_fixture(
                 Path(temporary), None, delete_base_changeset=True
             )
-            with self.assertRaisesRegex(ValueError, "need a Changeset"):
+            with self.assertRaisesRegex(ValueError, "individual Changeset coverage"):
                 validate("main", root)
 
     def test_validation_accepts_a_changeset_for_a_changed_package(self):
@@ -115,11 +125,69 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with redirect_stdout(StringIO()):
                 self.assertEqual(validate("main", root), "passed")
 
-    def test_validation_accepts_an_explicit_empty_no_release_changeset(self):
+    def test_validation_rejects_an_explicit_empty_no_release_changeset(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), "")
+            with self.assertRaisesRegex(ValueError, "@jarvis/api"):
+                validate("main", root)
+
+    def test_validation_requires_coverage_for_each_changed_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/api': patch", change_domain=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/domain"):
+                validate("main", root)
+
+    def test_configured_exclusion_requires_every_changed_path_to_match(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, excluded_file_change=True)
             with redirect_stdout(StringIO()):
-                self.assertEqual(validate("main", root), "passed")
+                self.assertEqual(validate("main", root, ["packages/api/generated/**"]), "passed")
+            root = self.make_fixture(Path(temporary) / "mixed", None, mixed_excluded_change=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/api"):
+                validate("main", root, ["packages/api/generated/**"])
+
+    def test_new_workspace_in_head_requires_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, add_workspace=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/new"):
+                validate("main", root)
+
+    def test_workspace_name_change_requires_current_name_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, rename_api_package=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/renamed"):
+                validate("main", root)
+
+    def test_workspace_path_change_requires_new_path_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, move_api_workspace=True)
+            with self.assertRaisesRegex(ValueError, "@jarvis/api"):
+                validate("main", root)
+
+    def test_workspace_discovery_uses_pr_head_not_target_only_packages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/api': patch")
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True, text=True
+                ).stdout.strip()
+
+            pr_head = git("rev-parse", "HEAD")
+            git("switch", "main")
+            target_only = root / "packages/target-only"
+            target_only.mkdir()
+            (target_only / "package.json").write_text(
+                json.dumps({"name": "@jarvis/target-only", "version": "1.0.0", "private": True}),
+                encoding="utf-8",
+            )
+            git("add", ".")
+            git("commit", "--quiet", "-m", "add target-only workspace")
+            target = git("rev-parse", "HEAD")
+            git("merge", "--quiet", "--no-ff", "--no-edit", "pr")
+
+            with redirect_stdout(StringIO()):
+                self.assertEqual(validate(target, root, head_sha=pr_head), "passed")
 
     @staticmethod
     def make_fixture(
@@ -133,7 +201,15 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         add_changeset_config_in_pr: bool = False,
         recursive_workspace_glob: bool = False,
         reinclude_excluded_workspace: bool = False,
+        change_domain: bool = False,
+        excluded_file_change: bool = False,
+        mixed_excluded_change: bool = False,
+        add_workspace: bool = False,
+        rename_api_package: bool = False,
+        move_api_workspace: bool = False,
+        move_api_file_to_domain: bool = False,
     ) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
         (root / ".changeset").mkdir()
         api_root = (
             Path("packages/area/keep")
@@ -193,10 +269,37 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         elif rename_api_file_to_docs:
             (root / "docs").mkdir()
             api_file.rename(root / "docs/api-index.js")
+        elif move_api_file_to_domain:
+            api_file.rename(root / "packages/domain/api-index.js")
         elif delete_api_file:
             api_file.unlink()
-        else:
+        elif not excluded_file_change and not mixed_excluded_change:
             api_file.write_text("export const changed = true;\n", encoding="utf-8")
+        if excluded_file_change or mixed_excluded_change:
+            generated = root / "packages/api/generated/output.js"
+            generated.parent.mkdir(parents=True)
+            generated.write_text("generated\n", encoding="utf-8")
+        if mixed_excluded_change:
+            api_file.write_text("export const changed = true;\n", encoding="utf-8")
+        if change_domain:
+            (root / "packages/domain/index.js").write_text("export const changed = true;\n", encoding="utf-8")
+        if add_workspace:
+            new_package = root / "packages/new"
+            new_package.mkdir()
+            (new_package / "package.json").write_text(
+                json.dumps({"name": "@jarvis/new", "version": "1.0.0", "private": True}),
+                encoding="utf-8",
+            )
+        if rename_api_package:
+            manifest = json.loads((root / api_root / "package.json").read_text(encoding="utf-8"))
+            manifest["name"] = "@jarvis/renamed"
+            (root / api_root / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+        if move_api_workspace:
+            moved = root / "packages/moved"
+            shutil.move(root / api_root, moved)
+            (root / "pnpm-workspace.yaml").write_text(
+                "packages:\n  - packages/*\n  - '!packages/api'\n", encoding="utf-8"
+            )
         if changeset_frontmatter is not None:
             (root / ".changeset/unrelated.md").write_text(
                 f"---\n{changeset_frontmatter}\n---\nFixture change.\n", encoding="utf-8"

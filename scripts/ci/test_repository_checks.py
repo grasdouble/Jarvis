@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from pathlib import Path
+import shlex
 import tempfile
 import unittest
 
@@ -74,6 +75,46 @@ key: duplicate
         del workflow['jobs']['check']['timeout-minutes']
         with self.assertRaises(ValueError):
             check_workflow(workflow)
+
+    def test_changeset_action_is_pinned_and_missing_coverage_fails_the_job(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = load_yaml((root / '.github/workflows/repository-checks.yml').read_text())
+        steps = workflow['jobs']['configuration']['steps']
+        action = next(step for step in steps if step.get('id') == 'changeset-coverage')
+        self.assertEqual(
+            action['uses'],
+            'grasdouble/Lufa-CICD/actions/check-changesets@9e985a3bb7fd2892e1075bed1c87acd4c1f527d8',
+        )
+        self.assertEqual(action['with']['base-sha'], '${{ github.event.pull_request.base.sha }}')
+        self.assertEqual(action['with']['head-sha'], '${{ github.event.pull_request.head.sha }}')
+        self.assertIn('steps.changeset-validation.outputs.generated-version-pr', action['if'])
+        self.assertEqual(
+            action['with']['ignore-patterns'].splitlines(),
+            [
+                '**/test/**',
+                '**/tests/**',
+                '**/__tests__/**',
+                '**/*.test.*',
+                '**/*.spec.*',
+                '**/*.md',
+                '**/*.adoc',
+            ],
+        )
+        failure = next(step for step in steps if step.get('name') == 'Fail when changed workspaces lack Changesets')
+        self.assertIn("steps.changeset-coverage.outputs.missing-count != '0'", failure['if'])
+        self.assertIn('exit 1', failure['run'])
+        validation = next(step for step in steps if step.get('id') == 'changeset-validation')
+        self.assertIn('--workspace-head-sha', validation['run'])
+        validation_args = shlex.split(validation['run'])
+        self.assertEqual(
+            [validation_args[index + 1] for index, arg in enumerate(validation_args[:-1]) if arg == '--exclude-path'],
+            action['with']['ignore-patterns'].splitlines(),
+        )
+        self.assertLess(
+            next(index for index, step in enumerate(steps) if step.get('name') == 'Checkout PR head for head-only workspace discovery'),
+            steps.index(action),
+        )
+        self.assertLess(steps.index(action), next(index for index, step in enumerate(steps) if step.get('name') == 'Restore PR merge candidate checkout'))
 
     def test_existing_local_link_passes(self):
         with tempfile.TemporaryDirectory() as temporary:
