@@ -96,6 +96,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
   let authClient;
   let lockClient;
   let fixtureCommitted = false;
+  let testFailure;
   try {
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
     assert.match(database.name, /^jarvis_issue8_/);
@@ -407,9 +408,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       if (retryReady) queueClock = Number(clock.now_ms);
     }
     assert.equal(retryReady, true, "the retry becomes eligible after backoff/simulated wait");
-    await stopControls.set({ projectId: input.projectId, stopped: true, expectedVersion: 2, ownerId: "owner" });
+    await stopControls.set({ projectId: input.projectId, stopped: true, expectedVersion: 3, ownerId: "owner" });
     assert.equal(await queue.claim("worker-paused-retry", 60_000), null, "a project stop also prevents a ready retry from being claimed");
-    await stopControls.set({ projectId: input.projectId, stopped: false, expectedVersion: 3, ownerId: "owner" });
+    await stopControls.set({ projectId: input.projectId, stopped: false, expectedVersion: 4, ownerId: "owner" });
     const thirdLease = await queue.claim("worker-c", 60_000);
     assert.ok(thirdLease);
     assert.equal(thirdLease.epoch, 3);
@@ -742,6 +743,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       client.query("UPDATE jarvis.task_checkpoints SET step = 'mutated' WHERE id = $1", [saved.id]),
       /immutable record/,
     );
+  } catch (error) {
+    testFailure = error;
+    throw error;
   } finally {
     try {
       if (client) {
@@ -757,7 +761,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
         let cleanupCommitted = false;
         try {
           await client.query("BEGIN");
-          await client.query(`
+          try {
+            await client.query(`
             DO $$
             DECLARE table_name text; row_count bigint; expected_count bigint;
             BEGIN
@@ -780,9 +785,10 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'policies' THEN 1
                   WHEN 'projects' THEN 5
                   WHEN 'project_config_versions' THEN 12
-                  WHEN 'audit_events' THEN 11
+                  WHEN 'audit_events' THEN 22
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
+                  WHEN 'stop_controls' THEN 2
                   WHEN 'requests' THEN 10
                   WHEN 'tasks' THEN 7
                   WHEN 'task_attempts' THEN 5
@@ -797,7 +803,16 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                 END IF;
               END LOOP;
             END $$
-          `);
+            `);
+          } catch (cleanupError) {
+            if (testFailure) {
+              throw new AggregateError(
+                [testFailure, cleanupError],
+                "integration test failed and fixture cleanup could not verify expected row counts",
+              );
+            }
+            throw cleanupError;
+          }
           await client.query(`
             DO $$
             DECLARE truncate_tables text;
