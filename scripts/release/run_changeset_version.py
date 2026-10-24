@@ -33,7 +33,12 @@ def run() -> None:
         env=command_environment,
     )
     safe_process(
-        [sys.executable, str(ROOT / "scripts/ci/check_changeset_pr.py"), base_sha],
+        [
+            sys.executable,
+            str(ROOT / "scripts/ci/check_changeset_pr.py"),
+            "--working-tree-generated-candidate",
+            base_sha,
+        ],
         cwd=ROOT,
         env=command_environment,
     )

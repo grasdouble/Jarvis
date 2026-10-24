@@ -182,8 +182,13 @@ def _lockfile_changes_match_ranges(
 
 
 def is_changesets_version_pr(base_sha: str, root: Path) -> bool:
+    return _is_changesets_version_pr(base_sha, root, changed_paths(base_sha, root))
+
+
+def _is_changesets_version_pr(
+    base_sha: str, root: Path, changes: list[tuple[str, PurePosixPath]]
+) -> bool:
     """Recognize a generated version-only PR by its consumed entries and output shape."""
-    changes = changed_paths(base_sha, root)
     deleted_entries = [
         path
         for status, path in changes
@@ -312,6 +317,29 @@ def is_changesets_version_pr(base_sha: str, root: Path) -> bool:
     return bool(changed_versions and set(changed_versions) & target_bumps.keys())
 
 
+def working_tree_changes(base_sha: str, root: Path) -> list[tuple[str, PurePosixPath]]:
+    """Return all tracked and untracked candidate changes against the exact base."""
+    head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").strip()
+    if head != base_sha:
+        raise ValueError("working-tree candidate requires HEAD to equal the trusted base")
+    fields = _git(root, "diff", "--name-status", "-z", "--no-renames", base_sha, "--").split("\0")
+    changes: list[tuple[str, PurePosixPath]] = []
+    index = 0
+    while index < len(fields) and fields[index]:
+        changes.append((fields[index][0], PurePosixPath(fields[index + 1])))
+        index += 2
+    untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+    changes.extend(("A", PurePosixPath(path)) for path in untracked if path)
+    return changes
+
+
+def is_working_tree_changesets_version_candidate(base_sha: str, root: Path) -> bool:
+    """Validate release output without staging or committing generated artifacts."""
+    # Reuse the exact committed-candidate checks with a temporary candidate-independent
+    # change list; all data reads still use the working tree and trusted base.
+    return _is_changesets_version_pr(base_sha, root, working_tree_changes(base_sha, root))
+
+
 def run_gate(base_sha: str, root: Path) -> None:
     if is_changesets_version_pr(base_sha, root):
         print(
@@ -325,10 +353,21 @@ def run_gate(base_sha: str, root: Path) -> None:
     validate(base_sha, root)
 
 
+def run_working_tree_gate(base_sha: str, root: Path) -> None:
+    if not is_working_tree_changesets_version_candidate(base_sha, root):
+        raise ValueError("working-tree output is not a valid generated Changesets version candidate")
+    print("Generated Changesets working-tree candidate validated against the trusted base.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("base_sha", nargs="?", help="Exact base commit SHA")
+    source.add_argument(
+        "--working-tree-generated-candidate",
+        metavar="BASE_SHA",
+        help="validate unstaged release output against exact trusted base (release wrapper only)",
+    )
     source.add_argument(
         "--pull-request-merge-base",
         metavar="GITHUB_SHA",
@@ -340,9 +379,12 @@ def main() -> int:
         base_sha = (
             pull_request_merge_base(root, args.pull_request_merge_base)
             if args.pull_request_merge_base
-            else args.base_sha
+            else args.base_sha or args.working_tree_generated_candidate
         )
-        run_gate(base_sha, root)
+        if args.working_tree_generated_candidate:
+            run_working_tree_gate(base_sha, root)
+        else:
+            run_gate(base_sha, root)
     except (OSError, subprocess.CalledProcessError, ValueError, yaml.YAMLError) as error:
         print(f"Changeset PR gate failed: {error}", file=sys.stderr)
         return 1

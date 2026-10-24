@@ -8,7 +8,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from check_changeset_pr import is_changesets_version_pr, pull_request_merge_base
+from check_changeset_pr import (
+    is_changesets_version_pr,
+    is_working_tree_changesets_version_candidate,
+    pull_request_merge_base,
+)
 
 
 class ChangesetsVersionPrTests(unittest.TestCase):
@@ -41,6 +45,27 @@ class ChangesetsVersionPrTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root, base = self.make_version_pr(Path(temporary))
             self.assertTrue(is_changesets_version_pr(base, root))
+
+    def test_dirty_generated_version_output_is_recognized(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary), commit_candidate=False)
+            self.assertTrue(is_working_tree_changesets_version_candidate(base, root))
+
+    def test_dirty_generated_version_output_rejects_unrelated_untracked_and_staged_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary), commit_candidate=False)
+            unrelated = root / "unexpected.txt"
+            unrelated.write_text("unexpected\n", encoding="utf-8")
+            self.assertFalse(is_working_tree_changesets_version_candidate(base, root))
+            self.git(root, "add", "unexpected.txt")
+            self.assertFalse(is_working_tree_changesets_version_candidate(base, root))
+
+    def test_dirty_generated_version_output_requires_head_to_equal_base(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, base = self.make_version_pr(Path(temporary), commit_candidate=False)
+            self.git(root, "commit", "--allow-empty", "--quiet", "-m", "advance HEAD")
+            with self.assertRaisesRegex(ValueError, "HEAD to equal the trusted base"):
+                is_working_tree_changesets_version_candidate(base, root)
 
     def test_version_output_with_consumed_empty_changesets_is_recognized(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -156,7 +181,11 @@ class ChangesetsVersionPrTests(unittest.TestCase):
 
     @classmethod
     def make_version_pr(
-        cls, root: Path, include_empty: bool = False, include_malformed: bool = False
+        cls,
+        root: Path,
+        include_empty: bool = False,
+        include_malformed: bool = False,
+        commit_candidate: bool = True,
     ) -> tuple[Path, str]:
         (root / ".changeset").mkdir()
         (root / "packages/api").mkdir(parents=True)
@@ -224,8 +253,9 @@ class ChangesetsVersionPrTests(unittest.TestCase):
                 (root / ".changeset" / name).unlink()
         if include_malformed:
             (root / ".changeset/malformed.md").unlink()
-        cls.git(root, "add", "-A")
-        cls.git(root, "commit", "--quiet", "-m", "generated version PR")
+        if commit_candidate:
+            cls.git(root, "add", "-A")
+            cls.git(root, "commit", "--quiet", "-m", "generated version PR")
         return root, base
 
     @staticmethod

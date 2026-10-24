@@ -222,6 +222,7 @@ class ReleaseBehaviorTests(unittest.TestCase):
             self.assertNotIn("GH_ENTERPRISE_TOKEN", call.kwargs["env"])
         self.assertEqual(["pnpm", "changeset", "version"], process.call_args_list[0].args[0])
         self.assertEqual(["pnpm", "install", "--lockfile-only"], process.call_args_list[1].args[0])
+        self.assertEqual("--working-tree-generated-candidate", process.call_args_list[2].args[0][-2])
         self.assertEqual(sha, process.call_args_list[2].args[0][-1])
 
     def test_lufa_version_command_rejects_missing_base_revision(self) -> None:

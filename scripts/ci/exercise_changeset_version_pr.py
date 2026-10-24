@@ -18,6 +18,27 @@ from check_changeset_pr import is_changesets_version_pr
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSION_PR_GATE = REPO_ROOT / "scripts/ci/check_changeset_pr.py"
 PACKAGE_SCOPE_GATE = REPO_ROOT / "scripts/ci/check_changeset_package_scope.py"
+PINNED_CHANGESET_VERSION = "3.0.3"
+
+
+def changeset_cli() -> Path:
+    configured = os.environ.get("JARVIS_CHANGESET_CLI")
+    cli = Path(configured).expanduser() if configured else REPO_ROOT / "node_modules/.bin/changeset"
+    if not cli.is_file() or not os.access(cli, os.X_OK):
+        raise RuntimeError(f"Changesets CLI is not an executable file: {cli}")
+    absolute_cli = cli.absolute()
+    if absolute_cli.parent.name != ".bin" or absolute_cli.parent.parent.name != "node_modules":
+        raise RuntimeError(f"Changesets CLI must be under node_modules/.bin: {cli}")
+    package = absolute_cli.parent.parent / "@changesets/cli/package.json"
+    if not package.is_file():
+        raise RuntimeError(f"Cannot identify the Changesets package for CLI: {cli}")
+    metadata = json.loads(package.read_text(encoding="utf-8"))
+    if metadata.get("name") != "@changesets/cli" or metadata.get("version") != PINNED_CHANGESET_VERSION:
+        raise RuntimeError(
+            f"Expected @changesets/cli {PINNED_CHANGESET_VERSION} at {cli}, "
+            f"found {metadata.get('name')} {metadata.get('version')}"
+        )
+    return absolute_cli
 sys.path.insert(0, str(REPO_ROOT / "scripts/release"))
 from publish_releases import release_plan  # noqa: E402
 from release_common import PackageRelease, ReleaseError, publish_release  # noqa: E402
@@ -33,6 +54,7 @@ def run(command: list[str], cwd: Path, expect_success: bool) -> subprocess.Compl
 
 
 def exercise() -> None:
+    cli = changeset_cli()
     with tempfile.TemporaryDirectory(prefix="changeset-version-pr-") as temporary:
         root = Path(temporary)
         (root / ".changeset").mkdir()
@@ -84,8 +106,8 @@ def exercise() -> None:
             (root / ".changeset" / name).write_text(
                 "---\n---\nNo package release.\n", encoding="utf-8"
             )
-        os.symlink(REPO_ROOT / "node_modules", root / "node_modules", target_is_directory=True)
-
+        # Resolve only the fixture lockfile from local pnpm metadata; do not install
+        # packages or run dependency lifecycle scripts in this disposable workspace.
         run(["pnpm", "install", "--offline", "--lockfile-only"], root, expect_success=True)
 
         def git(*args: str) -> str:
@@ -109,7 +131,7 @@ def exercise() -> None:
         base_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "--create", "version-pr")
 
-        run(["pnpm", "changeset", "version"], root, expect_success=True)
+        run([str(cli), "version"], root, expect_success=True)
         package = json.loads((root / "packages/api/package.json").read_text(encoding="utf-8"))
         if (
             package.get("version") != "0.0.1"
@@ -124,6 +146,27 @@ def exercise() -> None:
                 "Changesets version command did not update the internal workspace range"
             )
         run(["pnpm", "install", "--offline", "--lockfile-only"], root, expect_success=True)
+        working_gate = run(
+            [sys.executable, str(VERSION_PR_GATE), "--working-tree-generated-candidate", base_sha],
+            root,
+            expect_success=True,
+        )
+        if "working-tree candidate validated" not in working_gate.stdout:
+            raise AssertionError("Dirty Changesets version output was not validated")
+        (root / "unexpected.txt").write_text("unrelated candidate mutation\n", encoding="utf-8")
+        run(
+            [sys.executable, str(VERSION_PR_GATE), "--working-tree-generated-candidate", base_sha],
+            root,
+            expect_success=False,
+        )
+        git("add", "unexpected.txt")
+        run(
+            [sys.executable, str(VERSION_PR_GATE), "--working-tree-generated-candidate", base_sha],
+            root,
+            expect_success=False,
+        )
+        git("reset", "--quiet", "--", "unexpected.txt")
+        (root / "unexpected.txt").unlink()
         git("add", "-A")
         git("commit", "--quiet", "-m", "generated Changesets version PR")
 
@@ -134,7 +177,7 @@ def exercise() -> None:
         )
 
         raw_status = run(
-            ["pnpm", "changeset", "status", f"--since={base_sha}"], root, expect_success=False
+            [str(cli), "status", f"--since={base_sha}"], root, expect_success=False
         )
         scope_result = run(
             [sys.executable, str(PACKAGE_SCOPE_GATE), base_sha], root, expect_success=False
@@ -236,7 +279,7 @@ def exercise() -> None:
         git("commit", "--quiet", "-m", "add second release intent")
         second_base_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "--create", "version-pr-two")
-        run(["pnpm", "changeset", "version"], root, expect_success=True)
+        run([str(cli), "version"], root, expect_success=True)
         second_api_manifest = json.loads(
             (root / "packages/api/package.json").read_text(encoding="utf-8")
         )
