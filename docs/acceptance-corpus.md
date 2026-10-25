@@ -1,10 +1,10 @@
 # JARVIS v0.1 acceptance corpus
 
-Version 1.0 • October 18, 2026 • Design baseline, not execution evidence
+Version 1.1 • October 25, 2026 • Design baseline, not execution evidence
 
 ## Purpose and authority
 
-This versioned corpus translates the accepted v0.1 requirements into reproducible fixtures, expected deterministic outcomes, and evidence ownership. It supports implementation and qualification; it does not claim that the product, a test harness, or any listed scenario is implemented or has passed. The current product baseline is [PRD v1.18](prd-and-roadmap.md) and [Technical Architecture v1.16](technical-architecture.md), with the accepted request-mode and exact-revision skill-consent direction in [D17](prd-and-roadmap.md#12-decision-register-and-fallback-values).
+This versioned corpus translates the accepted v0.1 requirements into reproducible fixtures, expected deterministic outcomes, and evidence ownership. It supports implementation and qualification; it does not claim that the product, a test harness, or any listed scenario is implemented or has passed. This editorial corpus revision leaves every scenario ID and expected outcome unchanged; its current design baseline is [PRD v1.21](prd-and-roadmap.md) (October 25, 2026) and [Technical Architecture v1.24](technical-architecture.md) (October 23, 2026), with the accepted request-mode and exact-revision skill-consent direction in [D17](prd-and-roadmap.md#12-decision-register-and-fallback-values). The version identifies the corpus, not a claim that these newer source revisions have been independently requalified against its scenarios.
 
 The trusted core, not the model, fixture text, repository content, or test report, decides authorization and effects. Fixtures use synthetic repositories, identities, credentials, provider responses, and GitHub endpoints. No production secret, private project content, or live billable operation belongs in this corpus. Repository commands remain disabled unless D16 is accepted and separately qualified. A simulated check is not evidence of Colima, provider, or GitHub behavior; label evidence with its actual execution environment and revision.
 

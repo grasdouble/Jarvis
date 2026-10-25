@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.20 • October 19, 2026 • Personal self-hosted product
+Document version 1.21 • October 25, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -285,7 +285,7 @@ No delivery date or duration estimate is committed. MVP qualification requires p
 | J04 Development and PR handoff | No date committed | Writable task workspace, deterministic scope validation, PR publisher | F13/F14, POL 08–13; revision/scope races and uncertain publication cases covered; no merge capability |
 | J05 — MVP qualification and operations | No date committed | Request dashboard/digest, skill consent UX, backup, recovery and operations guide | F07/F08/F11–F14, N14/N15, restore, pilot and all accepted critical gates met |
 
-Milestone names describe delivery outcomes, independently of release numbers. J05 qualifies the project-request product; J06 covers autonomous issue-to-PR delivery and its separate review/merge policy. JV-126 aligns native issue and milestone assignments with this roadmap. Package versions and release numbers follow the [planned Changesets workflow](development-workflow.md#planned-package-versioning); no milestone reserves a particular package version.
+Milestone names describe delivery outcomes, independently of release numbers. J05 qualifies the project-request product; J06 covers autonomous issue-to-PR delivery and its separate review/merge policy. JV-126 aligns native issue and milestone assignments with this roadmap. Package versions and release numbers follow the [planned Changesets workflow](development-workflow.md#package-versioning-and-releases); no milestone reserves a particular package version.
 
 Post-MVP tracking uses separate, undated native GitHub milestones. This mapping adds no MVP release criterion or calendar commitment:
 
