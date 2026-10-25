@@ -69,7 +69,7 @@ jobs:
         run: |
           test "$ACTUAL_SLUG" = "$EXPECTED_SLUG" || { echo '::error::The token belongs to an unexpected GitHub App.'; exit 1; }
           test "$ACTUAL_INSTALLATION_ID" = "$EXPECTED_INSTALLATION_ID" || { echo '::error::The token belongs to an unexpected installation.'; exit 1; }
-      - name: Create or reconcile private-package tags and GitHub Releases
+      - name: Validate merged version PR and generated diff
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
@@ -79,8 +79,24 @@ jobs:
           RELEASE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
           RELEASE_TOKEN_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
         run: |
+          test "$(git rev-parse HEAD)" = "$MERGE_COMMIT_SHA" || { echo '::error::The checkout does not match the confirmed merge commit.'; exit 1; }
+          test "$GITHUB_SHA" = "$MERGE_COMMIT_SHA" || { echo '::error::The action context does not match the confirmed merge commit.'; exit 1; }
           BASE_SHA="$(git rev-parse "${MERGE_COMMIT_SHA}^1")"
           python3 scripts/release/publish_releases.py \
             --base-sha "$BASE_SHA" \
             --commit-sha "$MERGE_COMMIT_SHA" \
             --pull-number "$PULL_NUMBER"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install the pinned PNPM workspace manager
+        run: npm install --global pnpm@12.5.1
+      - name: Install frozen workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Create CLI private-package tags and GitHub Releases
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2, pinned by Lufa-CICD
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          publish-script: python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset
+          create-github-releases: 'true'
+          push-git-tags: 'true'

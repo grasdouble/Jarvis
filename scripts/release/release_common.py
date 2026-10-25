@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Iterator, Protocol, Sequence
+from typing import Iterator, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
@@ -115,33 +113,13 @@ def verify_app_identity(environment: dict[str, str]) -> None:
         )
 
 
-@dataclass(frozen=True)
-class PackageRelease:
-    """A validated package release derived from one generated version PR."""
-
-    package: str
-    version: str
-    tag: str
-    notes: str
-
-
-class ReleaseClient(Protocol):
-    def tag_commit(self, tag: str) -> str | None: ...
-
-    def create_tag(self, tag: str, commit_sha: str, message: str) -> None: ...
-
-    def release(self, tag: str) -> dict | None: ...
-
-    def create_release(self, tag: str, name: str, body: str) -> dict: ...
-
-
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, new_url):
         return None
 
 
 class GitHubReleaseClient:
-    """Small GitHub REST client for immutable package tags and releases."""
+    """Small repository-scoped GitHub REST client for release preflight reads."""
 
     def __init__(self, token: str, repository: str = REPOSITORY) -> None:
         if not token:
@@ -189,141 +167,3 @@ class GitHubReleaseClient:
                 f"GitHub API returned invalid JSON for {method} {endpoint}."
             ) from error
         return status, result
-
-    @staticmethod
-    def _tag_endpoint(tag: str) -> str:
-        return f"git/ref/tags/{quote(tag, safe='/-._~')}"
-
-    def tag_commit(self, tag: str) -> str | None:
-        status, reference = self.request("GET", self._tag_endpoint(tag))
-        if status == 404:
-            return None
-        if status != 200 or not isinstance(reference, dict):
-            raise ReleaseError(f"Could not inspect package tag {tag!r} (HTTP {status}).")
-        object_data = reference.get("object")
-        visited: set[str] = set()
-        for _ in range(8):
-            if not isinstance(object_data, dict):
-                break
-            object_type = object_data.get("type")
-            object_sha = object_data.get("sha")
-            if not isinstance(object_sha, str) or not object_sha:
-                break
-            if object_type == "commit":
-                return object_sha
-            if object_type != "tag" or object_sha in visited:
-                break
-            visited.add(object_sha)
-            status, object_data = self.request("GET", f"git/tags/{object_sha}")
-            if status != 200 or not isinstance(object_data, dict):
-                break
-            object_data = object_data.get("object")
-        raise ReleaseError(f"Package tag {tag!r} does not resolve to a commit.")
-
-    def create_tag(self, tag: str, commit_sha: str, message: str) -> None:
-        status, tag_object = self.request(
-            "POST",
-            "git/tags",
-            {"tag": tag, "message": message, "object": commit_sha, "type": "commit"},
-        )
-        if (
-            status != 201
-            or not isinstance(tag_object, dict)
-            or not isinstance(tag_object.get("sha"), str)
-        ):
-            raise ReleaseError(f"Could not create annotated package tag {tag!r} (HTTP {status}).")
-        status, _ = self.request(
-            "POST",
-            "git/refs",
-            {"ref": f"refs/tags/{tag}", "sha": tag_object["sha"]},
-        )
-        if status == 201:
-            return
-        # A competing/retried ref creation is reconciled by the caller against its commit.
-        if status in {409, 422}:
-            return
-        raise ReleaseError(f"Could not create package tag reference {tag!r} (HTTP {status}).")
-
-    def release(self, tag: str) -> dict | None:
-        status, result = self.request("GET", f"releases/tags/{quote(tag, safe='/-._~')}")
-        if status == 404:
-            return None
-        if status != 200 or not isinstance(result, dict):
-            raise ReleaseError(f"Could not inspect GitHub Release for {tag!r} (HTTP {status}).")
-        return result
-
-    def create_release(self, tag: str, name: str, body: str) -> dict:
-        status, result = self.request(
-            "POST",
-            "releases",
-            {
-                "tag_name": tag,
-                "name": name,
-                "body": body,
-                "draft": False,
-                "prerelease": False,
-            },
-        )
-        if status == 201 and isinstance(result, dict):
-            return result
-        # The caller rereads the release after a conflict or uncertain server outcome.
-        if status in {409, 422}:
-            existing = self.release(tag)
-            if existing is not None:
-                return existing
-        raise ReleaseError(f"Could not create GitHub Release for {tag!r} (HTTP {status}).")
-
-
-def publish_release(
-    client: ReleaseClient,
-    artifact: PackageRelease,
-    commit_sha: str,
-) -> None:
-    """Create one immutable tag/release, reconciling completed partial attempts."""
-    expected_name = f"{artifact.package}@{artifact.version}"
-    existing_release = client.release(artifact.tag)
-    existing_commit = client.tag_commit(artifact.tag)
-    if existing_commit is None and existing_release is not None:
-        raise ReleaseError(
-            f"GitHub Release {artifact.tag!r} exists without its immutable Git tag; "
-            "refusing repair."
-        )
-    if existing_commit is None:
-        client.create_tag(
-            artifact.tag,
-            commit_sha,
-            f"{expected_name}\n\nReleased from {commit_sha}.",
-        )
-        existing_commit = client.tag_commit(artifact.tag)
-    if existing_commit != commit_sha:
-        raise ReleaseError(
-            f"Package tag {artifact.tag!r} points to {existing_commit!r}, "
-            "not the verified release commit."
-        )
-
-    if existing_release is None:
-        try:
-            existing_release = client.create_release(
-                artifact.tag,
-                expected_name,
-                artifact.notes,
-            )
-        except ReleaseError:
-            # A lost create response may have committed the release. Reconcile exactly once.
-            existing_release = client.release(artifact.tag)
-            if existing_release is None:
-                raise
-    expected = {
-        "tag_name": artifact.tag,
-        "name": expected_name,
-        "body": artifact.notes,
-        "draft": False,
-        "prerelease": False,
-    }
-    # The verified immutable tag is the commit binding. GitHub ignores
-    # target_commitish when creating a Release for an already-existing tag.
-    mismatches = [key for key, value in expected.items() if existing_release.get(key) != value]
-    if mismatches:
-        raise ReleaseError(
-            f"GitHub Release for {artifact.tag!r} conflicts in fields: {', '.join(mismatches)}."
-        )

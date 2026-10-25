@@ -41,7 +41,7 @@ def changeset_cli() -> Path:
     return absolute_cli
 sys.path.insert(0, str(REPO_ROOT / "scripts/release"))
 from publish_releases import release_plan  # noqa: E402
-from release_common import PackageRelease, ReleaseError, publish_release  # noqa: E402
+from tag_private_packages import prepare_release_notes  # noqa: E402
 
 
 def run(command: list[str], cwd: Path, expect_success: bool) -> subprocess.CompletedProcess[str]:
@@ -198,74 +198,57 @@ def exercise() -> None:
         if "Generated Changesets version PR detected" not in gate_result.stdout:
             raise AssertionError("The unified PR gate did not recognize the generated version PR")
 
-        # Simulate the confirmed merge commit and exercise package-level output with no registry.
+        # Simulate the confirmed merge commit; Changesets tags every eligible private
+        # package (including unchanged packages), and the pinned action consumes these
+        # events to push tags at its exact context.sha and create GitHub Releases.
         version_pr_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", "version-pr")
         first_merge_sha = git("rev-parse", "HEAD").strip()
-        first_releases = release_plan(base_sha, first_merge_sha, root)
-        first_tags = {release.tag for release in first_releases}
-        if "@fixture/api@0.0.1" not in first_tags:
-            raise AssertionError(f"First patch release is missing: {first_tags!r}")
-        if "@fixture/independent@0.0.1" in first_tags:
-            raise AssertionError("An untouched independent package was incorrectly released")
-        first_client_manifest = json.loads(
-            (root / "packages/client/package.json").read_text(encoding="utf-8")
+        release_plan(base_sha, first_merge_sha, root)
+        output_file = root / "changesets-output.ndjson"
+        environment = os.environ.copy()
+        environment["CHANGESETS_OUTPUT"] = str(output_file)
+        result = subprocess.run(
+            [str(cli), "tag"], cwd=root, env=environment, capture_output=True, text=True
         )
-        first_client_version = first_client_manifest.get("version")
-        if (
-            first_client_version != "0.0.0"
-            and f"@fixture/client@{first_client_version}" not in first_tags
+        if result.returncode:
+            raise AssertionError(f"Changesets git-tag failed: {result.stdout}\n{result.stderr}")
+        first_events = [json.loads(line) for line in output_file.read_text().splitlines() if line]
+        first_tags = {event["tag"] for event in first_events if event.get("type") == "git-tag"}
+        expected_first_tags = {
+            "@fixture/api@0.0.1",
+            "@fixture/client@0.0.1",
+            "@fixture/independent@0.0.0",
+        }
+        if first_tags != expected_first_tags:
+            raise AssertionError(f"Unfiltered private-package tags differ: {first_tags!r}")
+        if any(
+            git("rev-parse", f"refs/tags/{tag}^{{}}").strip() != first_merge_sha
+            for tag in first_tags
         ):
-            raise AssertionError(
-                "A Changesets-propagated dependent version is missing its release tag"
-            )
-        first_api = next(
-            release for release in first_releases if release.tag == "@fixture/api@0.0.1"
-        )
-        if "Release fixture." not in first_api.notes:
-            raise AssertionError(
-                "The first GitHub Release notes were not extracted from CHANGELOG.md"
-            )
-
-        class FixtureReleaseClient:
-            def __init__(self) -> None:
-                self.tags: dict[str, str] = {}
-                self.releases: dict[str, dict] = {}
-                self.registry_uploads = 0
-
-            def tag_commit(self, tag: str) -> str | None:
-                return self.tags.get(tag)
-
-            def create_tag(self, tag: str, commit_sha: str, message: str) -> None:
-                if tag in self.tags:
-                    raise ReleaseError("fixture tag already exists")
-                self.tags[tag] = commit_sha
-
-            def release(self, tag: str) -> dict | None:
-                return self.releases.get(tag)
-
-            def create_release(
-                self, tag: str, name: str, body: str
-            ) -> dict:
-                result = {
-                    "tag_name": tag,
-                    "target_commitish": "main",
-                    "name": name,
-                    "body": body,
-                    "draft": False,
-                    "prerelease": False,
-                }
-                self.releases[tag] = result
-                return result
-
-        release_client = FixtureReleaseClient()
-        for release in first_releases:
-            publish_release(release_client, release, first_merge_sha)
-        for release in first_releases:
-            publish_release(release_client, release, first_merge_sha)
-        if release_client.registry_uploads or set(release_client.tags) != first_tags:
-            raise AssertionError("The first rehearsal did not stay registry-free and idempotent")
+            raise AssertionError("A Changesets tag did not target the exact merge commit")
+        if "Release fixture." not in (root / "packages/api/CHANGELOG.md").read_text():
+            raise AssertionError("The emitted release event has no matching changelog entry")
+        temporary_notes = prepare_release_notes(output_file, root)
+        if len(temporary_notes) != 1:
+            raise AssertionError("Missing changelogs did not get action-compatible fallback notes")
+        event_package_dirs = {
+            "@fixture/api": root / "packages/api",
+            "@fixture/client": root / "packages/client",
+            "@fixture/independent": root / "packages/independent",
+        }
+        if any(
+            not (event_package_dirs[event["packageName"]] / "CHANGELOG.md").is_file()
+            for event in first_events
+            if event.get("type") == "git-tag"
+        ):
+            raise AssertionError("An emitted release event still lacks an action changelog")
+        for changelog in temporary_notes:
+            if "No release notes were recorded" not in changelog.read_text(encoding="utf-8"):
+                raise AssertionError("Fallback release notes are not explicit")
+            changelog.unlink()
+        output_file.unlink()
 
         # Release another patch of api and a first patch of an independent package.
         (root / ".changeset/api-second.md").write_text(
@@ -300,7 +283,8 @@ def exercise() -> None:
         )
         if not is_changesets_version_pr(second_base_sha, root):
             raise AssertionError(
-                "The second generated version PR was not accepted by the strict gate"
+                f"The second generated version PR was not accepted by the strict gate: "
+                f"{changed_paths(second_base_sha, root)!r}"
             )
         second_gate = run(
             [sys.executable, str(VERSION_PR_GATE), second_base_sha], root, expect_success=True
@@ -333,16 +317,26 @@ def exercise() -> None:
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", updated_pr_sha)
         second_merge_sha = git("rev-parse", "HEAD").strip()
-        second_releases = release_plan(second_base_sha, second_merge_sha, root)
-        second_tags = {release.tag for release in second_releases}
-        if not {"@fixture/api@0.0.2", "@fixture/independent@0.0.1"} <= second_tags:
-            raise AssertionError(
-                f"Second independent package release plan is incomplete: {second_tags!r}"
-            )
-        for release in second_releases:
-            publish_release(release_client, release, second_merge_sha)
-        if release_client.registry_uploads:
-            raise AssertionError("The rehearsal attempted a package registry upload")
+        release_plan(second_base_sha, second_merge_sha, root)
+        result = subprocess.run(
+            [str(cli), "tag"], cwd=root, env=environment, capture_output=True, text=True
+        )
+        if result.returncode:
+            raise AssertionError(f"Second Changesets git-tag failed: {result.stdout}\n{result.stderr}")
+        second_tags = {
+            json.loads(line)["tag"] for line in output_file.read_text().splitlines()
+            if line and json.loads(line).get("type") == "git-tag"
+        }
+        if second_tags != {
+            "@fixture/api@0.0.2",
+            "@fixture/client@0.0.2",
+            "@fixture/independent@0.0.1",
+        }:
+            raise AssertionError(f"Second tag events differ: {second_tags!r}")
+        temporary_notes = prepare_release_notes(output_file, root)
+        if temporary_notes:
+            raise AssertionError("The second release unexpectedly needed fallback changelogs")
+        output_file.unlink()
 
         # A source or unrelated lockfile edit must not qualify as a generated version PR.
         git("switch", "--quiet", "--create", "malformed-version-pr", version_pr_sha)
@@ -360,8 +354,9 @@ def exercise() -> None:
             )
         print(
             "Generated version PRs and fast-forward updates are recognized; "
-            "0.0.1 then 0.0.2 package tags/releases "
-            "remain independent and registry-free; unrelated lockfile content is rejected."
+            "CLI tag events target exact merge commits and include eligible unchanged "
+            "private packages without registry publication; unrelated lockfile content "
+            "is rejected."
         )
 
 

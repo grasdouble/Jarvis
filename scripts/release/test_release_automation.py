@@ -15,10 +15,8 @@ from authorize_version_branch import (
 from run_changeset_version import run as run_changeset_version
 from release_common import (
     GitHubReleaseClient,
-    PackageRelease,
     ReleaseError,
     github_app_environment,
-    publish_release,
 )
 from publish_releases import changelog_section, verify_merged_version_pr
 
@@ -122,6 +120,67 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("head.repo.full_name == 'grasdouble/Jarvis'", condition)
         self.assertEqual(
             {"contents": "write", "pull-requests": "read"}, release_job["permissions"]
+        )
+
+    def test_post_merge_action_uses_cli_tag_events_without_registry_publish(self) -> None:
+        config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
+        self.assertTrue(config["privatePackages"]["tag"])
+        document = yaml.load(
+            (ROOT / ".github/workflows/package-releases.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        steps = document["jobs"]["release"]["steps"]
+        validation = next(
+            step
+            for step in steps
+            if step.get("name") == "Validate merged version PR and generated diff"
+        )
+        action_index = next(
+            i
+            for i, step in enumerate(steps)
+            if "changesets/action@" in step.get("uses", "")
+        )
+        validation_index = steps.index(validation)
+        self.assertLess(validation_index, action_index)
+        self.assertIn("publish_releases.py", validation["run"])
+        self.assertIn('test "$GITHUB_SHA" = "$MERGE_COMMIT_SHA"', validation["run"])
+        self.assertIn(
+            'test "$(git rev-parse HEAD)" = "$MERGE_COMMIT_SHA"', validation["run"]
+        )
+        action = steps[action_index]
+        self.assertEqual(
+            "changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51",
+            action["uses"],
+        )
+        self.assertIn("tag_private_packages.py", action["with"]["publish-script"])
+        self.assertIn(
+            "--cli node_modules/.bin/changeset", action["with"]["publish-script"]
+        )
+        self.assertEqual("true", action["with"]["create-github-releases"])
+        self.assertEqual("true", action["with"]["push-git-tags"])
+        self.assertNotIn(
+            "changeset publish", action["with"]["publish-script"]
+        )
+        self.assertEqual("${{ steps.app.outputs.token }}", action["with"]["github-token"])
+
+    def test_pinned_action_retry_limitations_are_documented(self) -> None:
+        docs = "\n".join(
+            (ROOT / path).read_text(encoding="utf-8")
+            for path in (
+                "docs/development-workflow.md",
+                "docs/package-release-app-setup.md",
+            )
+        ).lower()
+        self.assertIn("tag-push failures can be warnings", docs)
+        self.assertIn("release creation continues", docs)
+        self.assertIn("can therefore use a pre-existing tag that points elsewhere", docs)
+        self.assertIn("exact merge-sha binding is guaranteed only when tag creation succeeds", docs)
+        self.assertIn("does not reconcile existing releases", docs)
+        self.assertIn("duplicate creation can fail on rerun", docs)
+        self.assertIn("leaves them there for the action to read", docs)
+        self.assertIn(
+            "python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset",
+            docs,
         )
 
     def test_release_logic_is_local_and_version_generation_uses_validated_runner(self) -> None:
@@ -345,129 +404,6 @@ class ReleaseBehaviorTests(unittest.TestCase):
         client.pull["user"]["login"] = "human-user"
         with self.assertRaisesRegex(ReleaseError, "not the configured App"):
             verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-    def test_release_rerun_reconciles_an_existing_correct_tag(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "a" * 40
-
-        publish_release(client, release, "a" * 40)
-        publish_release(client, release, "a" * 40)
-
-        self.assertEqual(0, client.tag_create_count)
-        self.assertEqual(1, client.release_create_count)
-        self.assertEqual("a" * 40, client.tags[release.tag])
-        self.assertEqual("main", client.releases[release.tag]["target_commitish"])
-
-    def test_conflicting_existing_tag_is_rejected_without_retagging(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "b" * 40
-
-        with self.assertRaisesRegex(ReleaseError, "not the verified release commit"):
-            publish_release(client, release, "a" * 40)
-
-        self.assertEqual(0, client.tag_create_count)
-        self.assertEqual({}, client.releases)
-
-    def test_interruption_after_tag_creation_resumes_release_creation(self) -> None:
-        client = FakeReleaseClient(fail_after_tag_once=True)
-        release = artifact("@fixture/api", "0.0.1")
-
-        with self.assertRaisesRegex(ReleaseError, "interrupted after tag"):
-            publish_release(client, release, "a" * 40)
-        publish_release(client, release, "a" * 40)
-
-        self.assertEqual("a" * 40, client.tags[release.tag])
-        self.assertEqual(1, client.release_create_count)
-        self.assertIn(release.tag, client.releases)
-
-    def test_existing_release_with_different_notes_is_rejected(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "a" * 40
-        client.releases[release.tag] = client.release_payload(release)
-        client.releases[release.tag]["body"] = "unexpected notes"
-
-        with self.assertRaisesRegex(ReleaseError, "conflicts in fields: body"):
-            publish_release(client, release, "a" * 40)
-
-    def test_verified_tag_is_authoritative_when_release_reports_default_branch(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "a" * 40
-        client.releases[release.tag] = client.release_payload(release)
-        client.releases[release.tag]["target_commitish"] = "main"
-
-        publish_release(client, release, "a" * 40)
-
-        self.assertEqual("a" * 40, client.tags[release.tag])
-        self.assertEqual(0, client.release_create_count)
-
-    def test_existing_release_without_its_tag_is_not_repaired_implicitly(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.releases[release.tag] = client.release_payload(release)
-
-        with self.assertRaisesRegex(ReleaseError, "exists without its immutable Git tag"):
-            publish_release(client, release, "a" * 40)
-
-        self.assertEqual({}, client.tags)
-
-def artifact(package: str, version: str) -> PackageRelease:
-    return PackageRelease(
-        package,
-        version,
-        f"{package}@{version}",
-        f"Release notes for {version}.",
-    )
-
-
-class FakeReleaseClient:
-    def __init__(self, *, fail_after_tag_once: bool = False) -> None:
-        self.tags: dict[str, str] = {}
-        self.releases: dict[str, dict] = {}
-        self.tag_create_count = 0
-        self.release_create_count = 0
-        self.fail_after_tag_once = fail_after_tag_once
-
-    def tag_commit(self, tag: str) -> str | None:
-        return self.tags.get(tag)
-
-    def create_tag(self, tag: str, commit_sha: str, message: str) -> None:
-        self.tag_create_count += 1
-        self.tags[tag] = commit_sha
-        if self.fail_after_tag_once:
-            self.fail_after_tag_once = False
-            raise ReleaseError("interrupted after tag reference creation")
-
-    def release(self, tag: str) -> dict | None:
-        return self.releases.get(tag)
-
-    def create_release(self, tag: str, name: str, body: str) -> dict:
-        self.release_create_count += 1
-        result = {
-            "tag_name": tag,
-            "target_commitish": "main",
-            "name": name,
-            "body": body,
-            "draft": False,
-            "prerelease": False,
-        }
-        self.releases[tag] = result
-        return result
-
-    @staticmethod
-    def release_payload(release: PackageRelease) -> dict:
-        return {
-            "tag_name": release.tag,
-            "target_commitish": "main",
-            "name": f"{release.package}@{release.version}",
-            "body": release.notes,
-            "draft": False,
-            "prerelease": False,
-        }
-
 
 class FakePullClient:
     def __init__(self, pull: dict) -> None:

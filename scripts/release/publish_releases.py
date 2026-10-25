@@ -1,4 +1,4 @@
-"""Create GitHub package tags and Releases for a verified Changesets merge."""
+"""Validate a merged Changesets PR before the pinned action writes tags/releases."""
 
 from __future__ import annotations
 
@@ -20,9 +20,7 @@ from check_changeset_package_scope import (  # noqa: E402
 from check_changeset_pr import STABLE_VERSION, is_changesets_version_pr  # noqa: E402
 from release_common import (  # noqa: E402
     GitHubReleaseClient,
-    PackageRelease,
     ReleaseError,
-    publish_release,
     verify_app_identity,
 )
 
@@ -45,7 +43,7 @@ def changelog_section(text: str, version: str) -> str:
     raise ReleaseError(f"CHANGELOG.md is missing the exact version heading {version!r}.")
 
 
-def release_plan(base_sha: str, commit_sha: str, root: Path = ROOT) -> list[PackageRelease]:
+def release_plan(base_sha: str, commit_sha: str, root: Path = ROOT) -> None:
     """Validate the complete generated-PR shape before allowing any remote write."""
     if not re.fullmatch(r"[0-9a-f]{40}", base_sha) or not re.fullmatch(
         r"[0-9a-f]{40}", commit_sha
@@ -102,20 +100,11 @@ def release_plan(base_sha: str, commit_sha: str, root: Path = ROOT) -> list[Pack
     if not versions or versions.keys() != changelogs.keys():
         raise ReleaseError("Generated package versions and changelogs do not match exactly.")
 
-    artifacts: list[PackageRelease] = []
     for package, version in sorted(versions.items()):
         if not PACKAGE_NAME.fullmatch(package):
             raise ReleaseError(f"Package name {package!r} cannot be represented as a release tag.")
         tag = f"{package}@{version}"
-        artifacts.append(
-            PackageRelease(
-                package=package,
-                version=version,
-                tag=tag,
-                notes=changelog_section(changelogs[package], version),
-            )
-        )
-    return artifacts
+        changelog_section(changelogs[package], version)
 
 
 def verify_merged_version_pr(
@@ -170,14 +159,12 @@ def main() -> int:
         for name in ("GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"):
             os.environ.pop(name, None)
         # The strict diff and manifest inspection subprocesses need no credentials.
-        artifacts = release_plan(args.base_sha, args.commit_sha)
+        release_plan(args.base_sha, args.commit_sha)
         verify_app_identity(os.environ)
         app_slug = os.environ.get("PACKAGE_RELEASE_APP_SLUG", "")
         client = GitHubReleaseClient(token)
         verify_merged_version_pr(client, args.pull_number, args.commit_sha, app_slug)
-        for artifact in artifacts:
-            publish_release(client, artifact, args.commit_sha)
-            print(f"Verified GitHub Release {artifact.tag} at {args.commit_sha}.")
+        print(f"Validated merged version PR #{args.pull_number} at {args.commit_sha}.")
     except (OSError, subprocess.CalledProcessError, ReleaseError, ValueError) as error:
         print(f"Package release failed closed: {error}", file=sys.stderr)
         return 1
