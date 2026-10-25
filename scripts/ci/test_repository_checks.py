@@ -174,14 +174,13 @@ key: duplicate
         self.assertEqual(artifact['with']['path'], '${{ runner.temp }}/integration-report.json')
         self.assertNotIn('candidate.json', artifact['with']['path'])
 
-    def test_manual_integration_database_name_is_consistent(self):
+    def test_integration_workflows_use_distinct_database_names(self):
         root = Path(__file__).resolve().parents[2]
-        database = 'jarvis_integration_manual'
-        workflows = {
-            'on-demand-runtime-integration.yml': 'qualify',
-            'repository-checks.yml': 'configuration',
-        }
-        for filename, job_name in workflows.items():
+        workflows = (
+            ('on-demand-runtime-integration.yml', 'qualify', 'jarvis_integration_manual'),
+            ('repository-checks.yml', 'configuration', 'jarvis_integration_auto'),
+        )
+        for filename, job_name, database in workflows:
             with self.subTest(workflow=filename):
                 workflow = load_yaml((root / f'.github/workflows/{filename}').read_text())
                 job = workflow['jobs'][job_name]
