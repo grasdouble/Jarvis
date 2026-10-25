@@ -1,8 +1,10 @@
 """Acceptance tests for the Changesets package release workflow."""
 
+import json
 import os
 from pathlib import Path
 import re
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +20,8 @@ from release_common import (
     ReleaseError,
     github_app_environment,
 )
+from prepare_private_release_notes import prepare_release_notes
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -156,6 +160,19 @@ class ReleaseAutomationContractTests(unittest.TestCase):
     def test_post_merge_action_uses_cli_tag_events_without_registry_publish(self) -> None:
         config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
         self.assertTrue(config["privatePackages"]["tag"])
+        workspace_manifests = [
+            manifest
+            for workspace_root in (ROOT / "apps", ROOT / "packages")
+            for manifest in workspace_root.glob("*/package.json")
+        ]
+        self.assertTrue(workspace_manifests)
+        self.assertTrue(
+            all(
+                json.loads(manifest.read_text(encoding="utf-8")).get("private") is True
+                for manifest in workspace_manifests
+            ),
+            "The default Changesets publish command is safe only while all release workspaces are private",
+        )
         document = yaml.load(
             (ROOT / ".github/workflows/changeset-releases.yml").read_text(),
             Loader=yaml.BaseLoader,
@@ -172,10 +189,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             action["uses"],
         )
         self.assertEqual("${{ steps.app.outputs.token }}", action["with"]["release-token"])
-        self.assertIn(
-            "python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset",
-            action["with"]["publish-command"],
-        )
+        self.assertNotIn("publish-command", action["with"])
         self.assertEqual("true", action["with"]["create-github-releases"])
         self.assertNotIn("version-command", action["with"])
         self.assertNotIn("github-token", action["with"])
@@ -184,6 +198,58 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             "changesets/action@" in step.get("uses", "")
             for step in steps
         ))
+
+    def test_private_release_notes_are_prepared_before_the_lufa_default_publish(self) -> None:
+        config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
+        self.assertTrue(config["privatePackages"]["tag"])
+        document = yaml.load(
+            (ROOT / ".github/workflows/changeset-releases.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        steps = document["jobs"]["release"]["steps"]
+        preparation_index = next(
+            i for i, step in enumerate(steps)
+            if step.get("name") == "Prepare fallback changelogs for private packages"
+        )
+        action_index = next(
+            i for i, step in enumerate(steps)
+            if "grasdouble/Lufa-CICD/actions/changesets-release@" in step.get("uses", "")
+        )
+        preparation = steps[preparation_index]
+        self.assertIn("prepare_private_release_notes.py", preparation["run"])
+        self.assertLess(preparation_index, action_index)
+        self.assertNotIn("publish-command", steps[action_index]["with"])
+
+    def test_fallback_changelogs_are_only_created_for_private_packages_missing_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            private = root / "packages/private"
+            private.mkdir(parents=True)
+            (private / "package.json").write_text(
+                '{"name":"@fixture/private","version":"1.2.3","private":true}',
+                encoding="utf-8",
+            )
+            public = root / "packages/public"
+            public.mkdir()
+            (public / "package.json").write_text(
+                '{"name":"@fixture/public","version":"1.2.3","private":false}',
+                encoding="utf-8",
+            )
+            with_notes = root / "apps/with-notes"
+            with_notes.mkdir(parents=True)
+            (with_notes / "package.json").write_text(
+                '{"name":"@fixture/with-notes","version":"2.3.4","private":true}',
+                encoding="utf-8",
+            )
+            existing = with_notes / "CHANGELOG.md"
+            existing.write_text("existing notes\n", encoding="utf-8")
+
+            created = prepare_release_notes(root)
+
+            self.assertEqual([private / "CHANGELOG.md"], created)
+            self.assertIn("## 1.2.3", created[0].read_text(encoding="utf-8"))
+            self.assertFalse((public / "CHANGELOG.md").exists())
+            self.assertEqual("existing notes\n", existing.read_text(encoding="utf-8"))
 
     def test_pinned_action_retry_limitations_are_documented(self) -> None:
         docs = "\n".join(
@@ -203,7 +269,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("duplicate creation can fail on rerun", docs)
         self.assertIn("leaves them there for the action to read", docs)
         self.assertIn(
-            "python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset",
+            "python3 scripts/release/prepare_private_release_notes.py",
             docs,
         )
 

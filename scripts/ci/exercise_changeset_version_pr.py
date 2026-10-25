@@ -1,4 +1,4 @@
-"""Exercise the Changesets PR gate against the pinned CLI's generated version output."""
+"""Exercise generated Changesets PR validation and private-only default publishing."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from check_changeset_pr import is_changesets_version_pr
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSION_PR_GATE = REPO_ROOT / "scripts/ci/check_changeset_pr.py"
 PACKAGE_SCOPE_GATE = REPO_ROOT / "scripts/ci/check_changeset_package_scope.py"
-TAG_PRIVATE_PACKAGES = REPO_ROOT / "scripts/release/tag_private_packages.py"
+PREPARE_PRIVATE_RELEASE_NOTES = REPO_ROOT / "scripts/release/prepare_private_release_notes.py"
 PINNED_CHANGESET_VERSION = "3.0.3"
 
 
@@ -40,7 +40,6 @@ def changeset_cli() -> Path:
             f"found {metadata.get('name')} {metadata.get('version')}"
         )
     return absolute_cli
-sys.path.insert(0, str(REPO_ROOT / "scripts/release"))
 
 
 def run(command: list[str], cwd: Path, expect_success: bool) -> subprocess.CompletedProcess[str]:
@@ -50,6 +49,29 @@ def run(command: list[str], cwd: Path, expect_success: bool) -> subprocess.Compl
             f"Unexpected exit {result.returncode} for {command}:\n{result.stdout}\n{result.stderr}"
         )
     return result
+
+
+def prepare_private_notes(root: Path) -> subprocess.CompletedProcess[str]:
+    return run(
+        [sys.executable, str(PREPARE_PRIVATE_RELEASE_NOTES), "--root", str(root)],
+        REPO_ROOT,
+        expect_success=True,
+    )
+
+
+def default_private_publish(
+    cli: Path, root: Path, output_file: Path
+) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    environment["CHANGESETS_OUTPUT"] = str(output_file)
+    # Any accidental registry lookup is confined to a nonexistent local file URL.
+    # All fixture workspaces are private, so Changesets must skip npm info/publish and
+    # produce only local git-tag events.
+    environment["npm_config_registry"] = (root / "missing-registry").as_uri()
+    environment["NPM_CONFIG_REGISTRY"] = environment["npm_config_registry"]
+    return subprocess.run(
+        [str(cli), "publish"], cwd=root, env=environment, capture_output=True, text=True
+    )
 
 
 def exercise() -> None:
@@ -117,6 +139,8 @@ def exercise() -> None:
         git("init", "--quiet", "--initial-branch=main")
         git("config", "user.name", "Changesets version PR test")
         git("config", "user.email", "changesets-version-pr@example.invalid")
+        # Changesets probes origin tags; keep that operation strictly local too.
+        git("remote", "add", "origin", (root / "missing-origin").as_uri())
         git(
             "add",
             ".gitignore",
@@ -197,34 +221,25 @@ def exercise() -> None:
         if "Generated Changesets version PR detected" not in gate_result.stdout:
             raise AssertionError("The unified PR gate did not recognize the generated version PR")
 
-        # Simulate the confirmed merge commit; Changesets tags every eligible private
-        # package (including unchanged packages), and the pinned action consumes these
-        # events to push tags at its exact context.sha and create GitHub Releases.
+        # Simulate the confirmed merge commit. The action's default `changeset publish`
+        # path must turn eligible private workspaces into local tag events without any
+        # registry access; the separate workflow step has already prepared fallback notes.
         version_pr_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", "version-pr")
         first_merge_sha = git("rev-parse", "HEAD").strip()
         output_file = root / "changesets-output.ndjson"
-        environment = os.environ.copy()
-        environment["CHANGESETS_OUTPUT"] = str(output_file)
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(TAG_PRIVATE_PACKAGES),
-                "--cli",
-                str(cli),
-                "--cwd",
-                str(root),
-            ],
-            cwd=REPO_ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-        )
+        if any(
+            json.loads((root / f"packages/{name}/package.json").read_text()).get("private") is not True
+            for name in ("api", "client", "independent")
+        ):
+            raise AssertionError("The registry-free fixture must contain only private workspaces")
+        prepared = prepare_private_notes(root)
+        if "Prepared fallback changelogs for 1 private package(s)." not in prepared.stdout:
+            raise AssertionError(f"Unexpected fallback changelog preparation: {prepared.stdout}")
+        result = default_private_publish(cli, root, output_file)
         if result.returncode:
-            raise AssertionError(f"The private-tag wrapper failed: {result.stdout}\n{result.stderr}")
-        if "Prepared fallback changelogs for 1 package(s)." not in result.stdout:
-            raise AssertionError("The wrapper did not supply notes for missing changelogs")
+            raise AssertionError(f"Default Changesets publish failed: {result.stdout}\n{result.stderr}")
         first_events = [json.loads(line) for line in output_file.read_text().splitlines() if line]
         first_tags = {event["tag"] for event in first_events if event.get("type") == "git-tag"}
         expected_first_tags = {
@@ -325,22 +340,12 @@ def exercise() -> None:
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", updated_pr_sha)
         second_merge_sha = git("rev-parse", "HEAD").strip()
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(TAG_PRIVATE_PACKAGES),
-                "--cli",
-                str(cli),
-                "--cwd",
-                str(root),
-            ],
-            cwd=REPO_ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-        )
+        prepared = prepare_private_notes(root)
+        if "Prepared fallback changelogs for 0 private package(s)." not in prepared.stdout:
+            raise AssertionError(f"Unexpected second fallback preparation: {prepared.stdout}")
+        result = default_private_publish(cli, root, output_file)
         if result.returncode:
-            raise AssertionError(f"Second private-tag wrapper failed: {result.stdout}\n{result.stderr}")
+            raise AssertionError(f"Second default Changesets publish failed: {result.stdout}\n{result.stderr}")
         second_tags = {
             json.loads(line)["tag"] for line in output_file.read_text().splitlines()
             if line and json.loads(line).get("type") == "git-tag"
@@ -351,8 +356,6 @@ def exercise() -> None:
             "@fixture/independent@0.0.1",
         }:
             raise AssertionError(f"Second tag events differ: {second_tags!r}")
-        if "Prepared fallback changelogs for 0 package(s)." not in result.stdout:
-            raise AssertionError("Second release unexpectedly needed fallback changelogs")
         output_file.unlink()
 
         # A source or unrelated lockfile edit must not qualify as a generated version PR.
@@ -371,8 +374,8 @@ def exercise() -> None:
             )
         print(
             "Generated version PRs and fast-forward updates are recognized; "
-            "CLI tag events target exact merge commits and include eligible unchanged "
-            "private packages without registry publication; unrelated lockfile content "
+            "default CLI publish emits tags at exact merge commits for eligible unchanged "
+            "private packages without registry access; unrelated lockfile content "
             "is rejected."
         )
 
