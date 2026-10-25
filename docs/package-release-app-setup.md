@@ -1,6 +1,6 @@
 # Provision the package-release GitHub App
 
-This guide is for an authorized organization/repository administrator provisioning the CI identity used by the Changesets version-PR and package-release workflows. Registering an organization App requires an organization owner or delegated GitHub App manager; installation and environment configuration may require organization-owner or repository-admin access. It does not authorize an agent to create or modify GitHub settings.
+This guide is the canonical operational source for provisioning the CI identity used by the Changesets version-PR and package-release workflows, including known workflow limitations and the cited point-in-time setup evidence. It is for an authorized organization/repository administrator. Registering an organization App requires an organization owner or delegated GitHub App manager; installation and environment configuration may require organization-owner or repository-admin access. It does not authorize an agent to create or modify GitHub settings. Tracked workflow behavior is not proof that live App/environment settings remain configured as described.
 
 The CI App is separate from both the local [`Jarvis Development Grasdouble` App](development-github-app.md) and the future product App in issue [#10](https://github.com/grasdouble/Jarvis/issues/10). Do not reuse the local development App or its Mac PEM, and do not use a personal token.
 
