@@ -174,6 +174,16 @@ key: duplicate
         self.assertEqual(artifact['with']['path'], '${{ runner.temp }}/integration-report.json')
         self.assertNotIn('candidate.json', artifact['with']['path'])
 
+    def test_manual_integration_database_name_is_consistent(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = load_yaml((root / '.github/workflows/on-demand-runtime-integration.yml').read_text())
+        job = workflow['jobs']['qualify']
+        database = 'jarvis_integration_manual'
+        self.assertEqual(job['services']['postgres']['env']['POSTGRES_DB'], database)
+        self.assertIn(f'pg_isready -U jarvis_ci -d {database}', job['services']['postgres']['options'])
+        self.assertEqual(job['env']['POSTGRES_DB'], database)
+        self.assertEqual(job['env']['JARVIS_TEST_DATABASE_URL'].rsplit('/', 1)[-1], database)
+
     def test_existing_local_link_passes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
