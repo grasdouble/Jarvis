@@ -1,8 +1,67 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createStopControlHttpHandler } from "../dist/stop-controls.js";
+import { createOperationalStopControlHandler, createStopControlHttpHandler } from "../dist/stop-controls.js";
 import { createOperationalDashboardServer } from "../dist/http-server.js";
 import { once } from "node:events";
+import { performance } from "node:perf_hooks";
+import * as worker from "../../worker/dist/index.js";
+
+test("injected stop composition stops matching tasks, leaves fresh work on resume, and preserves uncertain effects", async (context) => {
+  const state = { global: { stopped: false, version: 1, changedBy: "owner", changedAt: new Date(0) }, project: null };
+  const store = {
+    get: async ({ projectId } = {}) => ({ ...state, project: projectId && state.project?.projectId === projectId ? state.project.record : null }),
+    set: async ({ projectId, stopped, expectedVersion, ownerId }) => {
+      const record = projectId ? state.project?.record ?? { stopped: false, version: 0, changedBy: ownerId, changedAt: new Date(0) } : state.global;
+      assert.equal(record.version, expectedVersion);
+      record.stopped = stopped;
+      record.version += 1;
+      if (projectId) state.project = { projectId, record };
+      else state.global = record;
+    },
+  };
+  const started = [];
+  const sandboxStops = [];
+  const executions = [];
+  const executor = worker.createStopAwareExecutor({
+    readStop: worker.createPersistedStopReader(store),
+    dispatch: async (_capability, signal) => new Promise((resolve) => { started.push(resolve); signal.addEventListener("abort", () => {}, { once: true }); }),
+    revokeCapability: async () => undefined,
+    stopSandbox: async (taskId, timeoutMs) => { sandboxStops.push({ taskId, timeoutMs }); return "stopped"; },
+    recordAcceptedEffectUnknown: async () => undefined,
+  }, { pollIntervalMs: 10, shutdownTimeoutMs: 100 });
+  const execute = (taskId, projectId) => {
+    const execution = executor.execute({ taskId, projectId, capability: `cap-${taskId}` });
+    executions.push(execution);
+    return execution;
+  };
+  context.after(async () => { await executor.stop(); await Promise.allSettled(executions); });
+  const auth = { authorizeRead: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }), authorizeMutation: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }) };
+  const control = createOperationalStopControlHandler(store, auth, executor);
+  const one = execute("task-one", "project-one");
+  const two = execute("task-two", "project-two");
+  while (started.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  state.project = { projectId: "project-one", record: { stopped: false, version: 0, changedBy: "owner", changedAt: new Date(0) } };
+  const stopStartedAt = performance.now();
+  const response = await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: true, expectedVersion: 0 } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await one, { kind: "stop_unknown" });
+  const blockNewCallsMs = performance.now() - stopStartedAt;
+  context.diagnostic(`in-process composition blocked calls/cancelled the active task in ${blockNewCallsMs.toFixed(2)} ms (mock persistence, dispatch, capability revocation and sandbox cancellation)`);
+  assert.ok(blockNewCallsMs < 2_000, `local injected runtime blocked calls in ${blockNewCallsMs.toFixed(2)} ms`);
+  assert.deepEqual(executor.activeTaskIds(), ["task-two"]);
+  assert.deepEqual(sandboxStops, [{ taskId: "task-one", timeoutMs: 100 }]);
+  assert.equal((await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: false, expectedVersion: 1 } })).status, 200);
+  const fresh = execute("task-fresh-after-resume", "project-one");
+  while (started.length < 3) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: false, expectedVersion: 2 } })).status, 200);
+  assert.deepEqual(executor.activeTaskIds(), ["task-two", "task-fresh-after-resume"], "resume must not stop fresh active work");
+  assert.deepEqual(sandboxStops, [{ taskId: "task-one", timeoutMs: 100 }], "resume must not request sandbox cancellation");
+  assert.equal((await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: true, expectedVersion: 3 } })).status, 200, "a stop mutation still cancels matching active work");
+  assert.deepEqual(await fresh, { kind: "stop_unknown" });
+  assert.deepEqual(sandboxStops, [{ taskId: "task-one", timeoutMs: 100 }, { taskId: "task-fresh-after-resume", timeoutMs: 100 }]);
+  await executor.stop("project-two");
+  await two;
+});
 
 test("stop mutation uses authenticated owner, requires closed versioned body, and maps stale version to 409", async () => {
   const writes = [];
