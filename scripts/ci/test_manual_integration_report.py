@@ -114,6 +114,64 @@ class ManualIntegrationReportTests(unittest.TestCase):
                     self.assertEqual(error.exception.code, 1)
                     self.assertEqual(json.loads(output.read_text())['result'], 'fail')
 
+    def test_setup_failure_is_reported_and_prevents_integration_commands(self):
+        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 1,
+                  'duration_seconds': 1.25, 'started_at_utc': '2026-01-01T00:00:00+00:00',
+                  'ended_at_utc': '2026-01-01T00:00:01+00:00'}]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.dict('os.environ', {'JARVIS_SETUP_RESULTS': json.dumps(setup)}), \
+                    patch.object(report.subprocess, 'run') as execute:
+                with self.assertRaises(SystemExit):
+                    report.run_report(candidate, output)
+            execute.assert_not_called()
+            saved = json.loads(output.read_text())
+            self.assertEqual(saved['setup_commands'], setup)
+            self.assertEqual(saved['commands'], setup)
+            self.assertEqual(saved['integration_status'], 'not_run')
+            self.assertEqual(saved['result'], 'fail')
+
+    def test_setup_success_is_accounted_before_all_integration_commands(self):
+        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 0,
+                  'duration_seconds': 1.0}, {'command': 'pnpm install --frozen-lockfile',
+                  'exit_code': 0, 'duration_seconds': 2.0}]
+        tap = (f'TAP version 13\n1..1\nok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n'
+               '# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.dict('os.environ', {'JARVIS_SETUP_RESULTS': json.dumps(setup)}), \
+                    patch.object(report.subprocess, 'run', side_effect=results) as execute:
+                report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(execute.call_count, 3)
+        self.assertEqual(saved['commands'][:2], setup)
+        self.assertEqual(len(saved['commands']), 5)
+        self.assertEqual(saved['integration_status'], 'run')
+
+    def test_build_failure_is_reported_without_running_persistence_test(self):
+        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 0,
+                  'duration_seconds': 1.0}]
+        build_result = type('Result', (), {'returncode': 2, 'stdout': 'build failed'})()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.dict('os.environ', {'JARVIS_SETUP_RESULTS': json.dumps(setup)}), \
+                    patch.object(report.subprocess, 'run', return_value=build_result) as execute:
+                with self.assertRaises(SystemExit) as error:
+                    report.run_report(candidate, output)
+            self.assertEqual(error.exception.code, 1)
+            execute.assert_called_once()
+            saved = json.loads(output.read_text())
+        self.assertEqual(len(saved['commands']), 2)
+        self.assertEqual(saved['commands'][-1]['exit_code'], 2)
+        self.assertEqual(saved['integration_status'], 'not_run')
+        self.assertEqual(saved['result'], 'fail')
+        self.assertEqual(saved['exit_code'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

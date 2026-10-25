@@ -84,20 +84,25 @@ def run_report(candidate, output):
     ]
     start_time = datetime.now(timezone.utc)
     command_results = []
+    setup_results = json.loads(os.environ.get('JARVIS_SETUP_RESULTS', '[]'))
     test_output = ''
-    for command in commands:
+    command_results.extend(setup_results)
+    for command in commands if not any(item['exit_code'] != 0 for item in setup_results) else []:
+        command_started_at = datetime.now(timezone.utc)
         started = time.monotonic()
         result = subprocess.run(command, text=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, check=False)
         elapsed = round(time.monotonic() - started, 3)
         command_results.append({'command': ' '.join(command), 'exit_code': result.returncode,
-                                'duration_seconds': elapsed})
+                                'duration_seconds': elapsed, 'started_at_utc': command_started_at.isoformat(),
+                                'ended_at_utc': datetime.now(timezone.utc).isoformat()})
         if command[-1] == 'test':
             test_output = result.stdout
         if result.returncode:
             break
     end_time = datetime.now(timezone.utc)
-    test_result = result
+    test_result = result if command_results and command_results[-1]['command'].endswith(' test') else type(
+        'Result', (), {'returncode': next((x['exit_code'] for x in command_results if x['exit_code']), 1)})()
     command_failed = any(item['exit_code'] != 0 for item in command_results)
     test_was_run = command_results[-1]['command'].endswith(' test')
     try:
@@ -115,7 +120,9 @@ def run_report(candidate, output):
               and totals['tests'] > 0 and totals['fail'] == 0 and totals['skipped'] == 0
               and totals['cancelled'] == 0 and totals['todo'] == 0)
     report = {
-        **candidate, 'commands': command_results, 'result': 'pass' if passed else 'fail',
+        **candidate, 'commands': command_results, 'setup_commands': setup_results,
+        'integration_status': 'not_run' if not test_was_run else 'run',
+        'result': 'pass' if passed else 'fail',
         'started_at_utc': start_time.isoformat(), 'ended_at_utc': end_time.isoformat(),
         'exit_code': test_result.returncode, 'duration_seconds': round(sum(x['duration_seconds'] for x in command_results), 3), 'tap': totals,
         'scenarios': scenarios, 'tap_parse_error': parse_error, 'required_scenario_error': scenario_error,
@@ -128,6 +135,20 @@ def run_report(candidate, output):
     print('Integration report: ' + json.dumps(report, sort_keys=True))
     if not passed:
         raise SystemExit(1)
+
+
+def record_command(command, output):
+    started_at = datetime.now(timezone.utc)
+    started = time.monotonic()
+    result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    record = {'command': ' '.join(command), 'exit_code': result.returncode,
+              'duration_seconds': round(time.monotonic() - started, 3),
+              'started_at_utc': started_at.isoformat(),
+              'ended_at_utc': datetime.now(timezone.utc).isoformat()}
+    Path(output).write_text(json.dumps(record) + '\n')
+    print(result.stdout, end='')
+    print(json.dumps(record))
+    raise SystemExit(result.returncode)
 
 
 def main():
@@ -143,6 +164,9 @@ def main():
     run.add_argument('--base', required=True)
     run.add_argument('--head', required=True)
     run.add_argument('--output', required=True)
+    record = sub.add_parser('record-command')
+    record.add_argument('--output', required=True)
+    record.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.action == 'validate':
         try:
@@ -151,6 +175,9 @@ def main():
             print(f'Candidate validation failed: {error}', file=sys.stderr)
             raise SystemExit(1)
         write_github_output(args.github_output, data)
+    elif args.action == 'record-command':
+        command = args.command[1:] if args.command and args.command[0] == '--' else args.command
+        record_command(command, args.output)
     else:
         try:
             candidate = candidate_from_values(args.pr, args.base, args.head)
