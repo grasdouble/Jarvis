@@ -13,7 +13,7 @@ Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-ti
 
 ADR-0012 was withdrawn at the owner's direction before adoption; its standalone candidate record was removed in the JV-125 change. The identifier is retired and will not be reused. The accepted product direction is recorded in [PRD D17](../prd-and-roadmap.md#12-decision-register-and-fallback-values) and its owner evidence in JV-124/JV-125.
 
-Each new index row records ID/title, status, owner, relevant requirement/Dxx or legacy ADR references, record link and acceptance/supersession evidence. Keep source and status consistent with the record; do not duplicate its full rationale here.
+Each new index row records ID/title, status, owner, relevant requirement/Dxx or legacy ADR references, record link and acceptance/supersession evidence. Keep source and status consistent with the record; do not duplicate its full rationale here. The index is decision history, not a live verification log: dated operational evidence belongs with the relevant operational procedure, and must identify what was actually checked and when.
 
 ## Lifecycle and acceptance
 
