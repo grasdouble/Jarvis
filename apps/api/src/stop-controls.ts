@@ -7,6 +7,19 @@ export interface StopControlChangedPort {
   notify(input: { readonly projectId?: string; readonly stopped: boolean }): Promise<void>;
 }
 
+export interface StopControlWorkerPort {
+  stop(projectId?: string): Promise<void>;
+}
+
+/** Compose the authenticated persisted stop API with a colocated worker wakeup.
+ * Cross-process/restart behavior still relies on the worker's durable polling.
+ */
+export function createOperationalStopControlHandler(store: PostgresStopControlStore, auth: OwnerAuthBoundary, worker: StopControlWorkerPort) {
+  return createStopControlHttpHandler(store, auth, {
+    notify: ({ projectId, stopped }) => stopped ? worker.stop(projectId) : Promise.resolve(),
+  });
+}
+
 export function createStopControlHttpHandler(store: PostgresStopControlStore, auth: OwnerAuthBoundary, changed?: StopControlChangedPort) {
   return async (request: OwnerAuthHttpRequest & { readonly method: string; readonly projectId?: string }): Promise<OwnerAuthHttpResponse> => {
     if (request.method === "GET") {

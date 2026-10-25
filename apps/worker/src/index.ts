@@ -2,6 +2,20 @@ export const serviceName = "worker";
 import type { QueueLease, QueueResult, QueueService } from "@jarvis/queue";
 
 export interface StopSnapshot { readonly stopped: boolean; readonly version: number }
+export interface PersistedStopControlReader {
+  get(input: { readonly projectId: string }): Promise<{ readonly global: { readonly stopped: boolean; readonly version: number }; readonly project: { readonly stopped: boolean; readonly version: number } | null }>;
+}
+
+/** Adapt durable global/project controls to the worker's fail-closed admission port. */
+export function createPersistedStopReader(store: PersistedStopControlReader): (projectId: string) => Promise<StopSnapshot> {
+  return async (projectId) => {
+    const snapshot = await store.get({ projectId });
+    return {
+      stopped: snapshot.global.stopped || snapshot.project?.stopped === true,
+      version: Math.max(snapshot.global.version, snapshot.project?.version ?? 0),
+    };
+  };
+}
 export interface StopAwareExecutionPorts<C, R> {
   /** Must read durable effective (global OR project) stop state; failures deny dispatch. */
   readStop(projectId: string): Promise<StopSnapshot>;
