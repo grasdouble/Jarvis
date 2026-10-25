@@ -17,6 +17,7 @@ from check_changeset_package_scope import (
     _git,
     _package_data,
     changed_paths,
+    changed_versionable_workspaces,
     validate,
     workspace_packages,
 )
@@ -353,10 +354,20 @@ def run_gate(
             "version/changelog changes are exempt from the source-PR Changesets gate."
         )
         return True
-    subprocess.run(
-        ["pnpm", "changeset", "status", f"--since={base_sha}"], cwd=root, check=True
-    )
     validate(base_sha, root, excluded_paths, workspace_head_sha)
+    changed_entries = changed_paths(base_sha, root, workspace_head_sha)
+    has_changeset_entry_change = any(
+        path.parent == PurePosixPath(".changeset")
+        and path.suffix == ".md"
+        and path.as_posix() != ".changeset/README.md"
+        for _, path in changed_entries
+    )
+    if has_changeset_entry_change or changed_versionable_workspaces(
+        base_sha, root, excluded_paths, workspace_head_sha
+    ):
+        subprocess.run(
+            ["pnpm", "changeset", "status", f"--since={base_sha}"], cwd=root, check=True
+        )
     return False
 
 

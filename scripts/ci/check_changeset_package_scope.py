@@ -182,6 +182,27 @@ def changed_workspace_names(
     return names
 
 
+def changed_versionable_workspaces(
+    base_sha: str,
+    root: Path,
+    excluded_paths: list[str] | None = None,
+    head_sha: str = "HEAD",
+) -> set[str]:
+    """Return release-relevant workspaces with diff-visible paths at PR head."""
+    packages = workspace_packages(root, head_sha, versionable_only=False)
+    paths = changed_file_paths(base_sha, head_sha, root)
+    excluded_paths = excluded_paths or []
+    return {
+        name
+        for package_root, name in packages.items()
+        if any(
+            package_root in path.parents
+            and not any(_path_matches_glob(path.as_posix(), pattern) for pattern in excluded_paths)
+            for path in paths
+        )
+    }
+
+
 def parse_changeset(text: str) -> set[str] | None:
     """Return release target names, an empty set for no-release, or None for docs."""
     match = FRONTMATTER.match(text)
@@ -192,6 +213,11 @@ def parse_changeset(text: str) -> set[str] | None:
         return set()
     if not isinstance(frontmatter, dict) or not all(isinstance(name, str) for name in frontmatter):
         raise ValueError("Changeset frontmatter must map package names to release types")
+    if any(
+        not isinstance(bump, str) or bump not in {"patch", "minor", "major"}
+        for bump in frontmatter.values()
+    ):
+        raise ValueError("Changeset release types must be patch, minor, or major")
     return set(frontmatter)
 
 
@@ -205,8 +231,9 @@ def head_changeset_targets(
         if path.parent != PurePosixPath(".changeset") or path.suffix != ".md" or raw_path == ".changeset/README.md":
             continue
         parsed = parse_changeset(_git(root, "show", f"{head_sha}:{raw_path}"))
-        if parsed is not None:
-            targets.update(parsed)
+        if parsed is None:
+            raise ValueError(f"Changed Changeset file has invalid frontmatter: {raw_path}")
+        targets.update(parsed)
     return targets
 
 
@@ -242,7 +269,10 @@ def validate(
     changed_changeset_paths = [
         path
         for status, path in changes
-        if status != "D" and path.parent == PurePosixPath(".changeset") and path.suffix == ".md"
+        if status != "D"
+        and path.parent == PurePosixPath(".changeset")
+        and path.suffix == ".md"
+        and path.as_posix() != ".changeset/README.md"
     ]
     stale_targets = head_changeset_targets(root, head_sha, changed_changeset_paths) - head_names
     if stale_targets:
@@ -252,19 +282,21 @@ def validate(
             + ". Remove stale targets."
         )
     excluded_paths = excluded_paths or []
-    changed: set[str] = set()
-    for package_root, name in head_packages.items():
-        package_paths = [path for path in paths if package_root in path.parents]
+    changed = {
+        name
+        for package_root, name in head_packages.items()
         if any(
-            not any(_path_matches_glob(path.as_posix(), pattern) for pattern in excluded_paths)
-            for path in package_paths
-        ):
-            changed.add(name)
+            package_root in path.parents
+            and not any(_path_matches_glob(path.as_posix(), pattern) for pattern in excluded_paths)
+            for path in paths
+        )
+    }
     entries = []
     for path in changed_changeset_paths:
         parsed = parse_changeset(_git(root, "show", f"{head_sha}:{path.as_posix()}"))
-        if parsed is not None:
-            entries.append(parsed)
+        if parsed is None:
+            raise ValueError(f"Changed Changeset file has invalid frontmatter: {path}")
+        entries.append(parsed)
     error = changeset_coverage_error(changed, entries)
     if error:
         raise ValueError(error)
