@@ -63,6 +63,63 @@ test("injected stop composition stops matching tasks, leaves fresh work on resum
   await two;
 });
 
+test("injected composition applies persisted global stop across projects and gates subsequent dispatch", async (context) => {
+  const state = { global: { stopped: false, version: 1, changedBy: "owner", changedAt: new Date(0) }, projects: new Map() };
+  const store = {
+    get: async ({ projectId } = {}) => ({
+      global: state.global,
+      project: projectId ? state.projects.get(projectId) ?? null : null,
+    }),
+    set: async ({ projectId, stopped, expectedVersion, ownerId }) => {
+      const previous = projectId
+        ? state.projects.get(projectId) ?? { stopped: false, version: 0, changedBy: ownerId, changedAt: new Date(0) }
+        : state.global;
+      assert.equal(previous.version, expectedVersion);
+      const updated = { ...previous, stopped, version: previous.version + 1, changedBy: ownerId };
+      if (projectId) state.projects.set(projectId, updated);
+      else state.global = updated;
+    },
+  };
+  const dispatches = [];
+  const sandboxStops = [];
+  const unknownEffects = [];
+  const executor = worker.createStopAwareExecutor({
+    readStop: worker.createPersistedStopReader(store),
+    dispatch: async (capability, signal) => {
+      dispatches.push(capability);
+      return new Promise((resolve) => signal.addEventListener("abort", () => {}, { once: true }));
+    },
+    revokeCapability: async () => undefined,
+    stopSandbox: async (taskId, timeoutMs) => { sandboxStops.push({ taskId, timeoutMs }); return "stopped"; },
+    recordAcceptedEffectUnknown: async (taskId) => { unknownEffects.push(taskId); },
+  }, { pollIntervalMs: 10, shutdownTimeoutMs: 100 });
+  const executions = [];
+  context.after(async () => { await executor.stop(); await Promise.allSettled(executions); });
+  const execute = (taskId, projectId) => {
+    const run = executor.execute({ taskId, projectId, capability: `cap-${taskId}` });
+    executions.push(run);
+    return run;
+  };
+  const auth = { authorizeRead: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }), authorizeMutation: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }) };
+  const control = createOperationalStopControlHandler(store, auth, executor);
+  const projectOne = execute("global-task-one", "project-one");
+  const projectTwo = execute("global-task-two", "project-two");
+  while (dispatches.length < 2) await new Promise((resolve) => setImmediate(resolve));
+
+  const response = await control({ method: "POST", headers: {}, body: { stopped: true, expectedVersion: 1 } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await projectOne, { kind: "stop_unknown" });
+  assert.deepEqual(await projectTwo, { kind: "stop_unknown" });
+  assert.deepEqual(executor.activeTaskIds(), []);
+  assert.deepEqual(sandboxStops.map(({ taskId }) => taskId).sort(), ["global-task-one", "global-task-two"]);
+  assert.deepEqual(unknownEffects.sort(), ["global-task-one", "global-task-two"], "possible accepted remote effects remain unknown, not cancelled or erased");
+
+  const gated = await execute("global-task-three", "project-three");
+  assert.deepEqual(gated, { kind: "stopped" });
+  assert.deepEqual(dispatches, ["cap-global-task-one", "cap-global-task-two"], "persisted global stop gates subsequent dispatch in every project");
+  context.diagnostic("global-stop integration uses mock persistence, dispatch and sandbox cancellation; no live services or remote effects were exercised");
+});
+
 test("stop mutation uses authenticated owner, requires closed versioned body, and maps stale version to 409", async () => {
   const writes = [];
   const auth = {
