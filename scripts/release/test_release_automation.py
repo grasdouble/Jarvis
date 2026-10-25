@@ -149,7 +149,8 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             identity["env"],
         )
         self.assertLess(steps.index(identity), next(
-            i for i, step in enumerate(steps) if "changesets/action@" in step.get("uses", "")
+            i for i, step in enumerate(steps)
+            if "grasdouble/Lufa-CICD/actions/changesets-release@" in step.get("uses", "")
         ))
 
     def test_post_merge_action_uses_cli_tag_events_without_registry_publish(self) -> None:
@@ -163,23 +164,26 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         action_index = next(
             i
             for i, step in enumerate(steps)
-            if "changesets/action@" in step.get("uses", "")
+            if "grasdouble/Lufa-CICD/actions/changesets-release@" in step.get("uses", "")
         )
         action = steps[action_index]
         self.assertEqual(
-            "changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51",
+            "grasdouble/Lufa-CICD/actions/changesets-release@320fce890fbd7bcb347141648174d1c3f7b786ad",
             action["uses"],
         )
-        self.assertIn("tag_private_packages.py", action["with"]["publish-script"])
+        self.assertEqual("${{ steps.app.outputs.token }}", action["with"]["release-token"])
         self.assertIn(
-            "--cli node_modules/.bin/changeset", action["with"]["publish-script"]
+            "python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset",
+            action["with"]["publish-command"],
         )
         self.assertEqual("true", action["with"]["create-github-releases"])
-        self.assertEqual("true", action["with"]["push-git-tags"])
-        self.assertNotIn(
-            "changeset publish", action["with"]["publish-script"]
-        )
-        self.assertEqual("${{ steps.app.outputs.token }}", action["with"]["github-token"])
+        self.assertNotIn("version-command", action["with"])
+        self.assertNotIn("github-token", action["with"])
+        self.assertNotIn("publish-script", action["with"])
+        self.assertFalse(any(
+            "changesets/action@" in step.get("uses", "")
+            for step in steps
+        ))
 
     def test_pinned_action_retry_limitations_are_documented(self) -> None:
         docs = "\n".join(

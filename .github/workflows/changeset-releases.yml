@@ -71,9 +71,8 @@ jobs:
       - name: Install frozen workspace dependencies
         run: pnpm install --frozen-lockfile
       - name: Create CLI private-package tags and GitHub Releases
-        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2, pinned by Lufa-CICD
+        uses: grasdouble/Lufa-CICD/actions/changesets-release@320fce890fbd7bcb347141648174d1c3f7b786ad # immutable Lufa action; wraps changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
         with:
-          github-token: ${{ steps.app.outputs.token }}
-          publish-script: python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset
+          release-token: ${{ steps.app.outputs.token }}
+          publish-command: python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset
           create-github-releases: 'true'
-          push-git-tags: 'true'

@@ -56,7 +56,7 @@ In the `Jarvis` repository, open **Settings → Environments → New environment
 package-releases
 ```
 
-The two release workflows reference this environment directly. The version-PR job invokes the pinned Lufa Changesets release action from trusted `main`; that invocation has an empty publish command and GitHub Releases disabled. After the closed-event metadata filters pass and the workflow checks out the event merge SHA, the post-merge workflow invokes the pinned nested Changesets action with `python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset` and GitHub Releases enabled. The wrapper executes the pinned CLI's `tag` command, not registry publication. Add these **environment variables** (not repository-level variables):
+The two release workflows reference this environment directly. The version-PR job invokes the pinned Lufa Changesets release action from trusted `main`; that invocation has an empty publish command and GitHub Releases disabled. After the closed-event metadata filters pass and the workflow checks out the event merge SHA, the post-merge workflow invokes the same pinned Lufa action, which wraps the pinned nested Changesets action. It supplies `python3 scripts/release/tag_private_packages.py --cli node_modules/.bin/changeset` as `publish-command` and enables GitHub Releases; the action's default version command remains in effect. The wrapper executes the pinned CLI's `tag` command, not registry publication. Add these **environment variables** (not repository-level variables):
 
 | Variable | Value and where to find it |
 | --- | --- |
