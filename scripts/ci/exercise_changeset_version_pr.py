@@ -18,7 +18,6 @@ from check_changeset_pr import is_changesets_version_pr
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSION_PR_GATE = REPO_ROOT / "scripts/ci/check_changeset_pr.py"
 PACKAGE_SCOPE_GATE = REPO_ROOT / "scripts/ci/check_changeset_package_scope.py"
-PREPARE_PRIVATE_RELEASE_NOTES = REPO_ROOT / "scripts/release/prepare_private_release_notes.py"
 PINNED_CHANGESET_VERSION = "3.0.3"
 
 
@@ -49,14 +48,6 @@ def run(command: list[str], cwd: Path, expect_success: bool) -> subprocess.Compl
             f"Unexpected exit {result.returncode} for {command}:\n{result.stdout}\n{result.stderr}"
         )
     return result
-
-
-def prepare_private_notes(root: Path) -> subprocess.CompletedProcess[str]:
-    return run(
-        [sys.executable, str(PREPARE_PRIVATE_RELEASE_NOTES), "--root", str(root)],
-        REPO_ROOT,
-        expect_success=True,
-    )
 
 
 def default_private_publish(
@@ -223,7 +214,7 @@ def exercise() -> None:
 
         # Simulate the confirmed merge commit. The action's default `changeset publish`
         # path must turn eligible private workspaces into local tag events without any
-        # registry access; the separate workflow step has already prepared fallback notes.
+        # registry access. Unchanged packages may emit tags without changelogs.
         version_pr_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", "version-pr")
@@ -234,9 +225,6 @@ def exercise() -> None:
             for name in ("api", "client", "independent")
         ):
             raise AssertionError("The registry-free fixture must contain only private workspaces")
-        prepared = prepare_private_notes(root)
-        if "Prepared fallback changelogs for 1 private package(s)." not in prepared.stdout:
-            raise AssertionError(f"Unexpected fallback changelog preparation: {prepared.stdout}")
         result = default_private_publish(cli, root, output_file)
         if result.returncode:
             raise AssertionError(f"Default Changesets publish failed: {result.stdout}\n{result.stderr}")
@@ -261,16 +249,10 @@ def exercise() -> None:
             "@fixture/client": root / "packages/client",
             "@fixture/independent": root / "packages/independent",
         }
-        if any(
-            not (event_package_dirs[event["packageName"]] / "CHANGELOG.md").is_file()
-            for event in first_events
-            if event.get("type") == "git-tag"
-        ):
-            raise AssertionError("An emitted release event still lacks an action changelog")
-        fallback = (root / "packages/independent/CHANGELOG.md").read_text(encoding="utf-8")
-        if "No release notes were recorded" not in fallback:
-            raise AssertionError("Fallback release notes are not explicit")
-        (root / "packages/independent/CHANGELOG.md").unlink()
+        if not (event_package_dirs["@fixture/api"] / "CHANGELOG.md").is_file():
+            raise AssertionError("The changed package should have a Changesets-generated changelog")
+        if (event_package_dirs["@fixture/independent"] / "CHANGELOG.md").exists():
+            raise AssertionError("Changesets unexpectedly initialized an unchanged package changelog")
         output_file.unlink()
 
         # Release another patch of api and a first patch of an independent package.
@@ -340,9 +322,6 @@ def exercise() -> None:
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", updated_pr_sha)
         second_merge_sha = git("rev-parse", "HEAD").strip()
-        prepared = prepare_private_notes(root)
-        if "Prepared fallback changelogs for 0 private package(s)." not in prepared.stdout:
-            raise AssertionError(f"Unexpected second fallback preparation: {prepared.stdout}")
         result = default_private_publish(cli, root, output_file)
         if result.returncode:
             raise AssertionError(f"Second default Changesets publish failed: {result.stdout}\n{result.stderr}")

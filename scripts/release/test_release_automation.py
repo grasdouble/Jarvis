@@ -20,7 +20,6 @@ from release_common import (
     ReleaseError,
     github_app_environment,
 )
-from prepare_private_release_notes import prepare_release_notes
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -199,57 +198,18 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             for step in steps
         ))
 
-    def test_private_release_notes_are_prepared_before_the_lufa_default_publish(self) -> None:
-        config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
-        self.assertTrue(config["privatePackages"]["tag"])
+    def test_release_workflow_does_not_prepare_fallback_changelogs(self) -> None:
         document = yaml.load(
             (ROOT / ".github/workflows/changeset-releases.yml").read_text(),
             Loader=yaml.BaseLoader,
         )
         steps = document["jobs"]["release"]["steps"]
-        preparation_index = next(
-            i for i, step in enumerate(steps)
-            if step.get("name") == "Prepare fallback changelogs for private packages"
-        )
-        action_index = next(
-            i for i, step in enumerate(steps)
-            if "grasdouble/Lufa-CICD/actions/changesets-release@" in step.get("uses", "")
-        )
-        preparation = steps[preparation_index]
-        self.assertIn("prepare_private_release_notes.py", preparation["run"])
-        self.assertLess(preparation_index, action_index)
-        self.assertNotIn("publish-command", steps[action_index]["with"])
-
-    def test_fallback_changelogs_are_only_created_for_private_packages_missing_notes(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            private = root / "packages/private"
-            private.mkdir(parents=True)
-            (private / "package.json").write_text(
-                '{"name":"@fixture/private","version":"1.2.3","private":true}',
-                encoding="utf-8",
-            )
-            public = root / "packages/public"
-            public.mkdir()
-            (public / "package.json").write_text(
-                '{"name":"@fixture/public","version":"1.2.3","private":false}',
-                encoding="utf-8",
-            )
-            with_notes = root / "apps/with-notes"
-            with_notes.mkdir(parents=True)
-            (with_notes / "package.json").write_text(
-                '{"name":"@fixture/with-notes","version":"2.3.4","private":true}',
-                encoding="utf-8",
-            )
-            existing = with_notes / "CHANGELOG.md"
-            existing.write_text("existing notes\n", encoding="utf-8")
-
-            created = prepare_release_notes(root)
-
-            self.assertEqual([private / "CHANGELOG.md"], created)
-            self.assertIn("## 1.2.3", created[0].read_text(encoding="utf-8"))
-            self.assertFalse((public / "CHANGELOG.md").exists())
-            self.assertEqual("existing notes\n", existing.read_text(encoding="utf-8"))
+        self.assertFalse(any(
+            "prepare_private_release_notes.py" in step.get("run", "")
+            or "Prepare fallback changelogs" in step.get("name", "")
+            for step in steps
+        ))
+        self.assertFalse((ROOT / "scripts/release/prepare_private_release_notes.py").exists())
 
     def test_pinned_action_retry_limitations_are_documented(self) -> None:
         docs = "\n".join(
@@ -267,11 +227,11 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("post-merge release workflow no longer repeats that generated-diff validation", docs)
         self.assertIn("does not reconcile existing releases", docs)
         self.assertIn("duplicate creation can fail on rerun", docs)
-        self.assertIn("leaves them there for the action to read", docs)
-        self.assertIn(
-            "python3 scripts/release/prepare_private_release_notes.py",
-            docs,
-        )
+        self.assertIn("changelog file (`changelog.md`) is missing", docs)
+        self.assertIn("may have tags without github releases", docs)
+        self.assertIn("changeset version", docs)
+        self.assertIn("package tag events are unfiltered", docs)
+        self.assertIn("tag-push and duplicate-release limitations described above are previously accepted", docs)
 
     def test_version_generation_uses_validated_runner(self) -> None:
         self.assertTrue((ROOT / "scripts/release/run_changeset_version.py").is_file())
