@@ -6,7 +6,7 @@
   "scripts": {
     "build": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/persistence run build && tsc",
     "typecheck": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/persistence run build && tsc --noEmit",
-    "test": "pnpm run build && node --test test/*.test.mjs"
+    "test": "pnpm run build && pnpm --filter @jarvis/worker run build && node --test test/*.test.mjs"
   },
   "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*", "@jarvis/persistence": "workspace:*" }
 }
