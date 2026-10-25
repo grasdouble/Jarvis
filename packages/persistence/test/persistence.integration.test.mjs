@@ -338,7 +338,10 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await exercisePauseRace("checkpoint", scope);
     }
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
-    assert.match(database.name, /^jarvis_issue8_/);
+    const expectedDatabaseName = process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION === "1"
+      ? "jarvis_integration_manual"
+      : "jarvis_integration_auto";
+    assert.equal(database.name, expectedDatabaseName);
 
     const persistence = new PostgresPersistence(pool);
     await persistence.migrate();

@@ -174,6 +174,21 @@ key: duplicate
         self.assertEqual(artifact['with']['path'], '${{ runner.temp }}/integration-report.json')
         self.assertNotIn('candidate.json', artifact['with']['path'])
 
+    def test_integration_workflows_use_distinct_database_names(self):
+        root = Path(__file__).resolve().parents[2]
+        workflows = (
+            ('on-demand-runtime-integration.yml', 'qualify', 'jarvis_integration_manual'),
+            ('repository-checks.yml', 'configuration', 'jarvis_integration_auto'),
+        )
+        for filename, job_name, database in workflows:
+            with self.subTest(workflow=filename):
+                workflow = load_yaml((root / f'.github/workflows/{filename}').read_text())
+                job = workflow['jobs'][job_name]
+                self.assertEqual(job['services']['postgres']['env']['POSTGRES_DB'], database)
+                self.assertIn(f'pg_isready -U jarvis_ci -d {database}', job['services']['postgres']['options'])
+                self.assertEqual(job['env']['POSTGRES_DB'], database)
+                self.assertEqual(job['env']['JARVIS_TEST_DATABASE_URL'].rsplit('/', 1)[-1], database)
+
     def test_existing_local_link_passes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
