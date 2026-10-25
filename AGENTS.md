@@ -15,6 +15,10 @@ Read the sections relevant to the task rather than loading both documents in ful
 
 Apply [project governance](docs/project-governance.md) before implementation and against the final integrated diff. Use [jarvis-plan](.agents/skills/jarvis-plan/SKILL.md) to record relevant requirements/decisions, trusted source/base, disposition, document/backlog impact and actual evidence in the PR. A justified no-impact result is valid. Update affected files within the authorized issue delivery; do not silently redefine acceptance to fit the implementation. Material unresolved choices stop dependent work and need the applicable owner decision; already authorized evolution and routine within-scope maintenance do not need repeated permission. Preserve current review/native gates and use the [ADR index](docs/adr/index.md) for significant choices. This is contributor governance, not runtime authority or semantic CI proof.
 
+## Documentation clarity and maintenance
+
+Lead with the current state and actionable guidance. Keep each repeated rule or procedure in one canonical place and link to it elsewhere rather than duplicating or rewriting it. Preserve historical detail when it is needed to explain a material decision, exception, or continuing risk, retaining its provenance; otherwise keep guidance focused on what applies now. Do not treat clarity as a reason for blanket rewrites, needless shortening, or removing operational detail. Before finalizing documentation, check for redundancy, contradictions, broken links, and wording that weakens requirements or safeguards. These are authoring practices, not automated enforcement or JARVIS product-runtime behavior; follow [project governance](docs/project-governance.md) for substantive document and decision changes.
+
 ## Repository conventions
 
 - Keep code, identifiers, comments, documentation, commits, issues, and pull requests in English. Match the user's language in conversation.
