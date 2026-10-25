@@ -257,6 +257,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
     ) -> None:
         readme = (ROOT / ".changeset/README.md").read_text(encoding="utf-8").lower()
         workflow = (ROOT / "docs/development-workflow.md").read_text(encoding="utf-8").lower()
+        setup = (ROOT / "docs/package-release-app-setup.md").read_text(encoding="utf-8").lower()
         for phrase in (
             "github releases",
             "package-release",
@@ -265,7 +266,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             "0.0.2",
         ):
             self.assertIn(phrase, readme + workflow)
-        self.assertIn("without fallback", readme + workflow)
+        self.assertIn("no fallback changelog files are prepared", setup)
         self.assertIn("mac pem", readme + workflow)
 
 
