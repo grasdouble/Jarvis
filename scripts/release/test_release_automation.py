@@ -18,9 +18,6 @@ from release_common import (
     ReleaseError,
     github_app_environment,
 )
-from publish_releases import changelog_section, verify_merged_version_pr
-
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -105,12 +102,14 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("release-token", action_step["with"])
         self.assertNotIn("packages", version_pr["permissions"])
 
-    def test_release_workflow_only_handles_a_merged_changesets_version_pr(self) -> None:
+    def test_release_workflow_keeps_event_filters_checkout_and_app_identity(self) -> None:
         document = yaml.load(
             (ROOT / ".github/workflows/package-releases.yml").read_text(encoding="utf-8"),
             Loader=yaml.BaseLoader,
         )
-        self.assertEqual(["closed"], document["on"]["pull_request"]["types"])
+        event = document["on"]["pull_request"]
+        self.assertEqual(["main"], event["branches"])
+        self.assertEqual(["closed"], event["types"])
         release_job = document["jobs"]["release"]
         condition = release_job["if"]
         self.assertIn("pull_request.merged", condition)
@@ -118,9 +117,40 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("changeset-release/main", condition)
         self.assertIn("base.ref == 'main'", condition)
         self.assertIn("head.repo.full_name == 'grasdouble/Jarvis'", condition)
+        self.assertEqual({"contents": "write"}, release_job["permissions"])
+        steps = release_job["steps"]
+        app_token = next(step for step in steps if step.get("id") == "app")
+        self.assertNotIn("permission-pull-requests", app_token["with"])
+        checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
         self.assertEqual(
-            {"contents": "write", "pull-requests": "read"}, release_job["permissions"]
+            "${{ github.event.pull_request.merge_commit_sha }}",
+            checkout["with"]["ref"],
         )
+        self.assertNotIn(
+            "Validate merged version PR and generated diff",
+            [step.get("name") for step in steps],
+        )
+        self.assertFalse((ROOT / "scripts/release/publish_releases.py").exists())
+        self.assertFalse(any("pip install" in step.get("run", "") for step in steps))
+        self.assertNotIn("GITHUB_SHA", repr(steps))
+        self.assertNotIn("MERGE_COMMIT_SHA", repr(steps))
+        identity = next(
+            step
+            for step in steps
+            if step.get("name") == "Verify the installed package-release App identity"
+        )
+        self.assertEqual(
+            {
+                "EXPECTED_SLUG": "${{ vars.PACKAGE_RELEASE_APP_SLUG }}",
+                "EXPECTED_INSTALLATION_ID": "${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}",
+                "ACTUAL_SLUG": "${{ steps.app.outputs.app-slug }}",
+                "ACTUAL_INSTALLATION_ID": "${{ steps.app.outputs.installation-id }}",
+            },
+            identity["env"],
+        )
+        self.assertLess(steps.index(identity), next(
+            i for i, step in enumerate(steps) if "changesets/action@" in step.get("uses", "")
+        ))
 
     def test_post_merge_action_uses_cli_tag_events_without_registry_publish(self) -> None:
         config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
@@ -130,22 +160,10 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             Loader=yaml.BaseLoader,
         )
         steps = document["jobs"]["release"]["steps"]
-        validation = next(
-            step
-            for step in steps
-            if step.get("name") == "Validate merged version PR and generated diff"
-        )
         action_index = next(
             i
             for i, step in enumerate(steps)
             if "changesets/action@" in step.get("uses", "")
-        )
-        validation_index = steps.index(validation)
-        self.assertLess(validation_index, action_index)
-        self.assertIn("publish_releases.py", validation["run"])
-        self.assertIn('test "$GITHUB_SHA" = "$MERGE_COMMIT_SHA"', validation["run"])
-        self.assertIn(
-            'test "$(git rev-parse HEAD)" = "$MERGE_COMMIT_SHA"', validation["run"]
         )
         action = steps[action_index]
         self.assertEqual(
@@ -174,7 +192,9 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("tag-push failures can be warnings", docs)
         self.assertIn("release creation continues", docs)
         self.assertIn("can therefore use a pre-existing tag that points elsewhere", docs)
-        self.assertIn("exact merge-sha binding is guaranteed only when tag creation succeeds", docs)
+        self.assertIn("no longer explicitly verifies the context sha", docs)
+        self.assertIn("no longer calls a post-merge pr identity/generated-diff preflight", docs)
+        self.assertIn("post-merge release workflow no longer repeats that generated-diff validation", docs)
         self.assertIn("does not reconcile existing releases", docs)
         self.assertIn("duplicate creation can fail on rerun", docs)
         self.assertIn("leaves them there for the action to read", docs)
@@ -183,9 +203,8 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             docs,
         )
 
-    def test_release_logic_is_local_and_version_generation_uses_validated_runner(self) -> None:
+    def test_version_generation_uses_validated_runner(self) -> None:
         self.assertTrue((ROOT / "scripts/release/run_changeset_version.py").is_file())
-        self.assertTrue((ROOT / "scripts/release/publish_releases.py").is_file())
 
     def test_credentials_and_destinations_are_documented_without_registry_publication(
         self,
@@ -387,36 +406,6 @@ class ReleaseBehaviorTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "token is unavailable"):
             GitHubReleaseClient("")
 
-    def test_release_notes_are_scoped_to_the_exact_changelog_version(self) -> None:
-        changelog = "## 0.0.2\n\nSecond patch.\n\n## 0.0.1\n\nFirst patch.\n"
-        self.assertEqual("Second patch.", changelog_section(changelog, "0.0.2"))
-        self.assertEqual("First patch.", changelog_section(changelog, "0.0.1"))
-        with self.assertRaisesRegex(ReleaseError, "missing the exact version heading"):
-            changelog_section(changelog, "0.0.3")
-
-    def test_release_requires_the_configured_app_merged_same_repo_version_pr(self) -> None:
-        client = FakePullClient(valid_pull_request())
-        verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-        client.pull["head"]["ref"] = "changeset-release/main"
-        verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-        client.pull["user"]["login"] = "human-user"
-        with self.assertRaisesRegex(ReleaseError, "not the configured App"):
-            verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-class FakePullClient:
-    def __init__(self, pull: dict) -> None:
-        self.pull = pull
-
-    def request(
-        self, method: str, endpoint: str, payload: dict | None = None
-    ) -> tuple[int, object]:
-        if method == "GET" and endpoint == "pulls/42":
-            return 200, self.pull
-        return 404, None
-
-
 class FakeVersionBranchClient:
     def __init__(self, *, branch_sha: str | None, pulls: list[dict]) -> None:
         self.branch_sha = branch_sha
@@ -499,20 +488,6 @@ def managed_version_pr(
         "head": {
             "ref": "changeset-release/main",
             "sha": head_sha,
-            "repo": {"full_name": "grasdouble/Jarvis"},
-        },
-        "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},
-    }
-
-
-def valid_pull_request() -> dict:
-    return {
-        "state": "closed",
-        "merged": True,
-        "merge_commit_sha": "a" * 40,
-        "user": {"login": "package-release-app[bot]"},
-        "head": {
-            "ref": "changesets/version",
             "repo": {"full_name": "grasdouble/Jarvis"},
         },
         "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},

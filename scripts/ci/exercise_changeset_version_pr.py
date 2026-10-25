@@ -18,6 +18,7 @@ from check_changeset_pr import is_changesets_version_pr
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERSION_PR_GATE = REPO_ROOT / "scripts/ci/check_changeset_pr.py"
 PACKAGE_SCOPE_GATE = REPO_ROOT / "scripts/ci/check_changeset_package_scope.py"
+TAG_PRIVATE_PACKAGES = REPO_ROOT / "scripts/release/tag_private_packages.py"
 PINNED_CHANGESET_VERSION = "3.0.3"
 
 
@@ -40,8 +41,6 @@ def changeset_cli() -> Path:
         )
     return absolute_cli
 sys.path.insert(0, str(REPO_ROOT / "scripts/release"))
-from publish_releases import release_plan  # noqa: E402
-from tag_private_packages import prepare_release_notes  # noqa: E402
 
 
 def run(command: list[str], cwd: Path, expect_success: bool) -> subprocess.CompletedProcess[str]:
@@ -205,15 +204,27 @@ def exercise() -> None:
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", "version-pr")
         first_merge_sha = git("rev-parse", "HEAD").strip()
-        release_plan(base_sha, first_merge_sha, root)
         output_file = root / "changesets-output.ndjson"
         environment = os.environ.copy()
         environment["CHANGESETS_OUTPUT"] = str(output_file)
         result = subprocess.run(
-            [str(cli), "tag"], cwd=root, env=environment, capture_output=True, text=True
+            [
+                sys.executable,
+                str(TAG_PRIVATE_PACKAGES),
+                "--cli",
+                str(cli),
+                "--cwd",
+                str(root),
+            ],
+            cwd=REPO_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
         )
         if result.returncode:
-            raise AssertionError(f"Changesets git-tag failed: {result.stdout}\n{result.stderr}")
+            raise AssertionError(f"The private-tag wrapper failed: {result.stdout}\n{result.stderr}")
+        if "Prepared fallback changelogs for 1 package(s)." not in result.stdout:
+            raise AssertionError("The wrapper did not supply notes for missing changelogs")
         first_events = [json.loads(line) for line in output_file.read_text().splitlines() if line]
         first_tags = {event["tag"] for event in first_events if event.get("type") == "git-tag"}
         expected_first_tags = {
@@ -230,9 +241,6 @@ def exercise() -> None:
             raise AssertionError("A Changesets tag did not target the exact merge commit")
         if "Release fixture." not in (root / "packages/api/CHANGELOG.md").read_text():
             raise AssertionError("The emitted release event has no matching changelog entry")
-        temporary_notes = prepare_release_notes(output_file, root)
-        if len(temporary_notes) != 1:
-            raise AssertionError("Missing changelogs did not get action-compatible fallback notes")
         event_package_dirs = {
             "@fixture/api": root / "packages/api",
             "@fixture/client": root / "packages/client",
@@ -244,10 +252,10 @@ def exercise() -> None:
             if event.get("type") == "git-tag"
         ):
             raise AssertionError("An emitted release event still lacks an action changelog")
-        for changelog in temporary_notes:
-            if "No release notes were recorded" not in changelog.read_text(encoding="utf-8"):
-                raise AssertionError("Fallback release notes are not explicit")
-            changelog.unlink()
+        fallback = (root / "packages/independent/CHANGELOG.md").read_text(encoding="utf-8")
+        if "No release notes were recorded" not in fallback:
+            raise AssertionError("Fallback release notes are not explicit")
+        (root / "packages/independent/CHANGELOG.md").unlink()
         output_file.unlink()
 
         # Release another patch of api and a first patch of an independent package.
@@ -317,12 +325,22 @@ def exercise() -> None:
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", updated_pr_sha)
         second_merge_sha = git("rev-parse", "HEAD").strip()
-        release_plan(second_base_sha, second_merge_sha, root)
         result = subprocess.run(
-            [str(cli), "tag"], cwd=root, env=environment, capture_output=True, text=True
+            [
+                sys.executable,
+                str(TAG_PRIVATE_PACKAGES),
+                "--cli",
+                str(cli),
+                "--cwd",
+                str(root),
+            ],
+            cwd=REPO_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
         )
         if result.returncode:
-            raise AssertionError(f"Second Changesets git-tag failed: {result.stdout}\n{result.stderr}")
+            raise AssertionError(f"Second private-tag wrapper failed: {result.stdout}\n{result.stderr}")
         second_tags = {
             json.loads(line)["tag"] for line in output_file.read_text().splitlines()
             if line and json.loads(line).get("type") == "git-tag"
@@ -333,9 +351,8 @@ def exercise() -> None:
             "@fixture/independent@0.0.1",
         }:
             raise AssertionError(f"Second tag events differ: {second_tags!r}")
-        temporary_notes = prepare_release_notes(output_file, root)
-        if temporary_notes:
-            raise AssertionError("The second release unexpectedly needed fallback changelogs")
+        if "Prepared fallback changelogs for 0 package(s)." not in result.stdout:
+            raise AssertionError("Second release unexpectedly needed fallback changelogs")
         output_file.unlink()
 
         # A source or unrelated lockfile edit must not qualify as a generated version PR.

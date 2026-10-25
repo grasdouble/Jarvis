@@ -93,33 +93,13 @@ def github_app_environment(token: str) -> Iterator[dict[str, str]]:
         yield environment
 
 
-def verify_app_identity(environment: dict[str, str]) -> None:
-    """Compare create-github-app-token outputs to owner-provisioned expected identity."""
-    expected_slug = environment.get("PACKAGE_RELEASE_APP_SLUG", "")
-    expected_installation = environment.get("PACKAGE_RELEASE_APP_INSTALLATION_ID", "")
-    actual_slug = environment.get("RELEASE_TOKEN_APP_SLUG", "")
-    actual_installation = environment.get("RELEASE_TOKEN_INSTALLATION_ID", "")
-    if not expected_slug or not expected_installation:
-        raise ReleaseError("The expected package-release App identity is not configured.")
-    if not expected_slug.isascii() or not all(
-        character.isalnum() or character == "-" for character in expected_slug
-    ):
-        raise ReleaseError("PACKAGE_RELEASE_APP_SLUG must be an ASCII GitHub App slug.")
-    if not expected_installation.isdecimal() or int(expected_installation) <= 0:
-        raise ReleaseError("PACKAGE_RELEASE_APP_INSTALLATION_ID must be a positive integer.")
-    if actual_slug != expected_slug or actual_installation != expected_installation:
-        raise ReleaseError(
-            "The installation token does not match the configured package-release App."
-        )
-
-
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, new_url):
         return None
 
 
 class GitHubReleaseClient:
-    """Small repository-scoped GitHub REST client for release preflight reads."""
+    """Small repository-scoped GitHub REST client for release-branch preflight reads."""
 
     def __init__(self, token: str, repository: str = REPOSITORY) -> None:
         if not token:

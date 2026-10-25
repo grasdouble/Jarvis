@@ -67,7 +67,9 @@ def prepare_release_notes(output_file: Path, root: Path = ROOT) -> list[Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", required=True, help="Pinned @changesets/cli executable")
+    parser.add_argument("--cwd", type=Path, default=ROOT, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    root = args.cwd.resolve()
     output = os.environ.get("CHANGESETS_OUTPUT")
     if not output:
         print(
@@ -77,7 +79,7 @@ def main() -> int:
         return 1
     cli = Path(args.cli)
     if not cli.is_absolute():
-        cli = ROOT / cli
+        cli = root / cli
     if not cli.is_file():
         print("The pinned Changesets CLI executable is unavailable.", file=sys.stderr)
         return 1
@@ -86,9 +88,9 @@ def main() -> int:
     for name in ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN"):
         environment.pop(name, None)
     try:
-        subprocess.run([str(cli), "tag"], cwd=ROOT, env=environment, check=True)
-        created = prepare_release_notes(Path(output))
-        print(f"Prepared release notes for {len(created)} packages without changelogs.")
+        subprocess.run([str(cli), "tag"], cwd=root, env=environment, check=True)
+        created = prepare_release_notes(Path(output), root)
+        print(f"Prepared fallback changelogs for {len(created)} package(s).")
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"Private package tagging failed: {error}", file=sys.stderr)
         return 1

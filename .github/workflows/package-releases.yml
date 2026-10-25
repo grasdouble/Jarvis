@@ -26,7 +26,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
-      pull-requests: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -46,10 +45,6 @@ jobs:
           test -n "$APP_SLUG" || { echo '::error::PACKAGE_RELEASE_APP_SLUG is not provisioned.'; exit 1; }
           test -n "$INSTALLATION_ID" || { echo '::error::PACKAGE_RELEASE_APP_INSTALLATION_ID is not provisioned.'; exit 1; }
           test -n "$APP_PRIVATE_KEY" || { echo '::error::PACKAGE_RELEASE_APP_PRIVATE_KEY is not provisioned.'; exit 1; }
-      - name: Install hash-verified validation dependency
-        run: |
-          python3 -m pip install --require-hashes --only-binary=:all: \
-            -r .github/requirements-ci.txt
       - name: Create a repository-scoped release App token
         id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
@@ -59,7 +54,6 @@ jobs:
           owner: grasdouble
           repositories: Jarvis
           permission-contents: write
-          permission-pull-requests: read
       - name: Verify the installed package-release App identity
         env:
           EXPECTED_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
@@ -69,23 +63,6 @@ jobs:
         run: |
           test "$ACTUAL_SLUG" = "$EXPECTED_SLUG" || { echo '::error::The token belongs to an unexpected GitHub App.'; exit 1; }
           test "$ACTUAL_INSTALLATION_ID" = "$EXPECTED_INSTALLATION_ID" || { echo '::error::The token belongs to an unexpected installation.'; exit 1; }
-      - name: Validate merged version PR and generated diff
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          PULL_NUMBER: ${{ github.event.pull_request.number }}
-          PACKAGE_RELEASE_APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
-          PACKAGE_RELEASE_APP_INSTALLATION_ID: ${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}
-          RELEASE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
-          RELEASE_TOKEN_INSTALLATION_ID: ${{ steps.app.outputs.installation-id }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$MERGE_COMMIT_SHA" || { echo '::error::The checkout does not match the confirmed merge commit.'; exit 1; }
-          test "$GITHUB_SHA" = "$MERGE_COMMIT_SHA" || { echo '::error::The action context does not match the confirmed merge commit.'; exit 1; }
-          BASE_SHA="$(git rev-parse "${MERGE_COMMIT_SHA}^1")"
-          python3 scripts/release/publish_releases.py \
-            --base-sha "$BASE_SHA" \
-            --commit-sha "$MERGE_COMMIT_SHA" \
-            --pull-number "$PULL_NUMBER"
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
