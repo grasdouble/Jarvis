@@ -52,8 +52,13 @@ def load_yaml_documents(text):
 def check_workflow(data):
     if not isinstance(data, dict) or 'on' not in data or not data.get('jobs'):
         raise ValueError('Workflow needs events and jobs.')
-    if data.get('permissions') != {'contents': 'read'}:
-        raise ValueError('Default workflow permissions must be contents: read.')
+    permissions = data.get('permissions')
+    allowed_permissions = (
+        {'contents': 'read'},
+        {'contents': 'read', 'pull-requests': 'read'},
+    )
+    if permissions not in allowed_permissions:
+        raise ValueError('Workflow permissions must be contents: read, optionally with pull-requests: read.')
     for job in data['jobs'].values():
         if not job.get('timeout-minutes'):
             raise ValueError('Every job needs a timeout.')
