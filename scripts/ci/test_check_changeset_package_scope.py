@@ -3,11 +3,13 @@
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
+from unittest.mock import patch
 
 from check_changeset_package_scope import (
     changeset_coverage_error,
@@ -15,6 +17,7 @@ from check_changeset_package_scope import (
     parse_changeset,
     validate,
 )
+from check_changeset_pr import run_gate
 
 
 class ChangesetPackageScopeTests(unittest.TestCase):
@@ -159,6 +162,92 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "@jarvis/api"):
                 validate("main", root, ["packages/api/generated/**"])
 
+    def test_run_gate_skips_cli_status_for_markdown_only_package_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, markdown_only_change=True)
+            fake_bin = Path(temporary) / "bin"
+            fake_bin.mkdir()
+            invoked = Path(temporary) / "pnpm-invoked"
+            pnpm = fake_bin / "pnpm"
+            pnpm.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' invoked > '{invoked}'\n"
+                "echo 'Some packages have been changed but no changesets were found' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            pnpm.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{fake_bin}:{os.environ['PATH']}"}):
+                with redirect_stdout(StringIO()):
+                    self.assertFalse(run_gate("main", root, ["**/*.md"]))
+            self.assertFalse(invoked.exists(), "CLI status should not run without release-relevant package paths")
+
+    def test_run_gate_keeps_cli_status_for_release_relevant_package_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), "'@jarvis/api': patch")
+            fake_bin = Path(temporary) / "bin"
+            fake_bin.mkdir()
+            invoked = Path(temporary) / "pnpm-invoked"
+            pnpm = fake_bin / "pnpm"
+            pnpm.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' invoked > '{invoked}'\n"
+                "echo 'Changesets status execution was required' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            pnpm.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{fake_bin}:{os.environ['PATH']}"}):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_gate("main", root, ["**/*.md"])
+            self.assertTrue(invoked.is_file(), "Release-relevant package changes must retain strict CLI validation")
+
+    def test_run_gate_keeps_cli_status_for_release_entry_without_package_impact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(
+                Path(temporary), "'@jarvis/api': patch", markdown_only_change=True
+            )
+            fake_bin = Path(temporary) / "bin"
+            fake_bin.mkdir()
+            invoked = Path(temporary) / "pnpm-invoked"
+            pnpm = fake_bin / "pnpm"
+            pnpm.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' invoked > '{invoked}'\n"
+                "echo 'Some packages have been changed but no changesets were found' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            pnpm.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{fake_bin}:{os.environ['PATH']}"}):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run_gate("main", root, ["**/*.md"])
+            self.assertTrue(invoked.is_file(), "Release-only Changesets must retain strict CLI status validation")
+
+    def test_run_gate_rejects_malformed_changeset_on_markdown_only_change(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(Path(temporary), None, markdown_only_change=True)
+            changeset = root / ".changeset/unrelated.md"
+            changeset.write_text("Documentation without Changeset frontmatter.\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", ".changeset/unrelated.md"], cwd=root, check=True,
+                capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "add malformed Changeset"], cwd=root,
+                check=True, capture_output=True, text=True,
+            )
+            with self.assertRaisesRegex(ValueError, "invalid frontmatter"):
+                run_gate("main", root, ["**/*.md"])
+
+    def test_run_gate_rejects_unsupported_changeset_release_type_without_package_impact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.make_fixture(
+                Path(temporary), "'@jarvis/api': unsupported", markdown_only_change=True
+            )
+            with self.assertRaisesRegex(ValueError, "release types must be"):
+                run_gate("main", root, ["**/*.md"])
+
     def test_new_workspace_in_head_requires_coverage(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = self.make_fixture(Path(temporary), None, add_workspace=True)
@@ -223,6 +312,7 @@ class ChangesetPackageScopeTests(unittest.TestCase):
         move_api_file_to_domain: bool = False,
         stale_base_changeset: bool = False,
         unrelated_source_change: bool = False,
+        markdown_only_change: bool = False,
     ) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         (root / ".changeset").mkdir()
@@ -290,8 +380,13 @@ class ChangesetPackageScopeTests(unittest.TestCase):
             api_file.rename(root / "packages/domain/api-index.js")
         elif delete_api_file:
             api_file.unlink()
-        elif not excluded_file_change and not mixed_excluded_change:
+        elif not excluded_file_change and not mixed_excluded_change and not markdown_only_change:
             api_file.write_text("export const changed = true;\n", encoding="utf-8")
+        if markdown_only_change:
+            (root / api_root / "CHANGELOG.md").write_text(
+                "# @jarvis/api\n\n## 1.0.0\n\n- Documentation-only changelog entry.\n",
+                encoding="utf-8",
+            )
         if excluded_file_change or mixed_excluded_change:
             generated = root / "packages/api/generated/output.js"
             generated.parent.mkdir(parents=True)

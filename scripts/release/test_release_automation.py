@@ -1,8 +1,10 @@
 """Acceptance tests for the Changesets package release workflow."""
 
+import json
 import os
 from pathlib import Path
 import re
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -15,13 +17,9 @@ from authorize_version_branch import (
 from run_changeset_version import run as run_changeset_version
 from release_common import (
     GitHubReleaseClient,
-    PackageRelease,
     ReleaseError,
     github_app_environment,
-    publish_release,
 )
-from publish_releases import changelog_section, verify_merged_version_pr
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,12 +27,12 @@ ROOT = Path(__file__).resolve().parents[2]
 class ReleaseAutomationContractTests(unittest.TestCase):
     def test_version_pr_and_post_merge_release_workflows_exist_separately(self) -> None:
         self.assertTrue((ROOT / ".github/workflows/package-version-pr.yml").is_file())
-        self.assertTrue((ROOT / ".github/workflows/package-releases.yml").is_file())
+        self.assertTrue((ROOT / ".github/workflows/changeset-releases.yml").is_file())
 
     def test_workflow_writes_are_scoped_and_actions_are_sha_pinned(self) -> None:
         for relative in (
             ".github/workflows/package-version-pr.yml",
-            ".github/workflows/package-releases.yml",
+            ".github/workflows/changeset-releases.yml",
         ):
             with self.subTest(workflow=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
@@ -107,12 +105,14 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("release-token", action_step["with"])
         self.assertNotIn("packages", version_pr["permissions"])
 
-    def test_release_workflow_only_handles_a_merged_changesets_version_pr(self) -> None:
+    def test_release_workflow_keeps_event_filters_checkout_and_app_identity(self) -> None:
         document = yaml.load(
-            (ROOT / ".github/workflows/package-releases.yml").read_text(encoding="utf-8"),
+            (ROOT / ".github/workflows/changeset-releases.yml").read_text(encoding="utf-8"),
             Loader=yaml.BaseLoader,
         )
-        self.assertEqual(["closed"], document["on"]["pull_request"]["types"])
+        event = document["on"]["pull_request"]
+        self.assertEqual(["main"], event["branches"])
+        self.assertEqual(["closed"], event["types"])
         release_job = document["jobs"]["release"]
         condition = release_job["if"]
         self.assertIn("pull_request.merged", condition)
@@ -120,19 +120,144 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("changeset-release/main", condition)
         self.assertIn("base.ref == 'main'", condition)
         self.assertIn("head.repo.full_name == 'grasdouble/Jarvis'", condition)
+        self.assertEqual({"contents": "write"}, release_job["permissions"])
+        steps = release_job["steps"]
+        app_token = next(step for step in steps if step.get("id") == "app")
+        self.assertNotIn("permission-pull-requests", app_token["with"])
+        checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
         self.assertEqual(
-            {"contents": "write", "pull-requests": "read"}, release_job["permissions"]
+            "${{ github.event.pull_request.merge_commit_sha }}",
+            checkout["with"]["ref"],
         )
+        self.assertNotIn(
+            "Validate merged version PR and generated diff",
+            [step.get("name") for step in steps],
+        )
+        self.assertFalse((ROOT / "scripts/release/publish_releases.py").exists())
+        self.assertFalse(any("pip install" in step.get("run", "") for step in steps))
+        self.assertNotIn("GITHUB_SHA", repr(steps))
+        self.assertNotIn("MERGE_COMMIT_SHA", repr(steps))
+        identity = next(
+            step
+            for step in steps
+            if step.get("name") == "Verify the installed package-release App identity"
+        )
+        self.assertEqual(
+            {
+                "EXPECTED_SLUG": "${{ vars.PACKAGE_RELEASE_APP_SLUG }}",
+                "EXPECTED_INSTALLATION_ID": "${{ vars.PACKAGE_RELEASE_APP_INSTALLATION_ID }}",
+                "ACTUAL_SLUG": "${{ steps.app.outputs.app-slug }}",
+                "ACTUAL_INSTALLATION_ID": "${{ steps.app.outputs.installation-id }}",
+            },
+            identity["env"],
+        )
+        self.assertLess(steps.index(identity), next(
+            i for i, step in enumerate(steps)
+            if "grasdouble/Lufa-CICD/actions/changesets-release@" in step.get("uses", "")
+        ))
 
-    def test_release_logic_is_local_and_version_generation_uses_validated_runner(self) -> None:
+    def test_post_merge_action_uses_cli_tag_events_without_registry_publish(self) -> None:
+        config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
+        self.assertTrue(config["privatePackages"]["tag"])
+        workspace_manifests = [
+            manifest
+            for workspace_root in (ROOT / "apps", ROOT / "packages")
+            for manifest in workspace_root.glob("*/package.json")
+        ]
+        self.assertTrue(workspace_manifests)
+        self.assertTrue(
+            all(
+                json.loads(manifest.read_text(encoding="utf-8")).get("private") is True
+                for manifest in workspace_manifests
+            ),
+            "The default Changesets publish command is safe only while all release workspaces are private",
+        )
+        document = yaml.load(
+            (ROOT / ".github/workflows/changeset-releases.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        steps = document["jobs"]["release"]["steps"]
+        action_index = next(
+            i
+            for i, step in enumerate(steps)
+            if "grasdouble/Lufa-CICD/actions/changesets-release@" in step.get("uses", "")
+        )
+        action = steps[action_index]
+        self.assertEqual(
+            "grasdouble/Lufa-CICD/actions/changesets-release@320fce890fbd7bcb347141648174d1c3f7b786ad",
+            action["uses"],
+        )
+        self.assertEqual("${{ steps.app.outputs.token }}", action["with"]["release-token"])
+        self.assertNotIn("publish-command", action["with"])
+        self.assertEqual("true", action["with"]["create-github-releases"])
+        self.assertNotIn("version-command", action["with"])
+        self.assertNotIn("github-token", action["with"])
+        self.assertNotIn("publish-script", action["with"])
+        self.assertFalse(any(
+            "changesets/action@" in step.get("uses", "")
+            for step in steps
+        ))
+
+    def test_release_workflow_does_not_prepare_fallback_changelogs(self) -> None:
+        document = yaml.load(
+            (ROOT / ".github/workflows/changeset-releases.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        steps = document["jobs"]["release"]["steps"]
+        self.assertFalse(any(
+            "prepare_private_release_notes.py" in step.get("run", "")
+            or "Prepare fallback changelogs" in step.get("name", "")
+            for step in steps
+        ))
+        self.assertFalse((ROOT / "scripts/release/prepare_private_release_notes.py").exists())
+
+    def test_every_private_release_workspace_has_a_current_version_changelog(self) -> None:
+        workspace_manifests = [
+            manifest
+            for workspace_root in (ROOT / "apps", ROOT / "packages")
+            for manifest in workspace_root.glob("*/package.json")
+        ]
+        for manifest in workspace_manifests:
+            with self.subTest(package=manifest.parent):
+                package = json.loads(manifest.read_text(encoding="utf-8"))
+                self.assertIs(package.get("private"), True)
+                changelog = manifest.parent / "CHANGELOG.md"
+                self.assertTrue(changelog.is_file(), f"Missing {changelog}")
+                text = changelog.read_text(encoding="utf-8")
+                self.assertIn(f"# {package['name']}", text)
+                self.assertIn(f"## {package['version']}", text)
+
+    def test_pinned_action_retry_limitations_are_documented(self) -> None:
+        docs = "\n".join(
+            (ROOT / path).read_text(encoding="utf-8")
+            for path in (
+                "docs/development-workflow.md",
+                "docs/package-release-app-setup.md",
+            )
+        ).lower()
+        self.assertIn("tag-push failures can be warnings", docs)
+        self.assertIn("release creation continues", docs)
+        self.assertIn("can therefore use a pre-existing tag that points elsewhere", docs)
+        self.assertIn("no longer explicitly verifies the context sha", docs)
+        self.assertIn("no longer calls a post-merge pr identity/generated-diff preflight", docs)
+        self.assertIn("post-merge release workflow no longer repeats that generated-diff validation", docs)
+        self.assertIn("does not reconcile existing releases", docs)
+        self.assertIn("duplicate creation can fail on rerun", docs)
+        self.assertIn("current-version heading", docs)
+        self.assertIn("unchanged packages retain their initial/current entry", docs)
+        self.assertIn("changeset version", docs)
+        self.assertIn("package tag events are unfiltered", docs)
+        self.assertIn("tag-push and duplicate-release limitations described above are previously accepted", docs)
+
+    def test_version_generation_uses_validated_runner(self) -> None:
         self.assertTrue((ROOT / "scripts/release/run_changeset_version.py").is_file())
-        self.assertTrue((ROOT / "scripts/release/publish_releases.py").is_file())
 
     def test_credentials_and_destinations_are_documented_without_registry_publication(
         self,
     ) -> None:
         readme = (ROOT / ".changeset/README.md").read_text(encoding="utf-8").lower()
         workflow = (ROOT / "docs/development-workflow.md").read_text(encoding="utf-8").lower()
+        setup = (ROOT / "docs/package-release-app-setup.md").read_text(encoding="utf-8").lower()
         for phrase in (
             "github releases",
             "package-release",
@@ -141,7 +266,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
             "0.0.2",
         ):
             self.assertIn(phrase, readme + workflow)
-        self.assertIn("without fallback", readme + workflow)
+        self.assertIn("no fallback changelog files are prepared", setup)
         self.assertIn("mac pem", readme + workflow)
 
 
@@ -328,159 +453,6 @@ class ReleaseBehaviorTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "token is unavailable"):
             GitHubReleaseClient("")
 
-    def test_release_notes_are_scoped_to_the_exact_changelog_version(self) -> None:
-        changelog = "## 0.0.2\n\nSecond patch.\n\n## 0.0.1\n\nFirst patch.\n"
-        self.assertEqual("Second patch.", changelog_section(changelog, "0.0.2"))
-        self.assertEqual("First patch.", changelog_section(changelog, "0.0.1"))
-        with self.assertRaisesRegex(ReleaseError, "missing the exact version heading"):
-            changelog_section(changelog, "0.0.3")
-
-    def test_release_requires_the_configured_app_merged_same_repo_version_pr(self) -> None:
-        client = FakePullClient(valid_pull_request())
-        verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-        client.pull["head"]["ref"] = "changeset-release/main"
-        verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-        client.pull["user"]["login"] = "human-user"
-        with self.assertRaisesRegex(ReleaseError, "not the configured App"):
-            verify_merged_version_pr(client, 42, "a" * 40, "package-release-app")
-
-    def test_release_rerun_reconciles_an_existing_correct_tag(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "a" * 40
-
-        publish_release(client, release, "a" * 40)
-        publish_release(client, release, "a" * 40)
-
-        self.assertEqual(0, client.tag_create_count)
-        self.assertEqual(1, client.release_create_count)
-        self.assertEqual("a" * 40, client.tags[release.tag])
-        self.assertEqual("main", client.releases[release.tag]["target_commitish"])
-
-    def test_conflicting_existing_tag_is_rejected_without_retagging(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "b" * 40
-
-        with self.assertRaisesRegex(ReleaseError, "not the verified release commit"):
-            publish_release(client, release, "a" * 40)
-
-        self.assertEqual(0, client.tag_create_count)
-        self.assertEqual({}, client.releases)
-
-    def test_interruption_after_tag_creation_resumes_release_creation(self) -> None:
-        client = FakeReleaseClient(fail_after_tag_once=True)
-        release = artifact("@fixture/api", "0.0.1")
-
-        with self.assertRaisesRegex(ReleaseError, "interrupted after tag"):
-            publish_release(client, release, "a" * 40)
-        publish_release(client, release, "a" * 40)
-
-        self.assertEqual("a" * 40, client.tags[release.tag])
-        self.assertEqual(1, client.release_create_count)
-        self.assertIn(release.tag, client.releases)
-
-    def test_existing_release_with_different_notes_is_rejected(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "a" * 40
-        client.releases[release.tag] = client.release_payload(release)
-        client.releases[release.tag]["body"] = "unexpected notes"
-
-        with self.assertRaisesRegex(ReleaseError, "conflicts in fields: body"):
-            publish_release(client, release, "a" * 40)
-
-    def test_verified_tag_is_authoritative_when_release_reports_default_branch(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.tags[release.tag] = "a" * 40
-        client.releases[release.tag] = client.release_payload(release)
-        client.releases[release.tag]["target_commitish"] = "main"
-
-        publish_release(client, release, "a" * 40)
-
-        self.assertEqual("a" * 40, client.tags[release.tag])
-        self.assertEqual(0, client.release_create_count)
-
-    def test_existing_release_without_its_tag_is_not_repaired_implicitly(self) -> None:
-        client = FakeReleaseClient()
-        release = artifact("@fixture/api", "0.0.1")
-        client.releases[release.tag] = client.release_payload(release)
-
-        with self.assertRaisesRegex(ReleaseError, "exists without its immutable Git tag"):
-            publish_release(client, release, "a" * 40)
-
-        self.assertEqual({}, client.tags)
-
-def artifact(package: str, version: str) -> PackageRelease:
-    return PackageRelease(
-        package,
-        version,
-        f"{package}@{version}",
-        f"Release notes for {version}.",
-    )
-
-
-class FakeReleaseClient:
-    def __init__(self, *, fail_after_tag_once: bool = False) -> None:
-        self.tags: dict[str, str] = {}
-        self.releases: dict[str, dict] = {}
-        self.tag_create_count = 0
-        self.release_create_count = 0
-        self.fail_after_tag_once = fail_after_tag_once
-
-    def tag_commit(self, tag: str) -> str | None:
-        return self.tags.get(tag)
-
-    def create_tag(self, tag: str, commit_sha: str, message: str) -> None:
-        self.tag_create_count += 1
-        self.tags[tag] = commit_sha
-        if self.fail_after_tag_once:
-            self.fail_after_tag_once = False
-            raise ReleaseError("interrupted after tag reference creation")
-
-    def release(self, tag: str) -> dict | None:
-        return self.releases.get(tag)
-
-    def create_release(self, tag: str, name: str, body: str) -> dict:
-        self.release_create_count += 1
-        result = {
-            "tag_name": tag,
-            "target_commitish": "main",
-            "name": name,
-            "body": body,
-            "draft": False,
-            "prerelease": False,
-        }
-        self.releases[tag] = result
-        return result
-
-    @staticmethod
-    def release_payload(release: PackageRelease) -> dict:
-        return {
-            "tag_name": release.tag,
-            "target_commitish": "main",
-            "name": f"{release.package}@{release.version}",
-            "body": release.notes,
-            "draft": False,
-            "prerelease": False,
-        }
-
-
-class FakePullClient:
-    def __init__(self, pull: dict) -> None:
-        self.pull = pull
-
-    def request(
-        self, method: str, endpoint: str, payload: dict | None = None
-    ) -> tuple[int, object]:
-        if method == "GET" and endpoint == "pulls/42":
-            return 200, self.pull
-        return 404, None
-
-
 class FakeVersionBranchClient:
     def __init__(self, *, branch_sha: str | None, pulls: list[dict]) -> None:
         self.branch_sha = branch_sha
@@ -563,20 +535,6 @@ def managed_version_pr(
         "head": {
             "ref": "changeset-release/main",
             "sha": head_sha,
-            "repo": {"full_name": "grasdouble/Jarvis"},
-        },
-        "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},
-    }
-
-
-def valid_pull_request() -> dict:
-    return {
-        "state": "closed",
-        "merged": True,
-        "merge_commit_sha": "a" * 40,
-        "user": {"login": "package-release-app[bot]"},
-        "head": {
-            "ref": "changesets/version",
             "repo": {"full_name": "grasdouble/Jarvis"},
         },
         "base": {"ref": "main", "repo": {"full_name": "grasdouble/Jarvis"}},

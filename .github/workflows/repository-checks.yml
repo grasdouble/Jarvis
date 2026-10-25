@@ -64,7 +64,7 @@ jobs:
         run: npm install --global pnpm@12.5.1
       - name: Install the frozen workspace dependencies
         run: pnpm install --frozen-lockfile
-      - name: Rehearse generated version PRs and registry-free package releases
+      - name: Check Changeset Process
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/exercise_changeset_version_pr.py
       - name: Require Changesets for changed packages
