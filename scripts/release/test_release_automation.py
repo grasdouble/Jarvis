@@ -24,12 +24,12 @@ ROOT = Path(__file__).resolve().parents[2]
 class ReleaseAutomationContractTests(unittest.TestCase):
     def test_version_pr_and_post_merge_release_workflows_exist_separately(self) -> None:
         self.assertTrue((ROOT / ".github/workflows/package-version-pr.yml").is_file())
-        self.assertTrue((ROOT / ".github/workflows/package-releases.yml").is_file())
+        self.assertTrue((ROOT / ".github/workflows/changeset-releases.yml").is_file())
 
     def test_workflow_writes_are_scoped_and_actions_are_sha_pinned(self) -> None:
         for relative in (
             ".github/workflows/package-version-pr.yml",
-            ".github/workflows/package-releases.yml",
+            ".github/workflows/changeset-releases.yml",
         ):
             with self.subTest(workflow=relative):
                 text = (ROOT / relative).read_text(encoding="utf-8")
@@ -104,7 +104,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
 
     def test_release_workflow_keeps_event_filters_checkout_and_app_identity(self) -> None:
         document = yaml.load(
-            (ROOT / ".github/workflows/package-releases.yml").read_text(encoding="utf-8"),
+            (ROOT / ".github/workflows/changeset-releases.yml").read_text(encoding="utf-8"),
             Loader=yaml.BaseLoader,
         )
         event = document["on"]["pull_request"]
@@ -156,7 +156,7 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         config = yaml.safe_load((ROOT / ".changeset/config.json").read_text())
         self.assertTrue(config["privatePackages"]["tag"])
         document = yaml.load(
-            (ROOT / ".github/workflows/package-releases.yml").read_text(),
+            (ROOT / ".github/workflows/changeset-releases.yml").read_text(),
             Loader=yaml.BaseLoader,
         )
         steps = document["jobs"]["release"]["steps"]
