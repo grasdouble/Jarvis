@@ -111,6 +111,14 @@ def exercise() -> None:
             ),
             encoding="utf-8",
         )
+        initial_changelogs = {
+            "@fixture/api": "# @fixture/api\n\n## 0.0.0\n\n- Initial private package release.\n",
+            "@fixture/client": "# @fixture/client\n\n## 0.0.0\n\n- Initial private package release.\n",
+            "@fixture/independent": "# @fixture/independent\n\n## 0.0.0\n\n- Initial private package release.\n",
+        }
+        for package, contents in initial_changelogs.items():
+            directory = root / "packages" / package.removeprefix("@fixture/")
+            (directory / "CHANGELOG.md").write_text(contents, encoding="utf-8")
         (root / ".changeset/release.md").write_text(
             "---\n'@fixture/api': patch\n---\nRelease fixture.\n", encoding="utf-8"
         )
@@ -155,6 +163,8 @@ def exercise() -> None:
                 "Pinned Changesets version command did not produce the expected version PR files"
             )
         client = json.loads((root / "packages/client/package.json").read_text(encoding="utf-8"))
+        if "## 0.0.0" not in (root / "packages/api/CHANGELOG.md").read_text(encoding="utf-8"):
+            raise AssertionError("Changesets version discarded the initial API changelog")
         if client.get("dependencies", {}).get("@fixture/api") != "workspace:^0.0.1":
             raise AssertionError(
                 "Changesets version command did not update the internal workspace range"
@@ -214,7 +224,7 @@ def exercise() -> None:
 
         # Simulate the confirmed merge commit. The action's default `changeset publish`
         # path must turn eligible private workspaces into local tag events without any
-        # registry access. Unchanged packages may emit tags without changelogs.
+        # registry access. Every event must have a changelog entry for its current version.
         version_pr_sha = git("rev-parse", "HEAD").strip()
         git("switch", "--quiet", "main")
         git("merge", "--quiet", "--no-ff", "--no-edit", "version-pr")
@@ -237,6 +247,16 @@ def exercise() -> None:
         }
         if first_tags != expected_first_tags:
             raise AssertionError(f"Unfiltered private-package tags differ: {first_tags!r}")
+        event_package_dirs = {
+            "@fixture/api": root / "packages/api",
+            "@fixture/client": root / "packages/client",
+            "@fixture/independent": root / "packages/independent",
+        }
+        for tag in first_tags:
+            package_name, version = tag.rsplit("@", 1)
+            changelog = event_package_dirs[package_name] / "CHANGELOG.md"
+            if f"## {version}" not in changelog.read_text(encoding="utf-8"):
+                raise AssertionError(f"Tag event {tag} has no current-version changelog entry")
         if any(
             git("rev-parse", f"refs/tags/{tag}^{{}}").strip() != first_merge_sha
             for tag in first_tags
@@ -244,15 +264,10 @@ def exercise() -> None:
             raise AssertionError("A Changesets tag did not target the exact merge commit")
         if "Release fixture." not in (root / "packages/api/CHANGELOG.md").read_text():
             raise AssertionError("The emitted release event has no matching changelog entry")
-        event_package_dirs = {
-            "@fixture/api": root / "packages/api",
-            "@fixture/client": root / "packages/client",
-            "@fixture/independent": root / "packages/independent",
-        }
         if not (event_package_dirs["@fixture/api"] / "CHANGELOG.md").is_file():
             raise AssertionError("The changed package should have a Changesets-generated changelog")
-        if (event_package_dirs["@fixture/independent"] / "CHANGELOG.md").exists():
-            raise AssertionError("Changesets unexpectedly initialized an unchanged package changelog")
+        if "## 0.0.0" not in (event_package_dirs["@fixture/independent"] / "CHANGELOG.md").read_text(encoding="utf-8"):
+            raise AssertionError("The unchanged package did not retain its initial changelog")
         output_file.unlink()
 
         # Release another patch of api and a first patch of an independent package.
@@ -276,8 +291,14 @@ def exercise() -> None:
         )
         if second_api_manifest.get("version") != "0.0.2":
             raise AssertionError("The second API patch did not increment independently to 0.0.2")
+        if "Second API patch." not in (root / "packages/api/CHANGELOG.md").read_text(encoding="utf-8"):
+            raise AssertionError("Changesets did not add the second consumed API release entry")
         if independent_manifest.get("version") != "0.0.1":
             raise AssertionError("The independently released package did not start at 0.0.1")
+        if "Independent first patch." not in (root / "packages/independent/CHANGELOG.md").read_text(encoding="utf-8"):
+            raise AssertionError("Changesets did not add the consumed release entry")
+        if "## 0.0.0" not in (root / "packages/client/CHANGELOG.md").read_text(encoding="utf-8"):
+            raise AssertionError("The unchanged private package lost its initial changelog")
         run(["pnpm", "install", "--offline", "--lockfile-only"], root, expect_success=True)
         git("add", "-A")
         git("commit", "--quiet", "-m", "generated second Changesets version PR")
@@ -353,8 +374,8 @@ def exercise() -> None:
             )
         print(
             "Generated version PRs and fast-forward updates are recognized; "
-            "default CLI publish emits tags at exact merge commits for eligible unchanged "
-            "private packages without registry access; unrelated lockfile content "
+            "default CLI publish emits tags at exact merge commits with current-version "
+            "changelogs for eligible private packages without registry access; unrelated lockfile content "
             "is rejected."
         )
 

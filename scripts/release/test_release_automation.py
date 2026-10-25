@@ -211,6 +211,22 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         ))
         self.assertFalse((ROOT / "scripts/release/prepare_private_release_notes.py").exists())
 
+    def test_every_private_release_workspace_has_a_current_version_changelog(self) -> None:
+        workspace_manifests = [
+            manifest
+            for workspace_root in (ROOT / "apps", ROOT / "packages")
+            for manifest in workspace_root.glob("*/package.json")
+        ]
+        for manifest in workspace_manifests:
+            with self.subTest(package=manifest.parent):
+                package = json.loads(manifest.read_text(encoding="utf-8"))
+                self.assertIs(package.get("private"), True)
+                changelog = manifest.parent / "CHANGELOG.md"
+                self.assertTrue(changelog.is_file(), f"Missing {changelog}")
+                text = changelog.read_text(encoding="utf-8")
+                self.assertIn(f"# {package['name']}", text)
+                self.assertIn(f"## {package['version']}", text)
+
     def test_pinned_action_retry_limitations_are_documented(self) -> None:
         docs = "\n".join(
             (ROOT / path).read_text(encoding="utf-8")
@@ -227,8 +243,8 @@ class ReleaseAutomationContractTests(unittest.TestCase):
         self.assertIn("post-merge release workflow no longer repeats that generated-diff validation", docs)
         self.assertIn("does not reconcile existing releases", docs)
         self.assertIn("duplicate creation can fail on rerun", docs)
-        self.assertIn("changelog file (`changelog.md`) is missing", docs)
-        self.assertIn("may have tags without github releases", docs)
+        self.assertIn("current-version heading", docs)
+        self.assertIn("unchanged packages retain their initial/current entry", docs)
         self.assertIn("changeset version", docs)
         self.assertIn("package tag events are unfiltered", docs)
         self.assertIn("tag-push and duplicate-release limitations described above are previously accepted", docs)
