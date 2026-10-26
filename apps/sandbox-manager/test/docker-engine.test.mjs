@@ -31,7 +31,8 @@ async function withEngine(handler, run, upgradeHandler) {
 
 test("invokes only the fixed relay executable with framed operation input through Engine", async () => {
   let createPayload;
-  let input = "";
+  let startConfig;
+  let relayInput = "";
   await withEngine((request, response, body) => {
     assert.equal(request.method, "POST");
     assert.match(request.url, /^\/v1\.54\/containers\/engine-container-id\/exec$/);
@@ -44,13 +45,14 @@ test("invokes only the fixed relay executable with framed operation input throug
     assert.match(request.url, /^\/v1\.54\/exec\/[a-f0-9]{64}\/start$/);
     assert.equal(request.headers.upgrade, "tcp");
     socket.write("HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
-    input += head.toString("utf8");
-    socket.on("data", (chunk) => { input += chunk.toString("utf8"); });
+    startConfig = JSON.parse(head.toString("utf8"));
+    socket.on("data", (chunk) => { relayInput += chunk.toString("utf8"); });
     socket.on("end", () => { socket.end('{"healthy":true,"version":"2.0.32"}\n'); });
   });
   assert.deepEqual(createPayload.Cmd, ["/usr/local/bin/jarvis-opencode-relay"]);
   assert.equal(createPayload.Tty, true);
-  assert.deepEqual(JSON.parse(input.trim()), { operation: "health" });
+  assert.deepEqual(startConfig, { Detach: false, Tty: true });
+  assert.deepEqual(JSON.parse(relayInput.trim()), { operation: "health" });
   assert.equal(createPayload.AttachStderr, false);
 });
 
