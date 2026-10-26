@@ -163,13 +163,13 @@ export interface StopAwareExecutor<C, R> {
 
 /** A small worker execution boundary; the final durable read is immediately before dispatch. */
 export function createStopAwareExecutor<C, R>(ports: StopAwareExecutionPorts<C, R>, options: { shutdownTimeoutMs?: number; pollIntervalMs?: number } = {}): StopAwareExecutor<C, R> {
-  const active = new Map<string, { controller: AbortController; projectId: string; unknownRecorded: boolean; stopping?: Promise<void> }>();
+  const active = new Map<string, { controller: AbortController; projectId: string; dispatchStarted: boolean; unknownRecorded: boolean; stopping?: Promise<void> }>();
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 10_000;
   const pollIntervalMs = options.pollIntervalMs ?? 500;
   if (!Number.isSafeInteger(shutdownTimeoutMs) || shutdownTimeoutMs < 1 || shutdownTimeoutMs > 10_000) throw new TypeError("Shutdown timeout must be in 1..10000 ms");
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 10 || pollIntervalMs > 2_000) throw new TypeError("Stop polling interval must be in 10..2000 ms");
 
-  const requestStop = (taskId: string, item: { controller: AbortController; projectId: string; unknownRecorded: boolean; stopping?: Promise<void> }): Promise<void> => {
+  const requestStop = (taskId: string, item: { controller: AbortController; projectId: string; dispatchStarted: boolean; unknownRecorded: boolean; stopping?: Promise<void> }): Promise<void> => {
     if (item.stopping) return item.stopping;
     item.controller.abort();
     item.stopping = (async (): Promise<void> => {
@@ -184,7 +184,9 @@ export function createStopAwareExecutor<C, R>(ports: StopAwareExecutionPorts<C, 
           ]);
         } finally { if (timer !== undefined) clearTimeout(timer); }
       };
-      const persistUnknown = bounded(Promise.resolve().then(() => ports.recordAcceptedEffectUnknown(taskId))).then(() => { item.unknownRecorded = true; });
+      const persistUnknown = item.dispatchStarted
+        ? bounded(Promise.resolve().then(() => ports.recordAcceptedEffectUnknown(taskId))).then(() => { item.unknownRecorded = true; })
+        : Promise.resolve();
       const revoke = bounded(Promise.resolve().then(() => ports.revokeCapability(taskId)));
       const sandbox = bounded(Promise.resolve().then(() => ports.stopSandbox(taskId, shutdownTimeoutMs))).catch(() => "unknown" as const);
       const outcomes = await Promise.allSettled([persistUnknown, revoke, sandbox]);
@@ -197,7 +199,7 @@ export function createStopAwareExecutor<C, R>(ports: StopAwareExecutionPorts<C, 
   return {
     async execute(task: StopAwareTask<C>): Promise<{ readonly kind: "dispatched"; readonly result: R } | { readonly kind: "stopped" | "stop_unknown" }> {
       const controller = new AbortController();
-      const running = { controller, projectId: task.projectId, unknownRecorded: false };
+      const running = { controller, projectId: task.projectId, dispatchStarted: false, unknownRecorded: false };
       active.set(task.taskId, running);
       let finished = false;
       let finish!: () => void;
@@ -212,6 +214,7 @@ export function createStopAwareExecutor<C, R>(ports: StopAwareExecutionPorts<C, 
         const final = await ports.readStop(task.projectId).catch(() => null);
         if (final === null || final.stopped) return { kind: final === null ? "stop_unknown" : "stopped" };
         if (controller.signal.aborted) return { kind: "stopped" };
+        running.dispatchStarted = true;
         const dispatch = ports.dispatch(task.capability, controller.signal).then(
           (result) => ({ kind: "result" as const, result }),
           (error: unknown) => ({ kind: "error" as const, error }),
