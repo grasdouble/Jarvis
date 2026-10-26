@@ -1162,7 +1162,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     ? "set JARVIS_RUN_STOP_RUNTIME_INTEGRATION=1 to run this on-demand integration scenario"
     : databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
 }, async (context) => {
-  const [{ createSandboxQueueWorker, createPersistedStopReader, createRestoreActivationGate, createSandboxManagerHttpClient }, api, { QueueService: RuntimeQueueService }, { Pool: PgPool }] = await Promise.all([
+  const [{ createQueueWorker, createSandboxQueueWorker, createPersistedStopReader, createRestoreActivationGate, createSandboxManagerHttpClient }, api, { QueueService: RuntimeQueueService }, { Pool: PgPool }] = await Promise.all([
     import("../../../apps/worker/dist/index.js"),
     import("../../../apps/api/dist/runtime-composition.js"),
     import("@jarvis/queue"),
@@ -1171,6 +1171,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
   const pool = new PgPool({ connectionString: databaseUrl, max: 5, application_name: "jv242-worker-integration" });
   let fixture;
   let worker;
+  let apiServer;
   let sandboxServer;
   let tlsFixture;
   let testFailure;
@@ -1190,7 +1191,9 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     const controls = new PostgresStopControlStore(pool);
     const auth = {
       authorizeRead: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }),
-      authorizeMutation: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }),
+      authorizeMutation: async ({ headers }) => headers.authorization === "Bearer synthetic-owner"
+        ? { authorized: true, auth: { ownerId: "owner" }, headers: {} }
+        : { authorized: false, response: { status: 401, body: { error: "unauthorized" } } },
     };
     const dispatchStarted = [];
     const sandboxStops = [];
@@ -1215,8 +1218,81 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     await new Promise((resolve) => sandboxServer.listen(0, "127.0.0.1", resolve));
     const sandboxClient = createSandboxManagerHttpClient({ endpoint: new URL(`https://127.0.0.1:${sandboxServer.address().port}`), key: tlsFixture.workerKey, cert: tlsFixture.workerCert, ca: tlsFixture.ca, timeoutMs: 1000 });
     const unknownEffects = [];
-    const restoreGate = createRestoreActivationGate(async () => undefined);
-    await restoreGate.activateAfterRestore();
+    const beforeFailedRestore = await controls.get({});
+    const { rows: [auditCountBeforeFailedRestore] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+      WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global'`);
+    let rejectCommit = true;
+    const rejectingPool = {
+      async connect() {
+        const client = await pool.connect();
+        let released = false;
+        return {
+          async query(text, values) {
+            if (text === "COMMIT" && rejectCommit) {
+              rejectCommit = false;
+              throw new Error("injected restore COMMIT failure");
+            }
+            return client.query(text, values);
+          },
+          release() {
+            assert.equal(released, false, "failed restore client is released exactly once");
+            released = true;
+            client.release();
+          },
+        };
+      },
+    };
+    const failedRestoreGate = createRestoreActivationGate(() => new PostgresStopControlStore(rejectingPool).suspendAfterRestore());
+    let failedWorkerClaimCount = 0;
+    const failedWorker = createQueueWorker({
+      queue: {
+        claim: async (...args) => { failedWorkerClaimCount += 1; return runtimeQueue.claim(...args); },
+        complete: (...args) => runtimeQueue.complete(...args),
+        fail: (...args) => runtimeQueue.fail(...args),
+        cancel: (...args) => runtimeQueue.cancel(...args),
+      },
+      workerId: "jv242-failed-restore-worker", leaseMs: 30_000, restoreGate: failedRestoreGate,
+      hydrate: async () => { throw new Error("failed restore worker must not hydrate queued work"); },
+      execution: {
+        readStop: async () => ({ stopped: false, version: 0 }),
+        dispatch: async () => { throw new Error("failed restore worker must not dispatch"); },
+        revokeCapability: async () => undefined,
+        stopSandbox: async () => "stopped",
+        recordAcceptedEffectUnknown: async () => undefined,
+      },
+    });
+    const failedRestoreRun = failedWorker.runOnce();
+    try {
+      await delay(20);
+      await assert.rejects(failedRestoreGate.activateAfterRestore(), /injected restore COMMIT failure/);
+      await assert.rejects(failedRestoreRun, /injected restore COMMIT failure/);
+    } finally {
+      // Release the waiting run even if activation/assertions fail; do not start another run on this worker.
+      await failedRestoreGate.activateAfterRestore().catch(() => undefined);
+      await Promise.allSettled([failedRestoreRun]);
+    }
+    assert.equal(failedWorkerClaimCount, 0, "failed durable restore leaves its bound worker unable to claim");
+    assert.equal((await queueStore.get(task.id)).status, "queued", "failed durable restore leaves queued work untouched");
+    const afterFailedRestore = await controls.get({});
+    const { rows: [auditCountAfterFailedRestore] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+      WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global'`);
+    assert.equal(afterFailedRestore.global.stopped, beforeFailedRestore.global.stopped, "failed restore COMMIT rolls back the persisted stop state");
+    assert.equal(afterFailedRestore.global.version, beforeFailedRestore.global.version, "failed restore COMMIT rolls back the version increment");
+    assert.equal(auditCountAfterFailedRestore.count, auditCountBeforeFailedRestore.count, "failed restore COMMIT rolls back its audit record");
+
+    const restoreGate = createRestoreActivationGate(async () => {
+      const restored = await controls.suspendAfterRestore();
+      assert.equal(restored.stopped, true, "restore activation waits for durable global suspension");
+      const { rows: [auditCount] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+        WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global'`);
+      assert.equal(auditCount.count, auditCountBeforeFailedRestore.count + 1, "successful restore adds exactly one test-created audit row");
+      const { rows: [audit] } = await pool.query(`SELECT actor, action FROM jarvis.audit_events
+        WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global' ORDER BY occurred_at DESC LIMIT 1`);
+      assert.deepEqual(audit, { actor: "system:restore", action: "stop.restore_suspend" });
+      const { rows: [saved] } = await pool.query(`SELECT stopped, version FROM jarvis.stop_controls WHERE scope='global' AND project_id IS NULL`);
+      assert.equal(saved.stopped, true);
+      assert.equal(saved.version, restored.version);
+    });
     worker = createSandboxQueueWorker({
       queue: runtimeQueue, workerId: "jv242-worker", leaseMs: 30_000,
       hydrate: async () => ({ taskId: fixture.taskId, projectId: fixture.projectId, capability: "fake-dispatch-capability" }),
@@ -1241,18 +1317,60 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       },
     });
     const composition = api.createRuntimeComposition({ store: controls, auth, worker, dashboard: async () => ({ status: 404 }) });
+    await new Promise((resolve) => {
+      apiServer = composition.server.listen(0, "127.0.0.1", resolve);
+    });
     const initial = await controls.get({ projectId: fixture.projectId });
-    await controls.set({ projectId: fixture.projectId, stopped: true, expectedVersion: 0, ownerId: "owner" });
+    const waitingForRestore = worker.runOnce();
+    try {
+      await delay(20);
+      assert.deepEqual(dispatchStarted, [], "worker cannot dispatch while restore activation is pending");
+      assert.equal((await queueStore.get(task.id)).status, "queued", "worker cannot claim queued work before restore activation");
+    } finally {
+      // Always release runOnce's activation wait, including when a pre-activation assertion fails.
+      await restoreGate.activateAfterRestore().catch(() => undefined);
+    }
+    assert.equal(await waitingForRestore, "idle", "restored global stop prevents queued work from being claimed");
+    const globalPaused = await controls.get({ projectId: fixture.projectId });
+    const apiOrigin = `http://127.0.0.1:${apiServer.address().port}`;
+    const unauthorized = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer not-owner" },
+      body: JSON.stringify({ stopped: false, expectedVersion: globalPaused.global.version }),
+    });
+    assert.equal(unauthorized.status, 401, "synthetic owner auth rejects an unauthorized HTTP mutation");
+    const afterUnauthorized = await controls.get({ projectId: fixture.projectId });
+    assert.deepEqual(afterUnauthorized.global, globalPaused.global, "unauthorized HTTP mutation leaves global stop unchanged");
+    const globalResume = await globalThis.fetch(`${apiOrigin}/api/v1/stop`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
+      body: JSON.stringify({ stopped: false, expectedVersion: globalPaused.global.version }),
+    });
+    assert.equal(globalResume.status, 200, "authorized HTTP global resume uses the composed route");
+    assert.equal((await globalResume.json()).global.stopped, false);
+    const stoppedProject = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
+      body: JSON.stringify({ stopped: true, expectedVersion: 0 }),
+    });
+    assert.equal(stoppedProject.status, 200);
+    const projectStopState = await stoppedProject.json();
+    assert.equal(projectStopState.project.stopped, true, "authorized HTTP project stop persists through the composed route");
     assert.equal(await worker.runOnce(), "idle", "a stopped project cannot claim its queued task");
     assert.deepEqual(dispatchStarted, []);
     const paused = await controls.get({ projectId: fixture.projectId });
-    await controls.set({ projectId: fixture.projectId, stopped: false, expectedVersion: paused.project.version, ownerId: "owner" });
+    const projectResume = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
+      body: JSON.stringify({ stopped: false, expectedVersion: paused.project.version }),
+    });
+    assert.equal(projectResume.status, 200, "authorized HTTP project resume uses the composed route");
+    assert.equal((await projectResume.json()).project.stopped, false);
     const running = worker.runOnce();
     const deadline = Date.now() + 2_000;
     while (dispatchStarted.length === 0 && Date.now() < deadline) await delay(5);
     assert.equal(dispatchStarted.length, 1, "resumed project can claim and reach sandbox-backed dispatch");
     const stopStarted = performance.now();
-    const stopped = await composition.stopControls({ method: "POST", projectId: fixture.projectId, headers: {}, body: { stopped: true, expectedVersion: paused.project.version + 1 } });
+    const stopped = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
+      body: JSON.stringify({ stopped: true, expectedVersion: paused.project.version + 1 }),
+    });
     assert.equal(stopped.status, 200);
     assert.equal(await running, "unknown", "a possible accepted effect is retained as unknown");
     const elapsedMs = performance.now() - stopStarted;
@@ -1268,18 +1386,18 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, attemptId: "22222222-2222-4222-8222-222222222222" }));
     await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, leaseEpoch: activeSandboxIdentity.leaseEpoch + 1 }));
     assert.equal(sandboxStops.length, stopCountBeforeInvalidIdentities, "wrong task, attempt, or lease epoch never reaches sandbox manager");
-    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "rejected identities preserve the original exact mapping");
+    assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "rejected identities preserve the original exact mapping");
     const temporarilyFailed = await pool.query("UPDATE jarvis.queue_entries SET state = 'failed' WHERE id = $1", [task.id]);
     try {
       assert.equal(temporarilyFailed.rowCount, 1, "the exact queue row enters the non-reconciliation state");
-      await assert.rejects(sandboxMappings.getForReconciliation(activeSandboxIdentity), SandboxLeaseRejectedError, "exact attempt and epoch are rejected outside reconciliation-required state");
+      assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "failed queue state retains the exact reservation for reconciliation");
     } finally {
       await pool.query("UPDATE jarvis.queue_entries SET state = 'reconciliation_required' WHERE id = $1", [task.id]);
     }
-    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "restoring reconciliation state permits normal recovery");
+    assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "restoring reconciliation state permits normal recovery");
     rejectNextSandboxCancel = true;
     await assert.rejects(worker.cancelSandboxForReconciliation(activeSandboxIdentity));
-    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "rejected manager cancellation retains mapping for retry");
+    assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "rejected manager cancellation retains mapping for retry");
     await worker.cancelSandboxForReconciliation(activeSandboxIdentity);
     assert.deepEqual(sandboxStops, [
       { sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 },
@@ -1298,6 +1416,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
   }
   const cleanupFailures = await runCleanupSteps([
     async () => { if (worker) await worker.stop(); },
+    async () => { if (apiServer) await new Promise((resolve) => apiServer.close(resolve)); },
     async () => { if (sandboxServer) await new Promise((resolve) => sandboxServer.close(resolve)); },
     async () => { if (tlsFixture) rmSync(tlsFixture.dir, { recursive: true, force: true }); },
     async () => { if (fixture) await resetStopRaceFixture(pool); },

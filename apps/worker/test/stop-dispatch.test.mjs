@@ -140,7 +140,7 @@ test("stop during the initial admission read prevents later dispatch", async () 
   releaseAdmission({ stopped: false, version: 1 });
 
   assert.deepEqual(await execution, { kind: "stopped" });
-  assert.deepEqual(events, ["unknown", "revoked", "sandbox-stopped"]);
+  assert.deepEqual(events, ["revoked", "sandbox-stopped"], "no effect is uncertain until dispatch has actually started");
   assert.deepEqual(executor.activeTaskIds(), []);
 });
 
