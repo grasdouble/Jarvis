@@ -1197,6 +1197,8 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     };
     const dispatchStarted = [];
     const sandboxStops = [];
+    let resolveSandboxCancelObserved;
+    const sandboxCancelObserved = new Promise((resolve) => { resolveSandboxCancelObserved = resolve; });
     let rejectNextSandboxCancel = false;
     const sandboxMappings = createSandboxLeaseStore(pool);
     let activeSandboxIdentity;
@@ -1209,7 +1211,9 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
         if (req.method === "POST" && req.url === "/v1/sandboxes") {
           res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ sandboxId: "11111111-1111-4111-8111-111111111111" }));
         } else if (req.method === "POST" && req.url === "/v1/sandboxes/11111111-1111-4111-8111-111111111111/cancel") {
-          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")); sandboxStops.push({ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: body.leaseEpoch });
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          sandboxStops.push({ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: body.leaseEpoch });
+          resolveSandboxCancelObserved(performance.now());
           if (rejectNextSandboxCancel) { rejectNextSandboxCancel = false; res.writeHead(503); res.end(); }
           else { res.writeHead(204); res.end(); }
         } else { res.writeHead(404); res.end(); }
@@ -1346,6 +1350,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     });
     assert.equal(globalResume.status, 200, "authorized HTTP global resume uses the composed route");
     assert.equal((await globalResume.json()).global.stopped, false);
+    const noDispatchStopStarted = performance.now();
     const stoppedProject = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
       method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
       body: JSON.stringify({ stopped: true, expectedVersion: 0 }),
@@ -1354,7 +1359,10 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     const projectStopState = await stoppedProject.json();
     assert.equal(projectStopState.project.stopped, true, "authorized HTTP project stop persists through the composed route");
     assert.equal(await worker.runOnce(), "idle", "a stopped project cannot claim its queued task");
+    const noDispatchElapsedMs = performance.now() - noDispatchStopStarted;
+    assert.ok(noDispatchElapsedMs <= 2_000, `project stop to stopped worker claim attempt took ${noDispatchElapsedMs.toFixed(2)}ms`);
     assert.deepEqual(dispatchStarted, []);
+    assert.equal(await queueStore.get(task.id).then((saved) => saved.status), "queued", "stopped claim attempt does not consume the queued task");
     const paused = await controls.get({ projectId: fixture.projectId });
     const projectResume = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
       method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
@@ -1372,10 +1380,19 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       body: JSON.stringify({ stopped: true, expectedVersion: paused.project.version + 1 }),
     });
     assert.equal(stopped.status, 200);
+    let cancelObservationTimeout;
+    const sandboxCancelObservedAt = await Promise.race([
+      sandboxCancelObserved,
+      new Promise((_, reject) => {
+        cancelObservationTimeout = setTimeout(() => reject(new Error("synthetic HTTPS/mTLS manager did not receive cancellation within 10 seconds")), 10_000);
+      }),
+    ]).finally(() => clearTimeout(cancelObservationTimeout));
+    const cancelRequestElapsedMs = sandboxCancelObservedAt - stopStarted;
+    assert.ok(cancelRequestElapsedMs <= 10_000, `active stop to synthetic manager cancellation request took ${cancelRequestElapsedMs.toFixed(2)}ms`);
     assert.equal(await running, "unknown", "a possible accepted effect is retained as unknown");
     const elapsedMs = performance.now() - stopStarted;
     assert.ok(elapsedMs < 2_000, `persisted stop/cancel took ${elapsedMs.toFixed(2)}ms`);
-    context.diagnostic(`single PostgreSQL-backed in-process active-stop sample: ${elapsedMs.toFixed(2)}ms; synthetic HTTPS/mTLS sandbox-manager client exercised create/cancel, and queue/mapping/API/worker stop wiring used PostgreSQL`);
+    context.diagnostic(`single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt ${noDispatchElapsedMs.toFixed(2)}ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request ${cancelRequestElapsedMs.toFixed(2)}ms; active stop/cancel completion ${elapsedMs.toFixed(2)}ms. Local synthetic evidence only; no OS process restart or production latency qualification.`);
     const persisted = await queueStore.get(task.id);
     assert.equal(persisted.status, "reconciliation_required");
     assert.deepEqual(sandboxStops, [{ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 }], "the API stop handler reaches exact durable mapping and sandbox cancellation");
@@ -1407,9 +1424,9 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     await assert.rejects(sandboxMappings.getForReconciliation(activeSandboxIdentity), SandboxLeaseRejectedError, "confirmed recovery cancellation clears the exact durable mapping");
     assert.equal((await queueStore.get(task.id)).status, "reconciliation_required", "sandbox cancellation does not resolve the unknown external effect");
     assert.deepEqual(unknownEffects, [fixture.taskId]);
-    const restartedPool = new PgPool({ connectionString: databaseUrl, max: 1 });
-    try { assert.equal((await new PostgresStopControlStore(restartedPool).get({ projectId: fixture.projectId })).project.stopped, true); }
-    finally { await restartedPool.end(); }
+    const verificationPool = new PgPool({ connectionString: databaseUrl, max: 1 });
+    try { assert.equal((await new PostgresStopControlStore(verificationPool).get({ projectId: fixture.projectId })).project.stopped, true, "a new PostgreSQL connection observes persisted stop state"); }
+    finally { await verificationPool.end(); }
     assert.ok(initial.global.stopped === false);
   } catch (error) {
     testFailure = error;
