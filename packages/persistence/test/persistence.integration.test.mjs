@@ -1386,7 +1386,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, attemptId: "22222222-2222-4222-8222-222222222222" }));
     await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, leaseEpoch: activeSandboxIdentity.leaseEpoch + 1 }));
     assert.equal(sandboxStops.length, stopCountBeforeInvalidIdentities, "wrong task, attempt, or lease epoch never reaches sandbox manager");
-    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "rejected identities preserve the original exact mapping");
+    assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "rejected identities preserve the original exact mapping");
     const temporarilyFailed = await pool.query("UPDATE jarvis.queue_entries SET state = 'failed' WHERE id = $1", [task.id]);
     try {
       assert.equal(temporarilyFailed.rowCount, 1, "the exact queue row enters the non-reconciliation state");
@@ -1394,10 +1394,10 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     } finally {
       await pool.query("UPDATE jarvis.queue_entries SET state = 'reconciliation_required' WHERE id = $1", [task.id]);
     }
-    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "restoring reconciliation state permits normal recovery");
+    assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "restoring reconciliation state permits normal recovery");
     rejectNextSandboxCancel = true;
     await assert.rejects(worker.cancelSandboxForReconciliation(activeSandboxIdentity));
-    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "rejected manager cancellation retains mapping for retry");
+    assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "rejected manager cancellation retains mapping for retry");
     await worker.cancelSandboxForReconciliation(activeSandboxIdentity);
     assert.deepEqual(sandboxStops, [
       { sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 },
