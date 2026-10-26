@@ -187,6 +187,11 @@ export function childEnvironment(token, temporary) {
 
 export function parseArguments(input) {
   const args = [...input];
+  if (args[0] === '--dispatch-runtime-integration') {
+    if (args.length !== 3 || !/^[1-9][0-9]*$/.test(args[1]) || !Number.isSafeInteger(Number(args[1])) || !/^[0-9a-f]{40}$/i.test(args[2]))
+      throw new Error('Usage: --dispatch-runtime-integration OPEN_PR_NUMBER EXPECTED_40_CHARACTER_HEAD_SHA');
+    return {write:false, mode:'runtime-dispatch', pullRequest:Number(args[1]), expectedHeadSha:args[2].toLowerCase()};
+  }
   const write = args[0] === '--write';
   if (write) args.shift();
   if (!write && args.length === 1 && args[0] === '--check-network') return {write: false, mode: 'network'};
@@ -402,13 +407,30 @@ async function run(options) {
   const signed = jwt(await loadKey());
   const identity = await api('/app', signed, 'GET', undefined, false);
   if (identity.id !== APP.id || identity.slug !== APP.slug) throw new Error('Private key belongs to another GitHub App.');
-  const expected = permissions(options.write);
+  const expected = options.mode === 'runtime-dispatch'
+    ? {actions:'write', metadata:'read', pull_requests:'read'} : permissions(options.write);
   const grant = await api(`/app/installations/${APP.installationId}/access_tokens`, signed, 'POST', {
     repositories: [APP.repository.split('/')[1]], permissions: expected,
   });
   let temporary;
   try {
     assertGrant(grant, expected);
+    if (options.mode === 'runtime-dispatch') {
+      const pr = await api(`/repos/${APP.repository}/pulls/${options.pullRequest}`, grant.token);
+      if (pr.state !== 'open' || pr.head?.sha?.toLowerCase() !== options.expectedHeadSha)
+        throw new Error('Pull request is not open at the expected head SHA; no workflow was dispatched.');
+      const dispatch = await api(`/repos/${APP.repository}/actions/workflows/on-demand-runtime-integration.yml/dispatches`, grant.token, 'POST', {
+        ref:'main', inputs:{pull_request:String(options.pullRequest), expected_head_sha:options.expectedHeadSha},
+      }, false);
+      const runId = dispatch?.workflow_run_id;
+      const runUrl = `https://api.github.com/repos/${APP.repository}/actions/runs/${runId}`;
+      const htmlUrl = `https://github.com/${APP.repository}/actions/runs/${runId}`;
+      if (!Number.isSafeInteger(runId) || runId < 1 || dispatch.run_url !== runUrl || dispatch.html_url !== htmlUrl)
+        throw new Error('Workflow dispatch response did not provide valid run metadata; run outcome is unknown. Reconcile Actions state before any retry.');
+      console.log(JSON.stringify({dispatched:true, workflow:'on-demand-runtime-integration.yml', ref:'main', pullRequest:options.pullRequest,
+        expectedHeadSha:options.expectedHeadSha, runId, runUrl:htmlUrl}));
+      return 0;
+    }
     if (options.mode === 'verify') {
       const repository = await api(`/repos/${APP.repository}`, grant.token);
       const installation = await api('/installation/repositories', grant.token);
