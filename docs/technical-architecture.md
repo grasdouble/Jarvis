@@ -156,11 +156,11 @@ The JV-006 gateway prototype reads the provider key from a startup file and does
 
 The trusted secrets broker supplies the credential to the gateway through the controlled provisioning channel. A key appears in neither labels, command-line arguments, nor variables inspectable by the agent. The controller can still inspect resources through Engine, so it is inside the trusted secrets boundary. Per-project provider keys and provider-side limits reduce the consequences of its compromise.
 
-### 5.3 Network variant and reasons for deferral
+### 5.3 Proposed network variant and qualification gate
 
-A variant using a Docker `internal` network, outbound proxy, and L3/L4 filtering can replace the socket if isolation is proven. `HTTP_PROXY` variables alone do not force an application to use the proxy. The network gateway must not route arbitrary packets; its administration plane is inaccessible to agents.
+The owner-selected proposal in [ADR-0013](adr/0013-gateway-egress-proxy.md) is a trusted per-attempt egress proxy/filter with an explicit authorized-provider allowlist and deny-by-default behavior. OpenCode remains `network_mode: none`; network topology must prevent gateway bypass rather than relying on `HTTP_PROXY` or other application settings. The gateway has no route to the core, host, LAN, or neighboring networks, and its administration plane is inaccessible to agents. This is a proposed architecture, not implemented or qualified enforcement.
 
-This variant requires rules enforced in the actual Colima/Lima VM network path, handling DNS, IPv6, QUIC, and gateway access, and is not the initial profile. Tests must demonstrate that the agent cannot reach `host.lima.internal`, `host.docker.internal`, `gateway.docker.internal` where defined, resolved gateway addresses, Mac and LAN addresses, the core network, or neighboring networks. Test direct addresses as well as names; a failed DNS lookup alone proves no network isolation. Do not rely on the macOS firewall alone to control guest traffic. [C5](https://lima-vm.io/docs/config/network/user/)
+The earlier deferral reflected the absence of evidence that the actual guest network path could enforce this boundary; that rationale remains historical and the proposal does not erase it. Before provider dispatch can be enabled, qualify the actual pinned Colima/Lima path for DNS/rebinding, IPv4/IPv6, QUIC, direct IP/name, gateway-address, host/LAN/core/neighbor denial, and bypass resistance, as detailed in ADR-0013. Test direct addresses as well as names; a failed DNS lookup alone proves no network isolation. Do not rely on the macOS firewall alone to control guest traffic. D02 provider/data-processing selection and D05 hard-ceiling policy remain open and independently gate dispatch. [C5](https://lima-vm.io/docs/config/network/user/)
 
 ## 6 Colima deployment and Mac isolation
 
