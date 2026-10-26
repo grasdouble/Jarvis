@@ -8,7 +8,7 @@ import {
   type SandboxSpec,
 } from "./index.js";
 
-const MAX_BODY_BYTES = 16 * 1024;
+const MAX_BODY_BYTES = 80 * 1024;
 const SANDBOX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type SandboxManagerServerOptions = {
@@ -107,7 +107,7 @@ async function handle(
       return;
     }
 
-    const match = /^\/v1\/sandboxes\/([0-9a-f-]{36})(?:\/(cancel))?$/.exec(url.pathname);
+    const match = /^\/v1\/sandboxes\/([0-9a-f-]{36})(?:\/(cancel|runtime))?$/.exec(url.pathname);
     if (!match || !SANDBOX_ID.test(match[1] ?? "")) {
       send(response, 404, { error: "not_found" });
       return;
@@ -122,6 +122,22 @@ async function handle(
     if (method === "POST" && operation === "cancel") {
       await options.manager.cancel(sandboxId, leaseEpoch(await readJson(request)));
       send(response, 202, { accepted: true });
+      return;
+    }
+    if (method === "POST" && operation === "runtime") {
+      const body = await readJson(request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new SandboxManagerError("Runtime request must be an object.", "INVALID_ARGUMENT");
+      }
+      const record = body as Record<string, unknown>;
+      if (Object.keys(record).length !== 4 || !Object.hasOwn(record, "leaseEpoch") || !Object.hasOwn(record, "taskId") ||
+          !Object.hasOwn(record, "attemptId") || !Object.hasOwn(record, "request")) {
+        throw new SandboxManagerError("Runtime request contains unknown or missing fields.", "INVALID_ARGUMENT");
+      }
+      if (typeof record.taskId !== "string" || typeof record.attemptId !== "string") {
+        throw new SandboxManagerError("Runtime task and attempt identities must be strings.", "INVALID_ARGUMENT");
+      }
+      send(response, 200, await options.manager.runtime(sandboxId, leaseEpoch({ leaseEpoch: record.leaseEpoch }), record.taskId, record.attemptId, record.request));
       return;
     }
     if (method === "DELETE" && operation === undefined) {

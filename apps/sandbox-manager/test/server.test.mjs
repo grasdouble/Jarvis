@@ -52,22 +52,17 @@ function httpsRequest(port, options, body) {
 test("requires a trusted worker certificate and rejects other identities", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jarvis-mtls-test-"));
   await certificateFixture(directory);
+  let managedLabels;
   const engine = {
     async createVolume({ name, labels }) { return { name, labels }; },
-    async createContainer(input) { return { id: "engine-container-id", state: "created", labels: input.labels }; },
+    async createContainer(input) { managedLabels = input.labels; return { id: "engine-container-id", state: "created", labels: input.labels }; },
     async listManagedContainers() { return []; },
     async listManagedVolumes() { return []; },
     async startContainer() {},
     async inspectContainer(id) {
-      return { id, state: "running", labels: {
-        "jarvis.managed": "true",
-        task_id: "task-123",
-        attempt_id: "attempt-456",
-        expires_at: "2026-10-19T00:20:00.000Z",
-        sandbox_id: "00000000-0000-4000-8000-000000000001",
-        profile_id: "plan-readonly-v1",
-      } };
+      return { id, state: "running", labels: managedLabels };
     },
+    async relayOpenCode(_containerId, request) { return { operation: request.operation }; },
     async stopContainer() {},
     async removeContainer() {},
     async removeVolume() {},
@@ -124,6 +119,20 @@ test("requires a trusted worker certificate and rejects other identities", async
     const accepted = await httpsRequest(port, workerOptions, JSON.stringify(spec));
     assert.equal(accepted.status, 201);
     assert.equal(JSON.parse(accepted.body).state, "running");
+    const sandboxId = JSON.parse(accepted.body).sandboxId;
+    const runtime = await httpsRequest(port, {
+      ...workerOptions,
+      path: `/v1/sandboxes/${sandboxId}/runtime`,
+      headers: { "content-type": "application/json" },
+    }, JSON.stringify({ leaseEpoch: 1, taskId: "task-123", attemptId: "attempt-456", request: { operation: "health" } }));
+    assert.equal(runtime.status, 200);
+    assert.deepEqual(JSON.parse(runtime.body), { operation: "health" });
+    const invalidRuntime = await httpsRequest(port, {
+      ...workerOptions,
+      path: `/v1/sandboxes/${sandboxId}/runtime`,
+      headers: { "content-type": "application/json" },
+    }, JSON.stringify({ leaseEpoch: 1, taskId: "task-123", attemptId: "attempt-456", request: { operation: "exec", command: "id" } }));
+    assert.equal(invalidRuntime.status, 400);
 
     const rejected = await httpsRequest(port, {
       ...workerOptions,

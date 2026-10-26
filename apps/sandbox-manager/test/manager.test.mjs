@@ -152,6 +152,33 @@ test("binds cancellation and destruction to the active lease epoch", async () =>
   assert.equal(engine.calls.filter(([kind]) => kind === "stopContainer").length, 1);
 });
 
+test("routes only fixed OpenCode relay operations through the matching sandbox lease", async () => {
+  const engine = engineFake();
+  engine.relayOpenCode = async (containerId, request) => {
+    engine.calls.push(["relayOpenCode", containerId, request]);
+    return { operation: request.operation };
+  };
+  const service = manager(engine);
+  const created = await service.create(spec, "idempotency-relay");
+
+  const requests = [
+    { operation: "health" },
+    { operation: "session.create", title: "synthetic" },
+    { operation: "prompt", sessionID: "session_1", text: "synthetic prompt" },
+    { operation: "messages", sessionID: "session_1" },
+    { operation: "status", sessionID: "session_1" },
+    { operation: "cancel", sessionID: "session_1" },
+  ];
+  for (const request of requests) assert.deepEqual(await service.runtime(created.sandboxId, 1, spec.taskId, spec.attemptId, request), { operation: request.operation });
+  await assert.rejects(() => service.runtime(created.sandboxId, 2, spec.taskId, spec.attemptId, { operation: "health" }), /lease epoch/i);
+  await assert.rejects(() => service.runtime(created.sandboxId, 1, "other-task", spec.attemptId, { operation: "health" }), /identity/i);
+  await assert.rejects(() => service.runtime(created.sandboxId, 1, spec.taskId, spec.attemptId, { operation: "exec", command: "id" }), /operation|field/i);
+  await assert.rejects(() => service.runtime(created.sandboxId, 1, spec.taskId, spec.attemptId, { operation: "health", url: "http://example.invalid" }), /field/i);
+  assert.deepEqual(engine.calls.filter(([kind]) => kind === "relayOpenCode").map(([, , request]) => request), [
+    ...requests,
+  ]);
+});
+
 test("expires only due attempts from its ownership registry", async () => {
   const engine = engineFake();
   let currentTime = new Date("2026-10-19T00:00:00.000Z");

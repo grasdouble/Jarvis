@@ -80,7 +80,17 @@ export interface SandboxEngine {
   stopContainer(id: string, timeoutSeconds: number): Promise<void>;
   removeContainer(id: string, expectedLabels: ManagedLabels): Promise<void>;
   removeVolume(name: string, expectedLabels: ManagedLabels): Promise<void>;
+  relayOpenCode(containerId: string, request: OpenCodeRelayRequest): Promise<OpenCodeRelayResponse>;
 }
+
+export type OpenCodeRelayRequest =
+  | { readonly operation: "health" }
+  | { readonly operation: "session.create"; readonly title: string }
+  | { readonly operation: "prompt"; readonly sessionID: string; readonly text: string }
+  | { readonly operation: "messages"; readonly sessionID: string }
+  | { readonly operation: "status"; readonly sessionID: string }
+  | { readonly operation: "cancel"; readonly sessionID: string };
+export type OpenCodeRelayResponse = Readonly<Record<string, unknown>>;
 
 export class SandboxManagerError extends Error {
   constructor(
@@ -111,6 +121,7 @@ export type SandboxManager = {
   inspect(sandboxId: string): Promise<SandboxStatus>;
   cancel(sandboxId: string, leaseEpoch: number): Promise<void>;
   destroy(sandboxId: string, leaseEpoch: number): Promise<void>;
+  runtime(sandboxId: string, leaseEpoch: number, taskId: string, attemptId: string, request: unknown): Promise<OpenCodeRelayResponse>;
   expire(): Promise<number>;
   recover(): Promise<void>;
 };
@@ -182,6 +193,37 @@ function validateSpec(input: unknown): SandboxSpec {
   }
 
   return record as SandboxSpec;
+}
+
+function validateRelayRequest(input: unknown): OpenCodeRelayRequest {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) invalid("Relay request must be an object.");
+  const record = input as Record<string, unknown>;
+  const string = (key: string, max: number): string => {
+    const value = record[key];
+    if (typeof value !== "string" || value.length < 1 || value.length > max) invalid(`Relay ${key} is invalid.`);
+    return value;
+  };
+  const exact = (...keys: string[]): void => {
+    if (Object.keys(record).length !== keys.length || Object.keys(record).some((key) => !keys.includes(key))) invalid("Relay request contains unknown or missing fields.");
+  };
+  switch (record.operation) {
+    case "health": exact("operation"); return { operation: "health" };
+    case "session.create":
+      exact("operation", "title");
+      return { operation: "session.create", title: string("title", 200) };
+    case "prompt":
+      exact("operation", "sessionID", "text");
+      return { operation: "prompt", sessionID: sessionId(string("sessionID", 128)), text: string("text", 64 * 1024) };
+    case "messages": case "status": case "cancel":
+      exact("operation", "sessionID");
+      return { operation: record.operation, sessionID: sessionId(string("sessionID", 128)) };
+    default: return invalid("Unsupported fixed relay operation.");
+  }
+}
+
+function sessionId(value: string): string {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(value)) invalid("Relay sessionID is invalid.");
+  return value;
 }
 
 function validateProfile(profile: SandboxProfile): void {
@@ -479,6 +521,23 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
     await remove(find(sandboxId, leaseEpoch));
   }
 
+  async function runtime(sandboxId: string, leaseEpoch: number, taskId: string, attemptId: string, requestInput: unknown): Promise<OpenCodeRelayResponse> {
+    const record = find(sandboxId, leaseEpoch);
+    if (taskId !== record.spec.taskId || attemptId !== record.spec.attemptId) {
+      throw new SandboxManagerError("Sandbox task or attempt identity does not match.", "CONFLICT");
+    }
+    if (new Date(record.spec.deadline).getTime() <= now().getTime()) {
+      await remove(record);
+      throw new SandboxManagerError("Managed sandbox deadline has expired.", "NOT_FOUND");
+    }
+    const request = validateRelayRequest(requestInput);
+    const inspection = await options.engine.inspectContainer(record.engineId);
+    assertOwned(inspection.labels, record.labels);
+    if (inspection.state !== "running") throw new SandboxManagerError("Managed sandbox is not running.", "CONFLICT");
+    try { return await options.engine.relayOpenCode(record.engineId, request); }
+    catch { throw new SandboxManagerError("Fixed OpenCode relay failed.", "ENGINE_ERROR"); }
+  }
+
   async function expire(): Promise<number> {
     const timestamp = now().getTime();
     const expired = [...managed.values()].filter((record) => new Date(record.spec.deadline).getTime() <= timestamp);
@@ -579,5 +638,5 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
     }
   }
 
-  return { create, inspect, cancel, destroy, expire, recover };
+  return { create, inspect, cancel, destroy, runtime, expire, recover };
 }

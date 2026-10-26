@@ -20,6 +20,8 @@ COPY apps/llm-gateway/dist/gateway.js /opt/jarvis/gateway.js
 COPY packages/runtime/dist/index.js /opt/jarvis/runtime-client.mjs
 COPY infra/opencode-prototype/opencode-entrypoint.mjs /opt/jarvis/opencode-entrypoint.mjs
 COPY infra/opencode-prototype/api-probe.mjs /opt/jarvis/api-probe.mjs
+COPY infra/opencode-prototype/fixed-relay.mjs /usr/local/bin/jarvis-opencode-relay
+RUN chmod 0555 /usr/local/bin/jarvis-opencode-relay
 
 USER 10001:10001
 WORKDIR /workspace
