@@ -12,6 +12,27 @@ from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 
 REQUIRED_SCENARIO = 'real PostgreSQL stop controls gate and cancel the real queue worker composition'
+DIAGNOSTIC_BYTES = 8192
+DIAGNOSTIC_LINES = 120
+
+
+def bounded_diagnostics(text):
+    secrets = sorted({value for key, value in os.environ.items()
+                      if value and re.search(r'(?:TOKEN|PASSWORD|PASS|SECRET|DATABASE_URL|DB_URL)', key, re.I)},
+                     key=len, reverse=True)
+    for secret in secrets:
+        text = text.replace(secret, '[REDACTED]')
+    text = re.sub(r'(?i)(postgres(?:ql)?://[^:/\s]+):[^@/\s]+@', r'\1:[REDACTED]@', text)
+    text = re.sub(r'(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})', '[REDACTED]', text)
+    lines = text.splitlines()
+    if len(lines) > DIAGNOSTIC_LINES:
+        lines = lines[:DIAGNOSTIC_LINES - 1] + ['[diagnostics truncated]']
+    result = '\n'.join(lines)
+    encoded = result.encode('utf-8')
+    if len(encoded) > DIAGNOSTIC_BYTES:
+        suffix = '\n[diagnostics truncated]'
+        result = encoded[:DIAGNOSTIC_BYTES - len(suffix.encode())].decode('utf-8', 'ignore').rstrip() + suffix
+    return result
 
 
 def metadata(pr_number, expected_sha, token):
@@ -131,6 +152,8 @@ def run_report(candidate, output):
             'The test suite uses synthetic/local boundaries and an ephemeral PostgreSQL service.',
         ],
     }
+    if not passed and test_output:
+        report['failure_diagnostics'] = bounded_diagnostics(test_output)
     Path(output).write_text(json.dumps(report, indent=2) + '\n')
     print('Integration report: ' + json.dumps(report, sort_keys=True))
     if not passed:

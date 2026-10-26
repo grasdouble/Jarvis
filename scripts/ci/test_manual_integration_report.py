@@ -112,7 +112,25 @@ class ManualIntegrationReportTests(unittest.TestCase):
                         with self.assertRaises(SystemExit) as error:
                             report.run_report(candidate, output)
                     self.assertEqual(error.exception.code, 1)
-                    self.assertEqual(json.loads(output.read_text())['result'], 'fail')
+                    saved = json.loads(output.read_text())
+                    self.assertEqual(saved['result'], 'fail')
+                    self.assertIn('# tests 2', saved['failure_diagnostics'])
+
+    def test_failure_from_totals_retains_test_output_even_when_command_succeeds(self):
+        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\nnot ok 2 - another assertion\n'
+               '  error: AssertionError: expected 2\n# tests 2\n# pass 1\n# fail 1\n'
+               '# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                with self.assertRaises(SystemExit): report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['commands'][-1]['exit_code'], 0)
+        self.assertEqual(saved['result'], 'fail')
+        self.assertIn('AssertionError: expected 2', saved['failure_diagnostics'])
 
     def test_setup_failure_is_reported_and_prevents_integration_commands(self):
         candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
@@ -171,6 +189,50 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertEqual(saved['integration_status'], 'not_run')
         self.assertEqual(saved['result'], 'fail')
         self.assertEqual(saved['exit_code'], 2)
+
+    def test_failed_report_has_bounded_sanitized_diagnostics(self):
+        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        secret = 'fake-secret-token-123'
+        tap = (f'not ok 1 - {report.REQUIRED_SCENARIO}\n  error: AssertionError: expected value\n'
+               f'  at test.js:12:3\n  connection postgres://user:{secret}@db.example/test\n'
+               f'# tests 1\n# pass 0\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 1, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.dict('os.environ', {'JARVIS_TEST_DATABASE_URL': f'postgres://u:{secret}@host/db', 'GITHUB_TOKEN': secret}), \
+                    patch.object(report.subprocess, 'run', side_effect=results):
+                with self.assertRaises(SystemExit): report.run_report(candidate, output)
+            raw = output.read_bytes()
+            saved = json.loads(raw)
+        diagnostics = saved['failure_diagnostics']
+        self.assertIn('AssertionError', diagnostics)
+        self.assertIn('test.js:12:3', diagnostics)
+        self.assertNotIn(secret, raw.decode())
+        self.assertLessEqual(len(raw), 8192)
+        self.assertLessEqual(len(raw.decode().splitlines()), 120)
+
+    def test_diagnostics_truncate_deterministically_by_bytes_and_lines(self):
+        first = report.bounded_diagnostics('x' * 20000 + '\n' + 'line\n' * 200)
+        second = report.bounded_diagnostics('x' * 20000 + '\n' + 'line\n' * 200)
+        self.assertEqual(first, second)
+        self.assertLessEqual(len(first.encode()), 8192)
+        self.assertLessEqual(len(first.splitlines()), 120)
+        self.assertIn('truncated', first)
+
+    def test_passing_report_omits_test_output_diagnostics(self):
+        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
+               '# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap + 'SECRET TEST OUTPUT'})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results): report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+            serialized = output.read_text()
+            self.assertNotIn('failure_diagnostics', saved)
+            self.assertNotIn('SECRET TEST OUTPUT', serialized)
 
 
 if __name__ == '__main__':
