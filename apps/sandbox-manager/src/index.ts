@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 export const serviceName = "sandbox-manager";
 
 const MANAGED_LABEL = "jarvis.managed";
@@ -10,6 +11,7 @@ const SNAPSHOT_LABEL = "snapshot_id";
 const MODEL_PROFILE_LABEL = "model_profile_id";
 const LEASE_LABEL = "lease_epoch";
 const RESOURCE_LABEL = "resource_kind";
+const IDEMPOTENCY_LABEL = "idempotency_key_sha256";
 const MAX_CONCURRENT_SANDBOXES = 1;
 const WORKSPACE_TARGET = "/workspace";
 const STATE_TARGET = "/state";
@@ -208,6 +210,7 @@ export type SandboxStatus = {
 
 export type SandboxManager = {
   create(spec: unknown, idempotencyKey: string): Promise<SandboxStatus>;
+  findByIdempotencyKey(spec: unknown, idempotencyKey: string): Promise<string | null>;
   inspect(sandboxId: string): Promise<SandboxStatus>;
   cancel(sandboxId: string, leaseEpoch: number): Promise<void>;
   destroy(sandboxId: string, leaseEpoch: number): Promise<void>;
@@ -403,6 +406,7 @@ function labelsFor(
   sandboxId: string,
   profile: SandboxProfile,
   resourceKind: "container" | "workspace" | "state" | "gateway" | "filter" | "config-writer" | "egress-config" | "gateway-network" | "provider-network",
+  idempotencyHash?: string,
 ): ManagedLabels {
   return {
     [MANAGED_LABEL]: "true",
@@ -415,6 +419,7 @@ function labelsFor(
     [MODEL_PROFILE_LABEL]: spec.modelProfileId,
     [LEASE_LABEL]: String(spec.leaseEpoch),
     [RESOURCE_LABEL]: resourceKind,
+    ...(resourceKind === "container" && idempotencyHash ? { [IDEMPOTENCY_LABEL]: idempotencyHash } : {}),
   };
 }
 
@@ -464,6 +469,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
   const managed = new Map<string, ManagedSandbox>();
   const idempotency = new Map<string, { fingerprint: string; result: SandboxStatus }>();
   const inFlight = new Map<string, { fingerprint: string; promise: Promise<SandboxStatus> }>();
+  const preparing = new Map<string, { fingerprint: string; promise: Promise<SandboxStatus> }>();
   let reconcileBeforeCreate = false;
 
   function find(sandboxId: string, leaseEpoch?: number): ManagedSandbox {
@@ -532,6 +538,21 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
 
   async function create(specInput: unknown, idempotencyKey: string): Promise<SandboxStatus> {
     const spec = validateSpec(specInput);
+    if (typeof idempotencyKey !== "string" || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey)) invalid("A bounded idempotency key is required.");
+    const fingerprint = fingerprintFor(spec);
+    const pending = preparing.get(idempotencyKey);
+    if (pending) {
+      if (pending.fingerprint !== fingerprint) throw new SandboxManagerError("Idempotency key is already being used for a different sandbox request.", "CONFLICT");
+      return pending.promise;
+    }
+    const promise = createImpl(spec, idempotencyKey);
+    preparing.set(idempotencyKey, { fingerprint, promise });
+    try { return await promise; }
+    finally { preparing.delete(idempotencyKey); }
+  }
+
+  async function createImpl(specInput: unknown, idempotencyKey: string): Promise<SandboxStatus> {
+    const spec = validateSpec(specInput);
     if (typeof idempotencyKey !== "string" || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey)) {
       invalid("A bounded idempotency key is required.");
     }
@@ -550,11 +571,12 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
     await expire();
 
     const fingerprint = fingerprintFor(spec);
+    const idempotencyHash = createHash("sha256").update(idempotencyKey).digest("hex");
     const sameAttempt = [...managed.values()].find((record) =>
       record.spec.taskId === spec.taskId && record.spec.attemptId === spec.attemptId);
     if (sameAttempt) {
-      if (fingerprintFor(sameAttempt.spec) !== fingerprint) {
-        throw new SandboxManagerError("Task attempt already has a different managed sandbox.", "CONFLICT");
+      if (fingerprintFor(sameAttempt.spec) !== fingerprint || sameAttempt.labels[IDEMPOTENCY_LABEL] !== idempotencyHash) {
+        throw new SandboxManagerError("Task attempt already has a different managed sandbox request.", "CONFLICT");
       }
       return status(sameAttempt);
     }
@@ -583,7 +605,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
       const sandboxId = createId();
       const workspaceVolume = `jarvis-work-${sandboxId}`;
       const stateVolume = `jarvis-state-${sandboxId}`;
-      const labels = labelsFor(spec, sandboxId, profile, "container");
+      const labels = labelsFor(spec, sandboxId, profile, "container", idempotencyHash);
       const workspaceLabels = labelsFor(spec, sandboxId, profile, "workspace");
       const stateLabels = labelsFor(spec, sandboxId, profile, "state");
       const configVolume = gatewayFilter ? `jarvis-egress-config-${sandboxId}` : undefined;
@@ -803,6 +825,24 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
     }
   }
 
+  async function findByIdempotencyKey(specInput: unknown, idempotencyKey: string): Promise<string | null> {
+    const spec = validateSpec(specInput);
+    if (typeof idempotencyKey !== "string" || !/^[a-zA-Z0-9._:-]{8,128}$/.test(idempotencyKey)) invalid("A bounded idempotency key is required.");
+    const fingerprint = fingerprintFor(spec);
+    const prior = idempotency.get(idempotencyKey);
+    const pending = preparing.get(idempotencyKey) ?? inFlight.get(idempotencyKey);
+    if (prior && prior.fingerprint !== fingerprint || pending && pending.fingerprint !== fingerprint) {
+      throw new SandboxManagerError("Idempotency key was already used for a different sandbox request.", "CONFLICT");
+    }
+    if (pending) return (await pending.promise).sandboxId;
+    if (prior) return managed.has(prior.result.sandboxId) ? prior.result.sandboxId : null;
+    const keyHash = createHash("sha256").update(idempotencyKey).digest("hex");
+    const found = [...managed.values()].filter((record) => record.labels[IDEMPOTENCY_LABEL] === keyHash);
+    if (found.some((record) => fingerprintFor(record.spec) !== fingerprint)) throw new SandboxManagerError("Idempotency key was already used for a different sandbox request.", "CONFLICT");
+    if (found.length > 1) throw new SandboxManagerError("Idempotency key resolves to multiple managed sandboxes.", "CONFLICT");
+    return found[0]?.sandboxId ?? null;
+  }
+
   async function inspect(sandboxId: string): Promise<SandboxStatus> {
     const record = find(sandboxId);
     return status(record);
@@ -943,7 +983,8 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
       const providerNetworks = networkGroup.filter((item) => item.labels[RESOURCE_LABEL] === "provider-network");
       const workspaceLabels = labelsFor(spec, sandboxId, profile, "workspace");
       const stateLabels = labelsFor(spec, sandboxId, profile, "state");
-      assertOwned(labels, labelsFor(spec, sandboxId, profile, "container"));
+      if (!/^[a-f0-9]{64}$/.test(labels[IDEMPOTENCY_LABEL] ?? "")) throw new SandboxManagerError("Recovered sandbox is missing its idempotency identity.", "CONFLICT");
+      assertOwned(labels, labelsFor(spec, sandboxId, profile, "container", labels[IDEMPOTENCY_LABEL]));
       if (!gatewayFilter && (config.length || socket.length || gateways.length || filters.length || writers.length || networkGroup.length)) {
         throw new SandboxManagerError("Recovered attempt has gateway/filter resources but no trusted sidecar profile is configured.", "CONFLICT");
       }
@@ -1007,7 +1048,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
         stateVolume: state[0]!.name,
         spec,
         profile,
-        labels: labelsFor(spec, sandboxId, profile, "container"),
+        labels,
         workspaceLabels,
         stateLabels,
         ...(gatewayFilter && configLabels ? { configVolume: config[0]!.name, configLabels } : {}),
@@ -1062,5 +1103,5 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
     }
   }
 
-  return { create, inspect, cancel, destroy, runtime, expire, recover };
+  return { create, findByIdempotencyKey, inspect, cancel, destroy, runtime, expire, recover };
 }

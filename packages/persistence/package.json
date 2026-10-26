@@ -8,7 +8,7 @@
   "scripts": {
     "build": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/queue run build && tsc",
     "typecheck": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/queue run build && tsc --noEmit",
-    "test": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/queue run build && pnpm run build && node --test src/*.test.mjs test/*.integration.test.mjs"
+    "test": "pnpm --filter @jarvis/api run build && pnpm --filter @jarvis/worker run build && pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/queue run build && pnpm run build && node --test src/*.test.mjs test/*.integration.test.mjs"
   },
   "dependencies": {
     "@jarvis/queue": "workspace:*",

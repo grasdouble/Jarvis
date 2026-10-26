@@ -17,6 +17,117 @@ export interface SqlPool {
   connect(): Promise<SqlClient>;
 }
 
+export type SandboxSpecReservation = { taskId: string; attemptId: string; snapshotId: string; profileId: string; modelProfileId: string; deadline: string; leaseEpoch: number };
+export type SandboxLease = { taskId: string; attemptId: string; leaseEpoch: number; sandboxId: string };
+export type SandboxReservation = { taskId: string; attemptId: string; leaseEpoch: number; sandboxId: string | null; idempotencyKey: string; spec: SandboxSpecReservation };
+export class SandboxLeaseRejectedError extends Error {
+  constructor() { super("Sandbox mapping rejected because the exact active queue lease is no longer valid."); this.name = "SandboxLeaseRejectedError"; }
+}
+export interface SandboxLeaseStore {
+  reserve(input: Omit<SandboxReservation, "sandboxId">): Promise<void>;
+  bind(input: SandboxLease): Promise<void>;
+  get(input: Omit<SandboxLease, "sandboxId">): Promise<string | null>;
+  clear(input: Omit<SandboxLease, "sandboxId">): Promise<void>;
+  getForReconciliation(input: Omit<SandboxLease, "sandboxId">): Promise<SandboxReservation>;
+  clearAfterReconciliationCancellation(input: Omit<SandboxLease, "sandboxId"> & { sandboxId: string }): Promise<void>;
+  clearAfterReconciliationNoSandbox(input: Omit<SandboxLease, "sandboxId">): Promise<void>;
+}
+
+/** Durable task-attempt mapping; every write/read is fenced by the queue's live lease. */
+export function createSandboxLeaseStore(pool: SqlPool): SandboxLeaseStore {
+  return {
+    async reserve(input): Promise<void> {
+      if (input.idempotencyKey !== `${input.taskId}:${input.attemptId}:${input.leaseEpoch}` ||
+          input.spec.taskId !== input.taskId || input.spec.attemptId !== input.attemptId || input.spec.leaseEpoch !== input.leaseEpoch) {
+        throw new SandboxLeaseRejectedError();
+      }
+      const client = await pool.connect();
+      try {
+        const result = await client.query(`UPDATE jarvis.task_attempts a SET sandbox_idempotency_key = $4, sandbox_spec = $5::jsonb
+          FROM jarvis.queue_entries q WHERE a.id = $2 AND a.task_id = $1 AND a.lease_epoch = $3
+            AND a.state = 'active' AND (a.sandbox_id IS NULL OR (a.sandbox_idempotency_key = $4 AND a.sandbox_spec = $5::jsonb))
+            AND (a.sandbox_idempotency_key IS NULL OR (a.sandbox_idempotency_key = $4 AND a.sandbox_spec = $5::jsonb))
+            AND q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+            AND q.state = 'leased' AND q.lease_until > clock_timestamp()`,
+        [input.taskId, input.attemptId, input.leaseEpoch, input.idempotencyKey, JSON.stringify(input.spec)]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+      } finally { client.release(); }
+    },
+    async bind(input: SandboxLease): Promise<void> {
+      const client = await pool.connect();
+      try {
+        const result = await client.query(`UPDATE jarvis.task_attempts a SET sandbox_id = $4
+          FROM jarvis.queue_entries q WHERE a.id = $2 AND a.task_id = $1 AND a.lease_epoch = $3
+            AND a.state = 'active' AND a.sandbox_idempotency_key IS NOT NULL AND a.sandbox_spec IS NOT NULL
+            AND (a.sandbox_id IS NULL OR a.sandbox_id = $4)
+            AND q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+            AND q.state = 'leased' AND q.lease_until > clock_timestamp()`,
+        [input.taskId, input.attemptId, input.leaseEpoch, input.sandboxId]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+      } finally { client.release(); }
+    },
+    async get(input: Omit<SandboxLease, "sandboxId">): Promise<string | null> {
+      const client = await pool.connect();
+      try {
+        const result = await client.query<{ sandbox_id: string | null }>(`SELECT a.sandbox_id FROM jarvis.task_attempts a
+          JOIN jarvis.queue_entries q ON q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+          WHERE a.task_id = $1 AND a.id = $2 AND a.lease_epoch = $3 AND a.state = 'active'
+            AND q.state = 'leased' AND q.lease_until > clock_timestamp()`, [input.taskId, input.attemptId, input.leaseEpoch]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+        return result.rows[0]?.sandbox_id ?? null;
+      } finally { client.release(); }
+    },
+    async clear(input: Omit<SandboxLease, "sandboxId">): Promise<void> {
+      const client = await pool.connect();
+      try {
+        const result = await client.query(`UPDATE jarvis.task_attempts a SET sandbox_id = NULL, sandbox_idempotency_key = NULL, sandbox_spec = NULL FROM jarvis.queue_entries q
+          WHERE a.task_id = $1 AND a.id = $2 AND a.lease_epoch = $3 AND a.state = 'active'
+            AND q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+            AND q.state = 'leased' AND q.lease_until > clock_timestamp()`,
+          [input.taskId, input.attemptId, input.leaseEpoch]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+      } finally { client.release(); }
+    },
+    async getForReconciliation(input): Promise<SandboxReservation> {
+      const client = await pool.connect();
+      try {
+        const result = await client.query<{ sandbox_id: string | null; sandbox_idempotency_key: string; sandbox_spec: SandboxSpecReservation }>(`SELECT a.sandbox_id, a.sandbox_idempotency_key, a.sandbox_spec FROM jarvis.task_attempts a
+          JOIN jarvis.queue_entries q ON q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+          WHERE a.task_id = $1 AND a.id = $2 AND a.lease_epoch = $3 AND a.state = 'failed' AND a.sandbox_idempotency_key IS NOT NULL AND a.sandbox_spec IS NOT NULL
+            AND q.state IN ('failed', 'reconciliation_required')`,
+        [input.taskId, input.attemptId, input.leaseEpoch]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+        const row = result.rows[0];
+        if (!row) throw new SandboxLeaseRejectedError();
+        return { ...input, sandboxId: row.sandbox_id, idempotencyKey: row.sandbox_idempotency_key, spec: row.sandbox_spec };
+      } finally { client.release(); }
+    },
+    async clearAfterReconciliationCancellation(input): Promise<void> {
+      const client = await pool.connect();
+      try {
+        const result = await client.query(`UPDATE jarvis.task_attempts a SET sandbox_id = NULL, sandbox_idempotency_key = NULL, sandbox_spec = NULL FROM jarvis.queue_entries q
+          WHERE a.task_id = $1 AND a.id = $2 AND a.lease_epoch = $3 AND a.state = 'failed' AND (a.sandbox_id IS NULL OR a.sandbox_id = $4)
+            AND q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+            AND q.state IN ('failed', 'reconciliation_required')`,
+        [input.taskId, input.attemptId, input.leaseEpoch, input.sandboxId]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+      } finally { client.release(); }
+    },
+    async clearAfterReconciliationNoSandbox(input): Promise<void> {
+      const client = await pool.connect();
+      try {
+        const result = await client.query(`UPDATE jarvis.task_attempts a SET sandbox_idempotency_key = NULL, sandbox_spec = NULL
+          FROM jarvis.queue_entries q WHERE a.task_id = $1 AND a.id = $2 AND a.lease_epoch = $3 AND a.state = 'failed'
+            AND a.sandbox_id IS NULL AND a.sandbox_idempotency_key IS NOT NULL AND a.sandbox_spec IS NOT NULL
+            AND q.task_id = a.task_id AND q.attempt_id = a.id AND q.lease_epoch = a.lease_epoch
+            AND q.state IN ('failed', 'reconciliation_required')`,
+        [input.taskId, input.attemptId, input.leaseEpoch]);
+        if (result.rowCount !== 1) throw new SandboxLeaseRejectedError();
+      } finally { client.release(); }
+    },
+  };
+}
+
 export interface CheckpointInput {
   taskId: string;
   attemptId: string;

@@ -4,7 +4,19 @@ import { createOperationalStopControlHandler, createStopControlHttpHandler } fro
 import { createOperationalDashboardServer } from "../dist/http-server.js";
 import { once } from "node:events";
 import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import * as worker from "../../worker/dist/index.js";
+import { createRuntimeComposition } from "../dist/runtime-composition.js";
+
+test("runtime composition wires persisted stop state to authenticated API and worker cancellation", async () => {
+  const store = { get: async () => ({ global: { stopped: true, version: 2 }, project: null }), set: async () => undefined };
+  const auth = { authorizeRead: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }), authorizeMutation: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }) };
+  const stopped = [];
+  const composition = createRuntimeComposition({ store, auth, worker: { stop: async (projectId) => stopped.push(projectId) }, dashboard: async () => ({ status: 404 }) });
+  const response = await composition.stopControls({ method: "POST", headers: {}, body: { stopped: true, expectedVersion: 1 } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(stopped, [undefined]);
+});
 
 test("injected stop composition stops matching tasks, leaves fresh work on resume, and preserves uncertain effects", async (context) => {
   const state = { global: { stopped: false, version: 1, changedBy: "owner", changedAt: new Date(0) }, project: null };
@@ -39,7 +51,7 @@ test("injected stop composition stops matching tasks, leaves fresh work on resum
   const control = createOperationalStopControlHandler(store, auth, executor);
   const one = execute("task-one", "project-one");
   const two = execute("task-two", "project-two");
-  while (started.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  while (started.length < 2) await delay(0);
   state.project = { projectId: "project-one", record: { stopped: false, version: 0, changedBy: "owner", changedAt: new Date(0) } };
   const stopStartedAt = performance.now();
   const response = await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: true, expectedVersion: 0 } });
@@ -52,7 +64,7 @@ test("injected stop composition stops matching tasks, leaves fresh work on resum
   assert.deepEqual(sandboxStops, [{ taskId: "task-one", timeoutMs: 100 }]);
   assert.equal((await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: false, expectedVersion: 1 } })).status, 200);
   const fresh = execute("task-fresh-after-resume", "project-one");
-  while (started.length < 3) await new Promise((resolve) => setImmediate(resolve));
+  while (started.length < 3) await delay(0);
   assert.equal((await control({ method: "POST", projectId: "project-one", headers: {}, body: { stopped: false, expectedVersion: 2 } })).status, 200);
   assert.deepEqual(executor.activeTaskIds(), ["task-two", "task-fresh-after-resume"], "resume must not stop fresh active work");
   assert.deepEqual(sandboxStops, [{ taskId: "task-one", timeoutMs: 100 }], "resume must not request sandbox cancellation");
@@ -87,7 +99,7 @@ test("injected composition applies persisted global stop across projects and gat
     readStop: worker.createPersistedStopReader(store),
     dispatch: async (capability, signal) => {
       dispatches.push(capability);
-      return new Promise((resolve) => signal.addEventListener("abort", () => {}, { once: true }));
+      return new Promise(() => signal.addEventListener("abort", () => {}, { once: true }));
     },
     revokeCapability: async () => undefined,
     stopSandbox: async (taskId, timeoutMs) => { sandboxStops.push({ taskId, timeoutMs }); return "stopped"; },
@@ -104,7 +116,7 @@ test("injected composition applies persisted global stop across projects and gat
   const control = createOperationalStopControlHandler(store, auth, executor);
   const projectOne = execute("global-task-one", "project-one");
   const projectTwo = execute("global-task-two", "project-two");
-  while (dispatches.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  while (dispatches.length < 2) await delay(0);
 
   const response = await control({ method: "POST", headers: {}, body: { stopped: true, expectedVersion: 1 } });
   assert.equal(response.status, 200);

@@ -253,7 +253,7 @@ export class PostgresQueueStore implements QueueStore<QueuePayload> {
       await commit(client);
       committed = true;
       const task = toTask(updated);
-      return { task, worker, epoch: task.epoch, expiresAt: task.lease?.expiresAt ?? epoch(attempt.lease_until) };
+      return { task, worker, attemptId: attempt.id, epoch: task.epoch, expiresAt: task.lease?.expiresAt ?? epoch(attempt.lease_until) };
     } catch (error) {
       if (!committed) await rollback(client);
       throw error;

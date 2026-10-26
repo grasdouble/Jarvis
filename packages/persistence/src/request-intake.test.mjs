@@ -12,6 +12,34 @@ test("PostgresRequestIntakeStore is available for durable admission", () => {
   assert.equal(typeof persistence.PostgresRequestIntakeStore, "function");
 });
 
+test("sandbox reservation stores the exact attempt identity before binding and fences collisions", async () => {
+  const reservation = { taskId: "task-1", attemptId: "attempt-2", leaseEpoch: 3, idempotencyKey: "task-1:attempt-2:3",
+    spec: { taskId: "task-1", attemptId: "attempt-2", leaseEpoch: 3, snapshotId: "snapshot", profileId: "profile", modelProfileId: "model", deadline: "2030-01-01T00:00:00.000Z" } };
+  const { calls, ...pool } = poolFor([{ rows: [], rowCount: 1 }, { rows: [], rowCount: 1 }]);
+  const store = persistence.createSandboxLeaseStore(pool);
+  await store.reserve(reservation);
+  await store.bind({ ...reservation, sandboxId: "sandbox-1" });
+  assert.match(calls[0].text, /sandbox_idempotency_key = \$4, sandbox_spec = \$5::jsonb/);
+  assert.match(calls[0].text, /a\.sandbox_id IS NULL OR \(a\.sandbox_idempotency_key = \$4 AND a\.sandbox_spec = \$5::jsonb\)/);
+  assert.match(calls[0].text, /q\.state = 'leased'.*q\.lease_until > clock_timestamp\(\)/s);
+  assert.equal(calls[0].values[3], reservation.idempotencyKey);
+  assert.deepEqual(JSON.parse(calls[0].values[4]), reservation.spec);
+  assert.match(calls[1].text, /sandbox_idempotency_key IS NOT NULL AND a\.sandbox_spec IS NOT NULL/);
+  await assert.rejects(store.reserve({ ...reservation, idempotencyKey: "other-key" }), persistence.SandboxLeaseRejectedError);
+
+  const collision = poolFor([{ rows: [], rowCount: 0 }]);
+  await assert.rejects(persistence.createSandboxLeaseStore(collision).reserve(reservation), persistence.SandboxLeaseRejectedError);
+
+  const legacyMapping = poolFor([{ rows: [], rowCount: 0 }]);
+  await assert.rejects(persistence.createSandboxLeaseStore(legacyMapping).reserve(reservation), persistence.SandboxLeaseRejectedError);
+  assert.match(legacyMapping.calls[0].text, /a\.sandbox_id IS NULL OR \(a\.sandbox_idempotency_key = \$4 AND a\.sandbox_spec = \$5::jsonb\)/,
+    "reservation SQL cannot attach a fresh key/spec to a legacy non-NULL sandbox_id");
+
+  const absent = poolFor([{ rows: [], rowCount: 1 }]);
+  await persistence.createSandboxLeaseStore(absent).clearAfterReconciliationNoSandbox(reservation);
+  assert.match(absent.calls[0].text, /a\.sandbox_id IS NULL AND a\.sandbox_idempotency_key IS NOT NULL/);
+});
+
 test("pre-004 rows preserve NULL prompt/digest and cannot be reused for admission", async () => {
   const legacy = {
     id: "00000000-0000-4000-8000-000000000010", owner_id: "owner", project_id: "p1", repository_id: "3001",
