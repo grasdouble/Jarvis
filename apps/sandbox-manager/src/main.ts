@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { createSandboxManager } from "./index.js";
+import { createSandboxManagerFromConfiguration } from "./index.js";
 import type { SandboxProfile } from "./index.js";
 import { DockerEngineClient } from "./docker-engine.js";
 import { createSandboxManagerServer } from "./server.js";
@@ -18,12 +18,17 @@ const profilePath = required("SANDBOX_PROFILE_CONFIG");
 const profileValue: unknown = JSON.parse(readFileSync(profilePath, "utf8"));
 if (!Array.isArray(profileValue)) throw new Error("Sandbox profile configuration must be a JSON array.");
 const profiles = profileValue as SandboxProfile[];
-const manager = createSandboxManager({
+const gatewayFilterConfigPath = process.env.SANDBOX_GATEWAY_FILTER_CONFIG_FILE;
+const gatewayFilterConfig = gatewayFilterConfigPath === undefined
+  ? undefined
+  : JSON.parse(readFileSync(gatewayFilterConfigPath, "utf8")) as unknown;
+const manager = createSandboxManagerFromConfiguration({
   engine: new DockerEngineClient({
     socketPath: "/var/run/docker.sock",
     apiVersion: required("DOCKER_ENGINE_API_VERSION"),
   }),
   profiles,
+  gatewayFilterConfig,
 });
 await manager.recover();
 

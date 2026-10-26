@@ -107,6 +107,39 @@ export function createPersistedStopReader(store: PersistedStopControlReader): (p
     };
   };
 }
+
+export type OpenCodeDispatchCapability = {
+  readonly sandboxId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly leaseEpoch: number;
+  readonly title: string;
+  readonly prompt: string;
+};
+
+/** Compose the stop-aware final dispatch gate with the fixed #250 manager relay. */
+export function createStopAwareOpenCodePorts(options: {
+  readonly readStop: (projectId: string) => Promise<StopSnapshot>;
+  readonly manager: FixedOpenCodeManagerPort;
+  readonly revokeCapability: (taskId: string) => Promise<void>;
+  readonly stopSandbox: (taskId: string, timeoutMs: number) => Promise<"stopped" | "unknown">;
+  readonly recordAcceptedEffectUnknown: (taskId: string) => Promise<void>;
+  readonly session?: { readonly pollIntervalMs?: number; readonly maxPolls?: number; readonly requestTimeoutMs?: number };
+}): StopAwareExecutionPorts<OpenCodeDispatchCapability, Record<string, unknown>> {
+  return {
+    readStop: options.readStop,
+    dispatch: (capability, signal) => runOpenCodeSession({
+      manager: options.manager,
+      ...capability,
+      signal,
+      ...options.session,
+    }),
+    revokeCapability: options.revokeCapability,
+    stopSandbox: options.stopSandbox,
+    recordAcceptedEffectUnknown: options.recordAcceptedEffectUnknown,
+  };
+}
+
 export interface StopAwareExecutionPorts<C, R> {
   /** Must read durable effective (global OR project) stop state; failures deny dispatch. */
   readStop(projectId: string): Promise<StopSnapshot>;

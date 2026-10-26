@@ -56,6 +56,39 @@ test("invokes only the fixed relay executable with framed operation input throug
   assert.equal(createPayload.AttachStderr, false);
 });
 
+test("uploads only bounded archive bytes to the fixed manager config directory", async () => {
+  let captured;
+  const archive = Buffer.from("synthetic-tar-payload");
+  await withEngine((request, response, body) => {
+    captured = { method: request.method, url: request.url, type: request.headers["content-type"], body };
+    response.writeHead(200);
+    response.end();
+  }, async (engine) => {
+    assert.equal(typeof engine.putContainerArchive, "function");
+    await engine.putContainerArchive("a".repeat(64), "/etc/jarvis", archive);
+  });
+  assert.deepEqual(captured, {
+    method: "PUT",
+    url: `/v1.54/containers/${"a".repeat(64)}/archive?path=%2Fetc%2Fjarvis`,
+    type: "application/x-tar",
+    body: archive.toString(),
+  });
+});
+
+test("rejects archive destinations, identities and sizes outside the manager contract before Engine access", async () => {
+  let requests = 0;
+  await withEngine((_request, response) => {
+    requests += 1;
+    response.writeHead(200);
+    response.end();
+  }, async (engine) => {
+    await assert.rejects(() => engine.putContainerArchive("not-an-engine-id", "/etc/jarvis", Buffer.from("x")), /invalid/i);
+    await assert.rejects(() => engine.putContainerArchive("a".repeat(64), "/tmp", Buffer.from("x")), /invalid/i);
+    await assert.rejects(() => engine.putContainerArchive("a".repeat(64), "/etc/jarvis", Buffer.alloc(64 * 1024 + 1)), /invalid/i);
+  });
+  assert.equal(requests, 0);
+});
+
 test("maps the closed container request to a least-privilege Docker Engine payload", async () => {
   let requestPath;
   let payload;
@@ -90,6 +123,7 @@ test("maps the closed container request to a least-privilege Docker Engine paylo
       entrypoint: ["/usr/local/bin/jarvis-sandbox"],
       user: "10001:10001",
       labels,
+      environment: { LLM_GATEWAY_PROVIDER_ID: "synthetic", LLM_GATEWAY_MODEL: "synthetic-model" },
       networkMode: "none",
       readOnlyRootfs: true,
       privileged: false,
@@ -101,6 +135,7 @@ test("maps the closed container request to a least-privilege Docker Engine paylo
       mounts: [
         { type: "volume", source: "jarvis-work-a", target: "/workspace", readOnly: true },
         { type: "volume", source: "jarvis-state-a", target: "/state", readOnly: false },
+        { type: "volume", source: "jarvis-egress-config-a", target: "/etc/jarvis", readOnly: true },
       ],
     });
     assert.equal(result.id, "engine-container-id");
@@ -111,11 +146,15 @@ test("maps the closed container request to a least-privilege Docker Engine paylo
   assert.equal(payload.Image, `registry.example.invalid/jarvis/plan@sha256:${"a".repeat(64)}`);
   assert.equal(payload.User, "10001:10001");
   assert.deepEqual(payload.Labels, labels);
+  assert.deepEqual(payload.Env, ["LLM_GATEWAY_MODEL=synthetic-model", "LLM_GATEWAY_PROVIDER_ID=synthetic"]);
   assert.equal(payload.HostConfig.NetworkMode, "none");
   assert.equal(payload.HostConfig.ReadonlyRootfs, true);
   assert.equal(payload.HostConfig.Privileged, false);
   assert.deepEqual(payload.HostConfig.CapDrop, ["ALL"]);
   assert.equal(payload.HostConfig.PidsLimit, 256);
+  assert.deepEqual(payload.HostConfig.Mounts[2], {
+    Type: "volume", Source: "jarvis-egress-config-a", Target: "/etc/jarvis", ReadOnly: true,
+  });
   assert.equal(payload.HostConfig.Binds, undefined);
   assert.equal(payload.HostConfig.Devices, undefined);
   assert.equal(payload.HostConfig.PidMode, undefined);
@@ -178,4 +217,44 @@ test("recovers managed container and volume identities using label-filtered Engi
   });
   assert.match(containerPath, /filters=/);
   assert.match(volumePath, /filters=/);
+});
+
+test("creates an internal attempt network and attaches only the trusted filter to provider egress", async () => {
+  const requests = [];
+  const labels = { "jarvis.managed": "true", task_id: "task-123", attempt_id: "attempt-456", resource_kind: "gateway-network" };
+  await withEngine((request, response, body) => {
+    requests.push({ method: request.method, url: request.url, body: body ? JSON.parse(body) : undefined });
+    if (request.url === "/v1.54/networks/create") {
+      response.writeHead(201, { "content-type": "application/json" });
+      response.end(JSON.stringify({ Id: "attempt-internal-network" }));
+    } else if (request.url === "/v1.54/networks/attempt-internal-network") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ Id: "attempt-internal-network", Name: "jarvis-gateway-attempt-1", Labels: labels, Internal: true }));
+    } else if (request.url === "/v1.54/networks/egress/connect") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    } else if (request.url.startsWith("/v1.54/networks?filters=")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify([{ Id: "attempt-internal-network", Name: "jarvis-network", Labels: labels, Containers: { "filter-id": {} } }]));
+    } else {
+      response.writeHead(404);
+      response.end("{}");
+    }
+  }, async (engine) => {
+    assert.equal(typeof engine.createNetwork, "function");
+    assert.equal(typeof engine.connectNetwork, "function");
+    const network = await engine.createNetwork({ name: "jarvis-gateway-attempt-1", internal: true, labels });
+    await engine.connectNetwork("egress", "filter-container", { "jarvis.managed": "true" });
+    assert.equal(network.id, "attempt-internal-network");
+    assert.deepEqual((await engine.listManagedNetworks())[0].containerIds, ["filter-id"]);
+  });
+  assert.deepEqual(requests.map(({ method, url }) => [method, url]), [
+    ["POST", "/v1.54/networks/create"],
+    ["GET", "/v1.54/networks/attempt-internal-network"],
+    ["POST", "/v1.54/networks/egress/connect"],
+    ["GET", requests[3].url],
+  ]);
+  assert.equal(requests[0].body.Internal, true);
+  assert.deepEqual(requests[0].body.Labels, labels);
+  assert.deepEqual(requests[2].body, { Container: "filter-container", EndpointConfig: { Labels: { "jarvis.managed": "true" } } });
 });

@@ -1,5 +1,5 @@
 import { readFileSync, unlinkSync } from "node:fs";
-import { createBoundedGateway } from "./gateway.js";
+import { createProductionGateway } from "./gateway.js";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -16,12 +16,12 @@ function positiveInteger(name: string, defaultValue: number): number {
 }
 
 const socketPath = required("LLM_GATEWAY_SOCKET");
-const server = createBoundedGateway({
+const egressConfig: unknown = JSON.parse(readFileSync("/etc/jarvis/egress.json", "utf8"));
+const gatewayConfig: unknown = JSON.parse(readFileSync("/etc/jarvis/gateway.json", "utf8"));
+const server = createProductionGateway({
   socketPath,
-  capability: required("LLM_GATEWAY_ATTEMPT_CAPABILITY"),
-  providerUrl: required("LLM_GATEWAY_PROVIDER_URL"),
-  providerApiKey: readFileSync(required("LLM_GATEWAY_PROVIDER_KEY_FILE"), "utf8").trim(),
-  model: required("LLM_GATEWAY_MODEL"),
+  egressConfig,
+  gatewayConfig,
   maxInputBytes: positiveInteger("LLM_GATEWAY_MAX_INPUT_BYTES", 256 * 1024),
   maxOutputTokens: positiveInteger("LLM_GATEWAY_MAX_OUTPUT_TOKENS", 4096),
   maxRequests: positiveInteger("LLM_GATEWAY_MAX_REQUESTS", 8),

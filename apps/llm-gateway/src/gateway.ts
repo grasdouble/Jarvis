@@ -10,26 +10,131 @@ const MAX_REQUEST_TIMEOUT_MS = 120_000;
 export type BoundedGatewayOptions = {
   socketPath: string;
   capability: string;
-  providerUrl: string;
-  providerApiKey: string;
+  providerId: string;
   model: string;
   maxInputBytes: number;
   maxOutputTokens: number;
   maxRequests: number;
+  dispatchEnabled?: boolean;
   requestTimeoutMs?: number;
   maxResponseBytes?: number;
-  fetchProvider?: typeof fetch;
+  dispatchToFilter?: TrustedEgressFilterPort;
 };
 
+export type FilterRequest = {
+  readonly providerId: string;
+  readonly route: "/v1/chat/completions";
+  readonly body: Uint8Array;
+  readonly signal: AbortSignal;
+};
+
+/** Typed, fixed-route boundary. The filter owns destination resolution and provider credentials. */
+export interface TrustedEgressFilterPort {
+  dispatch(request: FilterRequest): Promise<Response>;
+}
+
+/** HTTP client for the filter's typed API; URL and route are fixed by trusted configuration. */
+export function createTrustedFilterClient(options: {
+  readonly host: string;
+  readonly port: number;
+  readonly capability: string;
+  readonly fetcher?: typeof fetch;
+}): TrustedEgressFilterPort {
+  if (!/^[a-zA-Z0-9.-]{1,253}$/.test(options.host) || !Number.isSafeInteger(options.port) ||
+      options.port < 1 || options.port > 65_535 || !options.capability) {
+    throw new Error("Trusted filter endpoint and per-attempt capability are required.");
+  }
+  const endpoint = `http://${options.host}:${options.port}/v1/dispatch`;
+  const fetcher = options.fetcher ?? fetch;
+  return {
+    async dispatch(request): Promise<Response> {
+      if (request.route !== ROUTE || request.providerId.length > 64 || request.body.byteLength > 1024 * 1024) {
+        throw new Error("Typed filter request exceeds its fixed route or bounds.");
+      }
+      const response = await fetcher(endpoint, {
+        method: "POST",
+        redirect: "manual",
+        signal: request.signal,
+        headers: {
+          authorization: `Bearer ${options.capability}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          providerId: request.providerId,
+          route: ROUTE,
+          body: Buffer.from(request.body).toString("base64"),
+        }),
+      });
+      if (response.status >= 300 && response.status < 400) {
+        throw new Error("Trusted filter redirects are denied.");
+      }
+      return response;
+    },
+  };
+}
+
+export function createConfiguredGateway(options: {
+  readonly socketPath: string;
+  readonly egressConfig: unknown;
+  readonly gatewayConfig: unknown;
+  readonly maxInputBytes: number;
+  readonly maxOutputTokens: number;
+  readonly maxRequests: number;
+  readonly requestTimeoutMs?: number;
+  readonly fetcher?: typeof fetch;
+}): Server {
+  const record = (value: unknown, keys: readonly string[], name: string): Record<string, unknown> => {
+    if (typeof value !== "object" || value === null || Array.isArray(value) ||
+        Object.keys(value).sort().join(",") !== [...keys].sort().join(",")) {
+      throw new Error(`${name} configuration is invalid.`);
+    }
+    return value as Record<string, unknown>;
+  };
+  const egress = record(options.egressConfig, ["providers", "dispatch_enabled", "filterCapability"], "Egress");
+  const gateway = record(options.gatewayConfig, ["dispatch_enabled", "providerId", "model", "filterHost", "filterPort"], "Gateway");
+  if (!Array.isArray(egress.providers) || egress.providers.length !== 0 || egress.dispatch_enabled !== false ||
+      typeof egress.filterCapability !== "string" || !/^[a-f0-9]{64}$/i.test(egress.filterCapability) ||
+      typeof gateway.dispatch_enabled !== "boolean" || typeof gateway.providerId !== "string" ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(gateway.providerId) || typeof gateway.model !== "string" ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(gateway.model) || typeof gateway.filterHost !== "string" ||
+      !/^jarvis-egress-filter-[0-9a-f-]{36}$/.test(gateway.filterHost) || gateway.filterPort !== 8080) {
+    throw new Error("Per-attempt gateway/filter configuration is invalid or not fail-closed.");
+  }
+  const dispatchToFilter = createTrustedFilterClient({
+    host: gateway.filterHost,
+    port: gateway.filterPort,
+    capability: egress.filterCapability,
+    ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+  });
+  return createBoundedGateway({
+    socketPath: options.socketPath,
+    capability: egress.filterCapability,
+    providerId: gateway.providerId,
+    model: gateway.model,
+    maxInputBytes: options.maxInputBytes,
+    maxOutputTokens: options.maxOutputTokens,
+    maxRequests: options.maxRequests,
+    ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
+    dispatchEnabled: gateway.dispatch_enabled,
+    dispatchToFilter,
+  });
+}
+
+/** Production composition is intentionally stricter than synthetic factory tests. */
+export function createProductionGateway(options: Parameters<typeof createConfiguredGateway>[0]): Server {
+  const config = options.gatewayConfig;
+  if (typeof config !== "object" || config === null || Array.isArray(config) ||
+      (config as Record<string, unknown>).dispatch_enabled !== false) {
+    throw new Error("Production gateway dispatch must remain disabled.");
+  }
+  return createConfiguredGateway(options);
+}
+
 function validOptions(options: BoundedGatewayOptions): void {
-  if (!options.socketPath || !options.capability || !options.providerApiKey || !options.model) {
-    throw new Error("Gateway socket, per-attempt capability, fixed model and provider key are required.");
+  if (!options.socketPath || !options.capability || !options.providerId || !options.model) {
+    throw new Error("Gateway socket, per-attempt capability, fixed provider identity and model are required.");
   }
-  const upstream = new URL(options.providerUrl);
-  if (upstream.protocol !== "https:" || upstream.username || upstream.password || upstream.search || upstream.hash) {
-    throw new Error("Provider URL must be a fixed HTTPS endpoint without embedded credentials or query data.");
-  }
-  if (upstream.pathname !== ROUTE) throw new Error(`Provider URL must use the fixed ${ROUTE} route.`);
   for (const [name, value, minimum, maximum] of [
     ["maxInputBytes", options.maxInputBytes, 1, 1024 * 1024],
     ["maxOutputTokens", options.maxOutputTokens, 1, 1_000_000],
@@ -76,8 +181,8 @@ function sendError(response: ServerResponse, status: number, code: string): void
 
 export function createBoundedGateway(options: BoundedGatewayOptions): Server {
   validOptions(options);
-  const providerUrl = new URL(options.providerUrl);
-  const providerFetch = options.fetchProvider ?? fetch;
+  const filter = options.dispatchToFilter;
+  const dispatchEnabled = options.dispatchEnabled ?? Boolean(filter);
   const timeoutMs = options.requestTimeoutMs ?? 30_000;
   const responseLimit = options.maxResponseBytes ?? 1024 * 1024;
   let admittedRequests = 0;
@@ -97,6 +202,10 @@ export function createBoundedGateway(options: BoundedGatewayOptions): Server {
     }
     if (admittedRequests >= options.maxRequests) {
       sendError(response, 429, "attempt_request_limit_reached");
+      return;
+    }
+    if (!filter || !dispatchEnabled) {
+      sendError(response, 503, "provider_dispatch_inactive");
       return;
     }
 
@@ -128,15 +237,10 @@ export function createBoundedGateway(options: BoundedGatewayOptions): Server {
         return;
       }
 
-      const upstreamResponse = await providerFetch(providerUrl, {
-        method: "POST",
-        redirect: "manual",
+      const upstreamResponse = await filter.dispatch({
+        providerId: options.providerId,
+        route: ROUTE,
         signal: controller.signal,
-        headers: {
-          authorization: `Bearer ${options.providerApiKey}`,
-          "content-type": "application/json",
-          accept: "text/event-stream, application/json",
-        },
         body: new Uint8Array(rawBody),
       });
       if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
