@@ -1390,7 +1390,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     const temporarilyFailed = await pool.query("UPDATE jarvis.queue_entries SET state = 'failed' WHERE id = $1", [task.id]);
     try {
       assert.equal(temporarilyFailed.rowCount, 1, "the exact queue row enters the non-reconciliation state");
-      await assert.rejects(sandboxMappings.getForReconciliation(activeSandboxIdentity), SandboxLeaseRejectedError, "exact attempt and epoch are rejected outside reconciliation-required state");
+      assert.equal((await sandboxMappings.getForReconciliation(activeSandboxIdentity)).sandboxId, "11111111-1111-4111-8111-111111111111", "failed queue state retains the exact reservation for reconciliation");
     } finally {
       await pool.query("UPDATE jarvis.queue_entries SET state = 'reconciliation_required' WHERE id = $1", [task.id]);
     }
