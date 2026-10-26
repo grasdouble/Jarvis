@@ -428,18 +428,20 @@ test("rejects profile quotas that exceed the selected one-sandbox resource envel
   }), /duration limit/i);
 });
 
-test("recovers a live attempt from ownership labels after a manager restart", async () => {
+test("resolves exact idempotency identity after manager restart and rejects key/spec mismatch", async () => {
   const engine = engineFake();
   const firstProcess = manager(engine);
-  const created = await firstProcess.create(spec, "idempotency-before-restart");
+  const key = "idempotency-before-restart";
+  const created = await firstProcess.create(spec, key);
+  assert.equal(await firstProcess.findByIdempotencyKey(spec, key), created.sandboxId);
+  assert.equal(await firstProcess.findByIdempotencyKey(spec, "idempotency-no-result"), null);
   const restartedProcess = manager(engine);
 
   await restartedProcess.recover();
   assert.equal((await restartedProcess.inspect(created.sandboxId)).state, "running");
-  assert.deepEqual(
-    await restartedProcess.create(spec, "idempotency-after-restart"),
-    { ...created, state: "running" },
-  );
+  assert.equal(await restartedProcess.findByIdempotencyKey(spec, key), created.sandboxId);
+  await assert.rejects(restartedProcess.findByIdempotencyKey({ ...spec, attemptId: "different-attempt" }, key), /different sandbox request/i);
+  await assert.rejects(restartedProcess.create(spec, "idempotency-after-restart"), /different managed sandbox request/i);
   assert.equal(engine.calls.filter(([kind]) => kind === "createContainer").length, 1);
 });
 
@@ -465,14 +467,17 @@ test("reserves capacity while the first sandbox creation is still in flight", as
     return createVolume(input);
   };
   const service = manager(engine);
-  const first = service.create(spec, "idempotency-race-1");
+  const idempotencyIdentity = "idempotency-race-1";
+  const first = service.create(spec, idempotencyIdentity);
+  const resolution = service.findByIdempotencyKey(spec, idempotencyIdentity);
 
   await assert.rejects(
     () => service.create({ ...spec, attemptId: "attempt-race" }, "idempotency-race-2"),
     /capacity is exhausted/i,
   );
   releaseVolume();
-  await first;
+  const created = await first;
+  assert.equal(await resolution, created.sandboxId, "lookup joins the in-flight create for the same key and specification");
   assert.equal(engine.calls.filter(([kind]) => kind === "createContainer").length, 1);
 });
 

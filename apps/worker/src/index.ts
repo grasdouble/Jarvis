@@ -1,4 +1,7 @@
 export const serviceName = "worker";
+export * from "./sandbox-runtime.js";
+export * from "./sandbox-manager-client.js";
+import { createSandboxRuntime, type SandboxRuntimePorts } from "./sandbox-runtime.js";
 import type { QueueLease, QueueResult, QueueService } from "@jarvis/queue";
 
 export type FixedOpenCodeRequest =
@@ -254,6 +257,9 @@ export interface QueueWorkerPorts<T, C> {
   /** Loads trusted project context/capability for the already-claimed durable task. */
   readonly hydrate: (lease: QueueLease<T>) => Promise<StopAwareTask<C>>;
   readonly execution: StopAwareExecutionPorts<C, QueueResult>;
+  /** Required production composition: trusted policy supplies SandboxSpec; this code supplies only the lease identity. */
+  readonly sandbox?: Omit<SandboxRuntimePorts<T, QueueResult>, "dispatch">;
+  readonly dispatchSandbox?: (input: { readonly capability: C; readonly lease: QueueLease<T>; readonly sandboxId: string; readonly signal: AbortSignal }) => Promise<QueueResult>;
   /** Must resolve only after the explicit post-restore suspension transaction commits. */
   readonly restoreGate: RestoreActivationGate;
 }
@@ -289,6 +295,26 @@ export function createRestoreActivationGate(suspendAfterRestore: () => Promise<u
 export interface QueueWorker {
   runOnce(): Promise<"idle" | "completed" | "cancelled" | "unknown">;
   stop(projectId?: string): Promise<void>;
+  cancelSandboxForReconciliation(identity: { taskId: string; attemptId: string; leaseEpoch: number }): Promise<"cancelled" | "no_sandbox">;
+}
+
+/** Configured composition for sandbox-backed execution; trustedSpec is mandatory and there is no legacy dispatch fallback. */
+export function createSandboxQueueWorker<T, C>(ports: QueueWorkerPorts<T, C> & {
+  readonly sandbox: Omit<SandboxRuntimePorts<T, QueueResult>, "dispatch">;
+  readonly dispatchSandbox: NonNullable<QueueWorkerPorts<T, C>["dispatchSandbox"]>;
+}): QueueWorker {
+  if (typeof ports.sandbox?.trustedSpec !== "function" || typeof ports.sandbox?.sandbox?.create !== "function" ||
+      typeof ports.sandbox?.sandbox?.cancel !== "function" || typeof ports.sandbox?.mappings?.bind !== "function" ||
+      typeof ports.sandbox?.mappings?.get !== "function" || typeof ports.sandbox?.mappings?.clear !== "function" ||
+      typeof ports.sandbox?.mappings?.getForReconciliation !== "function" ||
+      typeof ports.sandbox?.mappings?.clearAfterReconciliationCancellation !== "function" ||
+      typeof ports.sandbox?.mappings?.reserve !== "function" ||
+      typeof ports.sandbox?.mappings?.clearAfterReconciliationNoSandbox !== "function" ||
+      typeof ports.sandbox?.sandbox?.findByIdempotencyKey !== "function" ||
+      typeof ports.dispatchSandbox !== "function") {
+    throw new TypeError("Sandbox worker composition requires trustedSpec, sandbox manager, mapping store, and sandbox dispatch");
+  }
+  return createQueueWorker(ports);
 }
 
 /** One-claim consumer. Durable queue claim gates admission; executor gates final dispatch. */
@@ -298,7 +324,35 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
       typeof ports.restoreGate?.activateAfterRestore !== "function") {
     throw new TypeError("A worker id and bounded lease duration are required");
   }
-  const executor = createStopAwareExecutor(ports.execution);
+  if ((ports.sandbox === undefined) !== (ports.dispatchSandbox === undefined)) {
+    throw new TypeError("Sandbox worker ports must be configured together");
+  }
+  let activeLease: QueueLease<T> | undefined;
+  let activeCapability: C | undefined;
+  const sandboxRuntime = ports.sandbox && ports.dispatchSandbox ? createSandboxRuntime<T, QueueResult>({
+    ...ports.sandbox,
+    dispatch: ({ lease, sandboxId, signal }) => {
+      if (activeCapability === undefined) throw new Error("No hydrated capability for sandbox dispatch");
+      return ports.dispatchSandbox!({ lease, sandboxId, capability: activeCapability, signal });
+    },
+  }) : undefined;
+  const executor = createStopAwareExecutor({
+    ...ports.execution,
+    stopSandbox: async (taskId, _timeoutMs) => {
+      const lease = activeLease;
+      if (!lease || lease.task.taskId !== taskId) return "unknown";
+      try {
+        if (sandboxRuntime) await sandboxRuntime.cancel(lease);
+        else await ports.execution.stopSandbox(taskId, _timeoutMs);
+        return "stopped";
+      } catch { return "unknown"; }
+    },
+    dispatch: async (_capability, signal) => {
+      if (!activeLease) throw new Error("No active queue lease for sandbox dispatch");
+      if (sandboxRuntime) return sandboxRuntime.execute(activeLease, signal);
+      return ports.execution.dispatch(activeCapability!, signal);
+    },
+  });
   let running = false;
   let runningProjectId: string | undefined;
   let runFinished: Promise<void> | undefined;
@@ -316,7 +370,9 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
         await ports.restoreGate.waitUntilActivated();
         lease = await ports.queue.claim(ports.workerId, ports.leaseMs);
         if (lease === null) return "idle";
+        activeLease = lease;
         const task = await ports.hydrate(lease);
+        activeCapability = task.capability;
         runningProjectId = task.projectId;
         let result: StopExecutionResult<QueueResult>;
         try { result = await executor.execute(task); }
@@ -337,6 +393,8 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
         return "cancelled";
       } finally {
         running = false;
+        activeLease = undefined;
+        activeCapability = undefined;
         runningProjectId = undefined;
         finishRun?.();
         finishRun = undefined;
@@ -349,6 +407,10 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
       await executor.stop(projectId);
       // Wait for runOnce to release/cancel or mark the lease reconciliation-required.
       if (shouldWaitForLease && completion) await completion;
+    },
+    async cancelSandboxForReconciliation(identity): Promise<"cancelled" | "no_sandbox"> {
+      if (!sandboxRuntime) throw new Error("Sandbox reconciliation is unavailable for this worker");
+      return sandboxRuntime.cancelForReconciliation(identity);
     },
   };
 }

@@ -120,6 +120,9 @@ test("requires a trusted worker certificate and rejects other identities", async
     assert.equal(accepted.status, 201);
     assert.equal(JSON.parse(accepted.body).state, "running");
     const sandboxId = JSON.parse(accepted.body).sandboxId;
+    const resolved = await httpsRequest(port, { ...workerOptions, path: "/v1/sandboxes/resolve" }, JSON.stringify(spec));
+    assert.equal(resolved.status, 200);
+    assert.deepEqual(JSON.parse(resolved.body), { sandboxId });
     const runtime = await httpsRequest(port, {
       ...workerOptions,
       path: `/v1/sandboxes/${sandboxId}/runtime`,

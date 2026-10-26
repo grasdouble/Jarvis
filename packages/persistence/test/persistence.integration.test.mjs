@@ -3,6 +3,14 @@ import { describe, test } from "node:test";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { performance } from "node:perf_hooks";
+import https from "node:https";
+import { Buffer } from "node:buffer";
+import { URL } from "node:url";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pg from "pg";
 import {
   CheckpointRejectedError,
@@ -13,6 +21,8 @@ import {
   PostgresQueueStore,
   PostgresRequestIntakeStore,
   PostgresStopControlStore,
+  createSandboxLeaseStore,
+  SandboxLeaseRejectedError,
 } from "../dist/index.js";
 import { ProjectRequestIntake } from "@jarvis/domain";
 import { QueueError, QueueService } from "@jarvis/queue";
@@ -30,6 +40,20 @@ const canonical = (value) => Array.isArray(value)
     ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
 const originalConfigHash = createHash("sha256").update(canonical(originalConfig)).digest("hex");
+
+function createSyntheticSandboxTls() {
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-issue242-integration-tls-"));
+  const openssl = (...args) => execFileSync("openssl", args, { cwd: dir, stdio: "ignore" });
+  writeFileSync(join(dir, "server.ext"), "subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n");
+  writeFileSync(join(dir, "worker.ext"), "subjectAltName=URI:spiffe://jarvis/worker\nextendedKeyUsage=clientAuth\n");
+  openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.crt", "-subj", "/CN=synthetic-integration-ca", "-days", "1");
+  for (const name of ["server", "worker"]) {
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", `${name}.key`, "-out", `${name}.csr`, "-subj", `/CN=${name}`);
+    openssl("x509", "-req", "-in", `${name}.csr`, "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial", "-out", `${name}.crt`, "-days", "1", "-extfile", `${name}.ext`);
+  }
+  const read = (name) => readFileSync(join(dir, name));
+  return { dir, ca: read("ca.crt"), serverCert: read("server.crt"), serverKey: read("server.key"), workerCert: read("worker.crt"), workerKey: read("worker.key") };
+}
 
 async function runCleanupSteps(steps) {
   const failures = [];
@@ -341,13 +365,14 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     const expectedDatabaseName = process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION === "1"
       ? "jarvis_integration_manual"
       : "jarvis_integration_auto";
-    assert.equal(database.name, expectedDatabaseName);
+    assert.equal(database.name, expectedDatabaseName,
+      `integration mode requires database ${expectedDatabaseName}, got ${database.name}`);
 
     const persistence = new PostgresPersistence(pool);
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations"]);
     const { rows: [initialStop] } = await pool.query("SELECT stopped FROM jarvis.stop_controls WHERE scope='global' AND project_id IS NULL");
     assert.equal(initialStop.stopped, true, "fresh database migration must start fail-closed");
     const restoreControls = new PostgresStopControlStore(pool);
@@ -616,6 +641,16 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     const firstLease = claimA ?? claimB;
     assert.ok(firstLease);
     assert.equal(firstLease.epoch, 1);
+    const sandboxMappings = createSandboxLeaseStore(pool);
+    const leaseIdentity = { taskId: firstLease.task.taskId, attemptId: firstLease.attemptId, leaseEpoch: firstLease.epoch };
+    const sandboxSpec = { ...leaseIdentity, snapshotId: "snapshot-durable-test", profileId: "profile-test", modelProfileId: "model-test", deadline: new Date(firstLease.expiresAt).toISOString() };
+    await sandboxMappings.reserve({ ...leaseIdentity, idempotencyKey: `${leaseIdentity.taskId}:${leaseIdentity.attemptId}:${leaseIdentity.leaseEpoch}`, spec: sandboxSpec });
+    await assert.rejects(sandboxMappings.reserve({ ...leaseIdentity, idempotencyKey: "different-key", spec: sandboxSpec }), SandboxLeaseRejectedError);
+    await sandboxMappings.bind({ ...leaseIdentity, sandboxId: "sandbox-exact-attempt" });
+    assert.equal(await sandboxMappings.get(leaseIdentity), "sandbox-exact-attempt");
+    await assert.rejects(sandboxMappings.get({ ...leaseIdentity, attemptId: "00000000-0000-4000-8000-000000000000" }), SandboxLeaseRejectedError);
+    await assert.rejects(sandboxMappings.get({ ...leaseIdentity, leaseEpoch: leaseIdentity.leaseEpoch + 1 }), SandboxLeaseRejectedError);
+    await assert.rejects(sandboxMappings.bind({ ...leaseIdentity, sandboxId: "sandbox-conflicting" }), SandboxLeaseRejectedError);
     assert.equal(await queue.claim("worker-c", 60_000), null, "a live lease is not made available to another worker");
     await pool.query(`
       UPDATE jarvis.queue_entries SET lease_until = clock_timestamp() - interval '1 second'
@@ -627,10 +662,22 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     const secondLease = await queue.claim("worker-b", 60_000);
     assert.ok(secondLease);
     assert.equal(secondLease.epoch, 2, "reclaimed work has a strictly increasing fencing epoch");
+    await assert.rejects(sandboxMappings.get(leaseIdentity), SandboxLeaseRejectedError, "expired/reclaimed lease cannot read the prior attempt mapping");
+    await assert.rejects(sandboxMappings.clear(leaseIdentity), SandboxLeaseRejectedError, "stale lease cannot clear the next attempt's mapping");
+    const secondIdentity = { taskId: secondLease.task.taskId, attemptId: secondLease.attemptId, leaseEpoch: secondLease.epoch };
+    const secondSpec = { ...secondIdentity, snapshotId: "snapshot-second-test", profileId: "profile-test", modelProfileId: "model-test", deadline: new Date(secondLease.expiresAt).toISOString() };
+    await sandboxMappings.reserve({ ...secondIdentity, idempotencyKey: `${secondIdentity.taskId}:${secondIdentity.attemptId}:${secondIdentity.leaseEpoch}`, spec: secondSpec });
+    await sandboxMappings.bind({ ...secondIdentity, sandboxId: "sandbox-second-attempt" });
+    assert.equal(await sandboxMappings.get({ taskId: secondLease.task.taskId, attemptId: secondLease.attemptId, leaseEpoch: secondLease.epoch }), "sandbox-second-attempt");
     await assert.rejects(queue.complete(firstLease, { kind: "report", id: "00000000-0000-4000-8000-000000000009" }), { code: "STALE_LEASE" });
 
     const unknown = await queue.fail(secondLease, { kind: "unknown_external", effectId: "github-pr-intent-1" });
     assert.equal(unknown.status, "reconciliation_required");
+    const recoveryReservation = await sandboxMappings.getForReconciliation(secondIdentity);
+    assert.equal(recoveryReservation.idempotencyKey, `${secondIdentity.taskId}:${secondIdentity.attemptId}:${secondIdentity.leaseEpoch}`);
+    assert.deepEqual(recoveryReservation.spec, secondSpec);
+    assert.equal(recoveryReservation.sandboxId, "sandbox-second-attempt");
+    await sandboxMappings.clearAfterReconciliationCancellation({ ...secondIdentity, sandboxId: recoveryReservation.sandboxId });
     assert.equal(await queue.claim("worker-c", 60_000), null, "unknown remote effects are not retried");
     assert.equal((await queue.reconcile(unknown.id, { outcome: "indeterminate" })).status, "reconciliation_required");
     const retrying = await queue.reconcile(unknown.id, { outcome: "not_applied" });
@@ -1106,6 +1153,155 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       }
     },
     async () => { await pool.end(); },
+  ]);
+  throwCollectedFailures(testFailure, cleanupFailures);
+});
+
+test("real PostgreSQL stop controls gate and cancel the real queue worker composition", {
+  skip: process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION !== "1"
+    ? "set JARVIS_RUN_STOP_RUNTIME_INTEGRATION=1 to run this on-demand integration scenario"
+    : databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
+}, async (context) => {
+  const [{ createSandboxQueueWorker, createPersistedStopReader, createRestoreActivationGate, createSandboxManagerHttpClient }, api, { QueueService: RuntimeQueueService }, { Pool: PgPool }] = await Promise.all([
+    import("../../../apps/worker/dist/index.js"),
+    import("../../../apps/api/dist/runtime-composition.js"),
+    import("@jarvis/queue"),
+    import("pg"),
+  ]);
+  const pool = new PgPool({ connectionString: databaseUrl, max: 5, application_name: "jv242-worker-integration" });
+  let fixture;
+  let worker;
+  let sandboxServer;
+  let tlsFixture;
+  let testFailure;
+  try {
+    await new PostgresPersistence(pool).migrate();
+    await resetStopRaceFixture(pool);
+    fixture = await createStopRaceFixture(pool, "enqueue");
+    let now = Date.now();
+    const queueStore = new PostgresQueueStore(pool);
+    const runtimeQueue = new RuntimeQueueService({
+      store: queueStore, clock: { now: () => now }, ids: { next: () => randomUUID() },
+    });
+    const task = await runtimeQueue.enqueue({
+      eventId: `jv242-${fixture.taskId}`, taskId: fixture.taskId, payload: { taskId: fixture.taskId },
+      deadline: now + 60_000, maxAttempts: 2, retry: { baseDelay: 10, maxDelay: 100 },
+    });
+    const controls = new PostgresStopControlStore(pool);
+    const auth = {
+      authorizeRead: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }),
+      authorizeMutation: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }),
+    };
+    const dispatchStarted = [];
+    const sandboxStops = [];
+    let rejectNextSandboxCancel = false;
+    const sandboxMappings = createSandboxLeaseStore(pool);
+    let activeSandboxIdentity;
+    tlsFixture = createSyntheticSandboxTls();
+    sandboxServer = https.createServer({ key: tlsFixture.serverKey, cert: tlsFixture.serverCert, ca: tlsFixture.ca, requestCert: true, rejectUnauthorized: true }, (req, res) => {
+      if (req.socket.getPeerCertificate().subjectaltname !== "URI:spiffe://jarvis/worker") { req.socket.destroy(); return; }
+      const chunks = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => {
+        if (req.method === "POST" && req.url === "/v1/sandboxes") {
+          res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ sandboxId: "11111111-1111-4111-8111-111111111111" }));
+        } else if (req.method === "POST" && req.url === "/v1/sandboxes/11111111-1111-4111-8111-111111111111/cancel") {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")); sandboxStops.push({ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: body.leaseEpoch });
+          if (rejectNextSandboxCancel) { rejectNextSandboxCancel = false; res.writeHead(503); res.end(); }
+          else { res.writeHead(204); res.end(); }
+        } else { res.writeHead(404); res.end(); }
+      });
+    });
+    await new Promise((resolve) => sandboxServer.listen(0, "127.0.0.1", resolve));
+    const sandboxClient = createSandboxManagerHttpClient({ endpoint: new URL(`https://127.0.0.1:${sandboxServer.address().port}`), key: tlsFixture.workerKey, cert: tlsFixture.workerCert, ca: tlsFixture.ca, timeoutMs: 1000 });
+    const unknownEffects = [];
+    const restoreGate = createRestoreActivationGate(async () => undefined);
+    await restoreGate.activateAfterRestore();
+    worker = createSandboxQueueWorker({
+      queue: runtimeQueue, workerId: "jv242-worker", leaseMs: 30_000,
+      hydrate: async () => ({ taskId: fixture.taskId, projectId: fixture.projectId, capability: "fake-dispatch-capability" }),
+      restoreGate,
+      sandbox: {
+        trustedSpec: async (lease) => {
+          activeSandboxIdentity = { taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch };
+          return { ...activeSandboxIdentity, snapshotId: "trusted-snapshot", profileId: "trusted-profile", modelProfileId: "trusted-model", deadline: new Date(lease.expiresAt).toISOString(), leaseEpoch: lease.epoch };
+        },
+        mappings: sandboxMappings,
+        sandbox: sandboxClient,
+      },
+      dispatchSandbox: async ({ sandboxId, signal }) => {
+        dispatchStarted.push(sandboxId);
+        return new Promise((resolve) => { signal.addEventListener("abort", () => resolve({ kind: "report", id: "unknown-result" }), { once: true }); });
+      },
+      execution: {
+        readStop: createPersistedStopReader(controls),
+        revokeCapability: async () => undefined,
+        stopSandbox: async () => { throw new Error("sandbox dispatch must use the injected manager"); },
+        recordAcceptedEffectUnknown: async (taskId) => { unknownEffects.push(taskId); },
+      },
+    });
+    const composition = api.createRuntimeComposition({ store: controls, auth, worker, dashboard: async () => ({ status: 404 }) });
+    const initial = await controls.get({ projectId: fixture.projectId });
+    await controls.set({ projectId: fixture.projectId, stopped: true, expectedVersion: 0, ownerId: "owner" });
+    assert.equal(await worker.runOnce(), "idle", "a stopped project cannot claim its queued task");
+    assert.deepEqual(dispatchStarted, []);
+    const paused = await controls.get({ projectId: fixture.projectId });
+    await controls.set({ projectId: fixture.projectId, stopped: false, expectedVersion: paused.project.version, ownerId: "owner" });
+    const running = worker.runOnce();
+    const deadline = Date.now() + 2_000;
+    while (dispatchStarted.length === 0 && Date.now() < deadline) await delay(5);
+    assert.equal(dispatchStarted.length, 1, "resumed project can claim and reach sandbox-backed dispatch");
+    const stopStarted = performance.now();
+    const stopped = await composition.stopControls({ method: "POST", projectId: fixture.projectId, headers: {}, body: { stopped: true, expectedVersion: paused.project.version + 1 } });
+    assert.equal(stopped.status, 200);
+    assert.equal(await running, "unknown", "a possible accepted effect is retained as unknown");
+    const elapsedMs = performance.now() - stopStarted;
+    assert.ok(elapsedMs < 2_000, `persisted stop/cancel took ${elapsedMs.toFixed(2)}ms`);
+    context.diagnostic(`single PostgreSQL-backed in-process active-stop sample: ${elapsedMs.toFixed(2)}ms; synthetic HTTPS/mTLS sandbox-manager client exercised create/cancel, and queue/mapping/API/worker stop wiring used PostgreSQL`);
+    const persisted = await queueStore.get(task.id);
+    assert.equal(persisted.status, "reconciliation_required");
+    assert.deepEqual(sandboxStops, [{ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 }], "the API stop handler reaches exact durable mapping and sandbox cancellation");
+    await assert.rejects(sandboxMappings.get(activeSandboxIdentity), SandboxLeaseRejectedError, "terminal unknown lease cannot be read as active mapping");
+    assert.equal(typeof worker.cancelSandboxForReconciliation, "function", "queue worker exposes only the fenced reconciliation cancellation operation");
+    const stopCountBeforeInvalidIdentities = sandboxStops.length;
+    await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, taskId: `${activeSandboxIdentity.taskId}-wrong` }));
+    await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, attemptId: "22222222-2222-4222-8222-222222222222" }));
+    await assert.rejects(worker.cancelSandboxForReconciliation({ ...activeSandboxIdentity, leaseEpoch: activeSandboxIdentity.leaseEpoch + 1 }));
+    assert.equal(sandboxStops.length, stopCountBeforeInvalidIdentities, "wrong task, attempt, or lease epoch never reaches sandbox manager");
+    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "rejected identities preserve the original exact mapping");
+    const temporarilyFailed = await pool.query("UPDATE jarvis.queue_entries SET state = 'failed' WHERE id = $1", [task.id]);
+    try {
+      assert.equal(temporarilyFailed.rowCount, 1, "the exact queue row enters the non-reconciliation state");
+      await assert.rejects(sandboxMappings.getForReconciliation(activeSandboxIdentity), SandboxLeaseRejectedError, "exact attempt and epoch are rejected outside reconciliation-required state");
+    } finally {
+      await pool.query("UPDATE jarvis.queue_entries SET state = 'reconciliation_required' WHERE id = $1", [task.id]);
+    }
+    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "restoring reconciliation state permits normal recovery");
+    rejectNextSandboxCancel = true;
+    await assert.rejects(worker.cancelSandboxForReconciliation(activeSandboxIdentity));
+    assert.equal(await sandboxMappings.getForReconciliation(activeSandboxIdentity), "11111111-1111-4111-8111-111111111111", "rejected manager cancellation retains mapping for retry");
+    await worker.cancelSandboxForReconciliation(activeSandboxIdentity);
+    assert.deepEqual(sandboxStops, [
+      { sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 },
+      { sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 },
+      { sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 },
+    ], "reconciliation cancellation reaches sandbox manager with exact epoch");
+    await assert.rejects(sandboxMappings.getForReconciliation(activeSandboxIdentity), SandboxLeaseRejectedError, "confirmed recovery cancellation clears the exact durable mapping");
+    assert.equal((await queueStore.get(task.id)).status, "reconciliation_required", "sandbox cancellation does not resolve the unknown external effect");
+    assert.deepEqual(unknownEffects, [fixture.taskId]);
+    const restartedPool = new PgPool({ connectionString: databaseUrl, max: 1 });
+    try { assert.equal((await new PostgresStopControlStore(restartedPool).get({ projectId: fixture.projectId })).project.stopped, true); }
+    finally { await restartedPool.end(); }
+    assert.ok(initial.global.stopped === false);
+  } catch (error) {
+    testFailure = error;
+  }
+  const cleanupFailures = await runCleanupSteps([
+    async () => { if (worker) await worker.stop(); },
+    async () => { if (sandboxServer) await new Promise((resolve) => sandboxServer.close(resolve)); },
+    async () => { if (tlsFixture) rmSync(tlsFixture.dir, { recursive: true, force: true }); },
+    async () => { if (fixture) await resetStopRaceFixture(pool); },
+    async () => pool.end(),
   ]);
   throwCollectedFailures(testFailure, cleanupFailures);
 });

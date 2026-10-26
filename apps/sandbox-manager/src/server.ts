@@ -107,6 +107,14 @@ async function handle(
       return;
     }
 
+    if (method === "POST" && url.pathname === "/v1/sandboxes/resolve") {
+      const idempotencyKey = request.headers["idempotency-key"];
+      if (typeof idempotencyKey !== "string") throw new SandboxManagerError("Idempotency-Key is required.", "INVALID_ARGUMENT");
+      const sandboxId = await options.manager.findByIdempotencyKey(await readJson(request), idempotencyKey);
+      send(response, 200, { sandboxId });
+      return;
+    }
+
     const match = /^\/v1\/sandboxes\/([0-9a-f-]{36})(?:\/(cancel|runtime))?$/.exec(url.pathname);
     if (!match || !SANDBOX_ID.test(match[1] ?? "")) {
       send(response, 404, { error: "not_found" });

@@ -6,7 +6,7 @@ export interface QueueTask<T = unknown> {
   lease?: { worker: string; epoch: number; expiresAt: number };
   result?: QueueResult; error?: QueueFailure;
 }
-export interface QueueLease<T = unknown> { task: QueueTask<T>; worker: string; epoch: number; expiresAt: number }
+export interface QueueLease<T = unknown> { task: QueueTask<T>; worker: string; attemptId: string; epoch: number; expiresAt: number }
 export interface QueueResult { kind: 'report' | 'action_intent' | 'checkpoint'; id: string }
 export type QueueFailure = { kind: 'transient' | 'permanent'; code: string } | { kind: 'unknown_external'; effectId: string };
 export interface QueueStore<T = unknown> {

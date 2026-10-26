@@ -469,3 +469,27 @@ test("failed restore suspension leaves the worker unable to claim", async () => 
   await assert.rejects(run, /restore audit transaction failed/);
   assert.equal(claims, 0);
 });
+
+test("persisted stop reader combines global and project state and fails closed at dispatch", async () => {
+  const reads = [];
+  const readStop = worker.createPersistedStopReader({
+    get: async ({ projectId }) => {
+      reads.push(projectId);
+      return { global: { stopped: false, version: 4 }, project: { stopped: projectId === "p1", version: 7 } };
+    },
+  });
+  assert.deepEqual(await readStop("p1"), { stopped: true, version: 7 });
+  assert.deepEqual(await readStop("p2"), { stopped: false, version: 7 });
+  const dispatched = [];
+  const executor = worker.createStopAwareExecutor({
+    readStop,
+    dispatch: async () => { dispatched.push(true); return "unexpected"; },
+    revokeCapability: async () => undefined,
+    stopSandbox: async () => "stopped",
+    recordAcceptedEffectUnknown: async () => undefined,
+  });
+  assert.deepEqual(await executor.execute({ taskId: "isolated", projectId: "p1", capability: "cap" }), { kind: "stopped" });
+  assert.deepEqual(await executor.execute({ taskId: "unaffected", projectId: "p2", capability: "cap" }), { kind: "dispatched", result: "unexpected" });
+  assert.deepEqual(dispatched, [true]);
+  assert.deepEqual(reads, ["p1", "p2", "p1", "p2", "p2"]);
+});
