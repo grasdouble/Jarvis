@@ -1,6 +1,97 @@
 export const serviceName = "worker";
 import type { QueueLease, QueueResult, QueueService } from "@jarvis/queue";
 
+export type FixedOpenCodeRequest =
+  | { readonly operation: "health" }
+  | { readonly operation: "session.create"; readonly title: string }
+  | { readonly operation: "prompt"; readonly sessionID: string; readonly text: string }
+  | { readonly operation: "messages"; readonly sessionID: string }
+  | { readonly operation: "status"; readonly sessionID: string }
+  | { readonly operation: "cancel"; readonly sessionID: string };
+export interface FixedOpenCodeManagerPort {
+  request(sandboxId: string, taskId: string, attemptId: string, leaseEpoch: number, request: FixedOpenCodeRequest, signal?: AbortSignal): Promise<Record<string, unknown>>;
+}
+export type SandboxManagerPost = (path: string, body: Readonly<Record<string, unknown>>, signal?: AbortSignal) => Promise<Record<string, unknown>>;
+
+/** Binds worker relay calls to the authenticated manager API's fixed runtime route. */
+export function createFixedOpenCodeManagerPort(post: SandboxManagerPost): FixedOpenCodeManagerPort {
+  return {
+    request(sandboxId, taskId, attemptId, leaseEpoch, request, signal): Promise<Record<string, unknown>> {
+      if (!/^[0-9a-f-]{36}$/i.test(sandboxId) || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(taskId) ||
+          !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(attemptId) || !Number.isSafeInteger(leaseEpoch) || leaseEpoch < 1) {
+        throw new TypeError("Sandbox runtime identity is invalid");
+      }
+      return post(`/v1/sandboxes/${sandboxId}/runtime`, { leaseEpoch, taskId, attemptId, request }, signal);
+    },
+  };
+}
+
+/** Bounded message/polling session flow; the only runtime route is the manager's closed relay API. */
+export async function runOpenCodeSession(input: {
+  readonly manager: FixedOpenCodeManagerPort;
+  readonly sandboxId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly leaseEpoch: number;
+  readonly title: string;
+  readonly prompt: string;
+  readonly signal: AbortSignal;
+  readonly pollIntervalMs?: number;
+  readonly maxPolls?: number;
+  readonly requestTimeoutMs?: number;
+}): Promise<Record<string, unknown>> {
+  const interval = input.pollIntervalMs ?? 250;
+  const maxPolls = input.maxPolls ?? 40;
+  const requestTimeoutMs = input.requestTimeoutMs ?? 10_000;
+  if (!Number.isSafeInteger(interval) || interval < 10 || interval > 2_000 ||
+      !Number.isSafeInteger(maxPolls) || maxPolls < 1 || maxPolls > 240 ||
+      !Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 10 || requestTimeoutMs > 12_000) throw new TypeError("OpenCode polling bounds are invalid");
+  const call = (request: FixedOpenCodeRequest, mode: "task" | "cleanup" = "task"): Promise<Record<string, unknown>> =>
+    {
+      const controller = new AbortController();
+      const signal = mode === "task" ? input.signal : undefined;
+      const operationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error("Sandbox-manager relay request timed out")); }, requestTimeoutMs);
+      });
+      return Promise.race([
+        input.manager.request(input.sandboxId, input.taskId, input.attemptId, input.leaseEpoch, request, operationSignal),
+        deadline,
+      ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+    };
+  const session = await call({ operation: "session.create", title: input.title });
+  if (typeof session.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(session.id)) throw new Error("Manager returned an invalid OpenCode session identity");
+  const sessionID = session.id;
+  try {
+    await call({ operation: "prompt", sessionID, text: input.prompt });
+    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+      if (input.signal.aborted) throw new Error("OpenCode session cancelled");
+      const [messages, status] = await Promise.all([
+        call({ operation: "messages", sessionID }),
+        call({ operation: "status", sessionID }),
+      ]);
+      if (Array.isArray(messages.messages) && messages.messages.some((item) => {
+        if (typeof item !== "object" || item === null || (item as Record<string, unknown>).type !== "assistant") return false;
+        const content = (item as Record<string, unknown>).content;
+        return Array.isArray(content) && content.some((part) => typeof part === "object" && part !== null &&
+          (part as Record<string, unknown>).type === "text" && typeof (part as Record<string, unknown>).text === "string" &&
+          ((part as Record<string, unknown>).text as string).length > 0);
+      })) return messages;
+      if (status.status === "idle" || status.status === "error") throw new Error("OpenCode session ended without an assistant response");
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = (): void => { clearTimeout(timer); reject(new Error("OpenCode session cancelled")); };
+        const timer = setTimeout(() => { input.signal.removeEventListener("abort", onAbort); resolve(); }, interval);
+        input.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    throw new Error("OpenCode session polling deadline exceeded");
+  } catch (error) {
+    try { await call({ operation: "cancel", sessionID }, "cleanup"); } catch { /* Preserve the original failure; manager cancellation remains lease-bound. */ }
+    throw error;
+  }
+}
+
 export interface StopSnapshot { readonly stopped: boolean; readonly version: number }
 export interface PersistedStopControlReader {
   get(input: { readonly projectId: string }): Promise<{ readonly global: { readonly stopped: boolean; readonly version: number }; readonly project: { readonly stopped: boolean; readonly version: number } | null }>;

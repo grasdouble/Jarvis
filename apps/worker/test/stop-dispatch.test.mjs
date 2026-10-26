@@ -5,6 +5,101 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import * as worker from "../dist/index.js";
 const readyRestoreGate = { activateAfterRestore: async () => undefined, waitUntilActivated: async () => undefined };
 
+test("OpenCode session flow uses only manager relay operations and bounded polling", async () => {
+  const calls = [];
+  const manager = { request: async (sandboxId, taskId, attemptId, leaseEpoch, request) => {
+    calls.push([sandboxId, taskId, attemptId, leaseEpoch, request.operation]);
+    if (request.operation === "session.create") return { id: "session_1" };
+    if (request.operation === "messages") return { messages: [{ type: "assistant", content: [{ type: "text", text: "synthetic result" }] }] };
+    return {};
+  } };
+  const result = await worker.runOpenCodeSession({
+    manager, sandboxId: "00000000-0000-4000-8000-000000000001", taskId: "task-1", attemptId: "attempt-1", leaseEpoch: 4,
+    title: "test",
+    prompt: "synthetic prompt", signal: new globalThis.AbortController().signal, pollIntervalMs: 10, maxPolls: 2,
+  });
+  assert.equal(result.messages[0].content[0].text, "synthetic result");
+  assert.deepEqual(calls, [
+    ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "session.create"],
+    ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "prompt"],
+    ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "messages"],
+    ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "status"],
+  ]);
+});
+
+test("fixed relay manager port emits only the lease- and run-bound runtime API route", async () => {
+  let captured;
+  const port = worker.createFixedOpenCodeManagerPort(async (...args) => { captured = args; return { healthy: true }; });
+  assert.deepEqual(await port.request("00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 3, { operation: "health" }), { healthy: true });
+  assert.deepEqual(captured, [
+    "/v1/sandboxes/00000000-0000-4000-8000-000000000001/runtime",
+    { leaseEpoch: 3, taskId: "task-1", attemptId: "attempt-1", request: { operation: "health" } },
+    undefined,
+  ]);
+  assert.throws(() => port.request("../../other", "task-1", "attempt-1", 3, { operation: "health" }), /identity/i);
+});
+
+test("OpenCode session failure requests cancellation through the manager relay", async () => {
+  const operations = [];
+  const manager = { request: async (_sandboxId, _taskId, _attemptId, _leaseEpoch, request) => {
+    operations.push(request.operation);
+    if (request.operation === "session.create") return { id: "session_2" };
+    if (request.operation === "status") return { status: "idle" };
+    if (request.operation === "messages") return { messages: [] };
+    return {};
+  } };
+  await assert.rejects(() => worker.runOpenCodeSession({
+    manager, sandboxId: "00000000-0000-4000-8000-000000000002", taskId: "task-2", attemptId: "attempt-2", leaseEpoch: 1,
+    title: "test",
+    prompt: "synthetic prompt", signal: new globalThis.AbortController().signal, pollIntervalMs: 10, maxPolls: 1,
+  }), /without an assistant response/);
+  assert.deepEqual(operations, ["session.create", "prompt", "messages", "status", "cancel"]);
+});
+
+test("unresponsive manager relay is bounded and triggers best-effort session cancellation", async () => {
+  const operations = [];
+  const manager = { request: async (_sandboxId, _taskId, _attemptId, _leaseEpoch, request) => {
+    operations.push(request.operation);
+    if (request.operation === "session.create") return { id: "session_3" };
+    if (request.operation === "prompt") return new Promise(() => {});
+    return {};
+  } };
+  await assert.rejects(() => worker.runOpenCodeSession({
+    manager, sandboxId: "00000000-0000-4000-8000-000000000003", taskId: "task-3", attemptId: "attempt-3", leaseEpoch: 2,
+    title: "test", prompt: "synthetic prompt",
+    signal: new globalThis.AbortController().signal, requestTimeoutMs: 10,
+  }), /timed out/);
+  assert.deepEqual(operations, ["session.create", "prompt", "cancel"]);
+});
+
+test("aborted in-flight prompt uses a fresh signal for fixed-relay cleanup cancellation", async () => {
+  const controller = new globalThis.AbortController();
+  let promptSignal;
+  let cancelSignal;
+  let promptStarted;
+  const started = new Promise((resolve) => { promptStarted = resolve; });
+  const manager = { request: async (_sandboxId, _taskId, _attemptId, _epoch, request, signal) => {
+    if (request.operation === "session.create") return { id: "session_abort" };
+    if (request.operation === "prompt") {
+      promptSignal = signal;
+      promptStarted();
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true }));
+    }
+    if (request.operation === "cancel") { cancelSignal = signal; return {}; }
+    return {};
+  } };
+  const running = worker.runOpenCodeSession({
+    manager, sandboxId: "00000000-0000-4000-8000-000000000004", taskId: "task-4", attemptId: "attempt-4", leaseEpoch: 2,
+    title: "test", prompt: "synthetic prompt", signal: controller.signal, requestTimeoutMs: 100,
+  });
+  await started;
+  controller.abort();
+  await assert.rejects(running, /prompt aborted/);
+  assert.equal(promptSignal.aborted, true);
+  assert.ok(cancelSignal, "cleanup cancellation must be sent");
+  assert.equal(cancelSignal.aborted, false, "cleanup must not inherit the caller's aborted signal");
+});
+
 test("an active stop prevents dispatch after a task is admitted", async () => {
   const calls = [];
   let reads = 0;

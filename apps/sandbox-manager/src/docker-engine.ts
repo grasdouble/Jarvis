@@ -4,6 +4,8 @@ import type {
   ContainerInspection,
   ContainerRequest,
   ManagedLabels,
+  OpenCodeRelayRequest,
+  OpenCodeRelayResponse,
   SandboxEngine,
   VolumeRequest,
 } from "./index.js";
@@ -204,6 +206,64 @@ export class DockerEngineClient implements SandboxEngine {
   async stopContainer(id: string, timeoutSeconds: number): Promise<void> {
     const query = new URLSearchParams({ t: String(timeoutSeconds) });
     await this.call("POST", `/containers/${encodeURIComponent(id)}/stop?${query}`, undefined, 204);
+  }
+
+  async relayOpenCode(containerId: string, request: OpenCodeRelayRequest): Promise<OpenCodeRelayResponse> {
+    // Container identity comes only from the manager registry. Command and path are fixed;
+    // the operation is structured stdin, never interpolated into argv or a shell.
+    const created = await this.call<{ Id?: string }>("POST", `/containers/${encodeURIComponent(containerId)}/exec`, {
+      AttachStdin: true, AttachStdout: true, AttachStderr: false, Tty: true,
+      Cmd: ["/usr/local/bin/jarvis-opencode-relay"],
+    }, 201);
+    const execId = created?.Id;
+    if (typeof execId !== "string" || !/^[a-f0-9]{12,64}$/i.test(execId)) {
+      throw new SandboxManagerError("Docker Engine did not return a valid fixed-relay execution identity.", "ENGINE_ERROR");
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let output = Buffer.alloc(0);
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) { reject(new SandboxManagerError("Fixed OpenCode relay transport failed.", "ENGINE_ERROR")); return; }
+        try {
+          const text = output.toString("utf8").trim();
+          const value: unknown = JSON.parse(text);
+          if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid response");
+          resolve(value as OpenCodeRelayResponse);
+        } catch { reject(new SandboxManagerError("Fixed OpenCode relay returned invalid framed JSON.", "ENGINE_ERROR")); }
+      };
+      const timer = setTimeout(() => { requestHandle.destroy(); finish(new Error("timeout")); }, REQUEST_TIMEOUT_MS);
+      const requestHandle = httpRequest({
+        socketPath: this.socketPath,
+        path: `${this.apiPrefix}/exec/${encodeURIComponent(execId)}/start`,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength('{"Detach":false,"Tty":true}'),
+          connection: "Upgrade",
+          upgrade: "tcp",
+        },
+      });
+      requestHandle.on("upgrade", (_response, socket, head) => {
+        if (head.length) output = Buffer.concat([output, head]);
+        socket.on("data", (chunk: Buffer) => {
+          output = Buffer.concat([output, chunk]);
+          if (output.byteLength > MAX_RESPONSE_BYTES) { socket.destroy(); finish(new Error("response too large")); }
+        });
+        socket.on("end", () => finish());
+        socket.on("error", finish);
+        socket.write(Buffer.from(`${JSON.stringify(request)}\n`));
+        socket.end();
+      });
+      requestHandle.on("response", (response) => {
+        response.resume();
+        finish(new Error(`unexpected HTTP ${response.statusCode}`));
+      });
+      requestHandle.on("error", finish);
+      requestHandle.end('{"Detach":false,"Tty":true}');
+    });
   }
 
   async removeContainer(id: string, expectedLabels: ManagedLabels): Promise<void> {
