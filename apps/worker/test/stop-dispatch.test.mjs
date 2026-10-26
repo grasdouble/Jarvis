@@ -192,6 +192,71 @@ test("unresponsive sandbox-manager returns unknown at its bounded test timeout",
   assert.ok(elapsed >= 15 && elapsed < 500, `20 ms bounded mock stop elapsed ${elapsed.toFixed(2)} ms`);
 });
 
+test("stop-aware OpenCode integration sends fixed manager cancel and records uncertain in-flight effects", async () => {
+  const operations = [];
+  const effects = [];
+  let promptStarted;
+  const started = new Promise((resolve) => { promptStarted = resolve; });
+  const manager = worker.createFixedOpenCodeManagerPort(async (path, body, signal) => {
+    const request = body.request;
+    operations.push([path, request.operation]);
+    if (request.operation === "session.create") return { id: "session_stop" };
+    if (request.operation === "prompt") {
+      promptStarted();
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true }));
+    }
+    return {};
+  });
+  const ports = worker.createStopAwareOpenCodePorts({
+    readStop: async () => ({ stopped: false, version: 0 }),
+    manager,
+    revokeCapability: async (taskId) => effects.push(["revoke", taskId]),
+    stopSandbox: async (taskId) => { effects.push(["stop", taskId]); return "stopped"; },
+    recordAcceptedEffectUnknown: async (taskId) => effects.push(["unknown", taskId]),
+    session: { requestTimeoutMs: 1000, pollIntervalMs: 10, maxPolls: 2 },
+  });
+  const executor = worker.createStopAwareExecutor(ports, { pollIntervalMs: 10, shutdownTimeoutMs: 1000 });
+  const execution = executor.execute({
+    taskId: "task-integrated", projectId: "project-integrated",
+    capability: {
+      sandboxId: "00000000-0000-4000-8000-000000000251", taskId: "task-integrated", attemptId: "attempt-integrated",
+      leaseEpoch: 1, title: "synthetic", prompt: "synthetic prompt",
+    },
+  });
+  await started;
+  await executor.stop("project-integrated");
+  assert.deepEqual(await execution, { kind: "stop_unknown" });
+  assert.deepEqual(operations.map(([, operation]) => operation), ["session.create", "prompt", "cancel"]);
+  assert.deepEqual(operations.map(([path]) => path), Array(3).fill("/v1/sandboxes/00000000-0000-4000-8000-000000000251/runtime"));
+  assert.deepEqual(effects, [["unknown", "task-integrated"], ["revoke", "task-integrated"], ["stop", "task-integrated"]]);
+});
+
+test("composed stop gate denies the final manager/gateway relay dispatch after admission", async () => {
+  let reads = 0;
+  const routes = [];
+  const manager = worker.createFixedOpenCodeManagerPort(async (path, body) => {
+    routes.push([path, body.request.operation]);
+    return {};
+  });
+  const ports = worker.createStopAwareOpenCodePorts({
+    readStop: async () => ({ stopped: ++reads >= 2, version: reads }),
+    manager,
+    revokeCapability: async () => undefined,
+    stopSandbox: async () => "stopped",
+    recordAcceptedEffectUnknown: async () => undefined,
+  });
+  const executor = worker.createStopAwareExecutor(ports);
+  const outcome = await executor.execute({
+    taskId: "task-final-gate", projectId: "project-final-gate",
+    capability: {
+      sandboxId: "00000000-0000-4000-8000-000000000251", taskId: "task-final-gate", attemptId: "attempt-final-gate",
+      leaseEpoch: 7, title: "synthetic", prompt: "must not dispatch",
+    },
+  });
+  assert.deepEqual(outcome, { kind: "stopped" });
+  assert.deepEqual(routes, [], "the fixed manager runtime route (and downstream gateway) is not invoked after final stop read");
+});
+
 test("active stop revokes the capability, aborts dispatch and terminates the sandbox", async () => {
   const events = [];
   let finish;
@@ -234,6 +299,22 @@ test("project stop leaves other projects running", async () => {
   assert.deepEqual(stopped, ["one"]);
   assert.deepEqual(executor.activeTaskIds(), ["one", "two"]);
   await executor.stop("p2");
+});
+
+test("after a durable project resume only a fresh execution is admitted", async () => {
+  const projectStops = new Map([["project-resume", true]]);
+  const dispatched = [];
+  const executor = worker.createStopAwareExecutor({
+    readStop: async (projectId) => ({ stopped: projectStops.get(projectId) ?? false, version: 1 }),
+    dispatch: async (_capability, signal) => { assert.equal(signal.aborted, false); dispatched.push("fresh-attempt"); return "done"; },
+    revokeCapability: async () => undefined,
+    stopSandbox: async () => "stopped",
+    recordAcceptedEffectUnknown: async () => undefined,
+  });
+  assert.deepEqual(await executor.execute({ taskId: "stopped-attempt", projectId: "project-resume", capability: "old" }), { kind: "stopped" });
+  projectStops.set("project-resume", false);
+  assert.deepEqual(await executor.execute({ taskId: "new-attempt", projectId: "project-resume", capability: "new" }), { kind: "dispatched", result: "done" });
+  assert.deepEqual(dispatched, ["fresh-attempt"]);
 });
 
 test("queue lifecycle claims, executes and completes through the lease service", async () => {
