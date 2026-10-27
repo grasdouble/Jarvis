@@ -1459,9 +1459,12 @@ test("persisted stop state survives an operating-system worker restart", {
       const controls = new PostgresStopControlStore(pool);
       const queue = new QueueService({ store: new PostgresQueueStore(pool), clock: { now: () => Date.now() }, ids: { next: () => crypto.randomUUID() } });
       let dispatchCount = 0;
+      const scope = process.env.JV263_SCOPE;
+      const projectId = process.env.JV263_PROJECT_ID;
       if (process.env.JV263_PHASE === "stop") {
-        const state = await controls.get({});
-        await controls.set({ stopped: true, expectedVersion: state.global.version, ownerId: "owner" });
+        const state = await controls.get({ projectId });
+        const current = scope === "global" ? state.global : state.project;
+        await controls.set({ ...(scope === "project" ? { projectId } : {}), stopped: true, expectedVersion: current?.version ?? 0, ownerId: "owner" });
       }
       const worker = createQueueWorker({
         queue, workerId: process.env.JV263_APPLICATION_NAME, leaseMs: 30000,
@@ -1476,11 +1479,11 @@ test("persisted stop state survives an operating-system worker restart", {
         },
       });
       const outcome = await worker.runOnce();
-      const state = await controls.get({});
-      process.stdout.write(JSON.stringify({ pid: process.pid, outcome, stopped: state.global.stopped, version: state.global.version, dispatchCount }));
+      const state = await controls.get({ projectId });
+      process.stdout.write(JSON.stringify({ pid: process.pid, outcome, global: state.global, project: state.project, dispatchCount }));
     } finally { await pool.end(); }
   `;
-  const runWorker = (phase) => new Promise((resolve, reject) => {
+  const runWorker = (phase, scope) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", workerSource], {
       cwd: process.cwd(),
       env: {
@@ -1491,6 +1494,7 @@ test("persisted stop state survives an operating-system worker restart", {
         JV263_QUEUE_MODULE: new URL("../../queue/dist/index.js", import.meta.url).href,
         JV263_WORKER_MODULE: new URL("../../../apps/worker/dist/index.js", import.meta.url).href,
         JV263_PHASE: phase,
+        JV263_SCOPE: scope,
         JV263_PROJECT_ID: fixture.projectId,
         JV263_APPLICATION_NAME: `jv263-${phase}-${randomUUID()}`,
       },
@@ -1504,7 +1508,7 @@ test("persisted stop state survives an operating-system worker restart", {
     child.once("error", (error) => { clearTimeout(timeout); reject(error); });
     child.once("close", (code, signal) => {
       clearTimeout(timeout);
-      if (code !== 0) reject(new Error(`worker ${phase} exited code=${code} signal=${signal}: ${stderr}`));
+      if (code !== 0) reject(new Error(`worker ${phase}/${scope} exited code=${code} signal=${signal}: ${stderr}`));
       else {
         try { resolve(JSON.parse(stdout)); }
         catch (error) { reject(new Error(`worker ${phase} returned invalid output: ${stdout}; stderr=${stderr}`, { cause: error })); }
@@ -1516,32 +1520,40 @@ test("persisted stop state survives an operating-system worker restart", {
   let fixture;
   try {
     await new PostgresPersistence(pool).migrate();
-    await resetStopRaceFixture(pool);
-    fixture = await createStopRaceFixture(pool, "enqueue");
-    await new QueueService({
-      store: new PostgresQueueStore(pool), clock: { now: () => Date.now() }, ids: { next: () => randomUUID() },
-    }).enqueue({
-      eventId: `jv263-${fixture.taskId}`, taskId: fixture.taskId, payload: { taskId: fixture.taskId, projectId: fixture.projectId },
-      deadline: Date.now() + 60_000, maxAttempts: 2, retry: { baseDelay: 10, maxDelay: 100 },
-    });
-    const initialProcess = await runWorker("stop");
-    const replacementProcess = await runWorker("check");
-    assert.notEqual(initialProcess.pid, replacementProcess.pid, "replacement must be a distinct OS process");
-    assert.equal(initialProcess.stopped, true);
-    assert.equal(initialProcess.dispatchCount, 0);
-    assert.equal(replacementProcess.stopped, true, "replacement reads durable stop state from PostgreSQL");
-    assert.equal(replacementProcess.outcome, "idle", "replacement worker cannot claim queued work while stopped");
-    assert.equal(replacementProcess.dispatchCount, 0, "stopped worker does not invoke dispatch");
-    assert.equal((await new PostgresQueueStore(pool).get(fixture.taskId)).status, "queued");
-
     const controls = new PostgresStopControlStore(pool);
-    const stopped = await controls.get({});
-    await controls.set({ stopped: false, expectedVersion: stopped.global.version, ownerId: "owner" });
-    const resumedProcess = await runWorker("check");
-    assert.notEqual(resumedProcess.pid, replacementProcess.pid, "post-resume worker is another OS process");
-    assert.equal(resumedProcess.stopped, false);
-    assert.equal(resumedProcess.outcome, "completed", "later worker process proceeds after explicit owner resume");
-    assert.equal(resumedProcess.dispatchCount, 1, "resumed worker invokes the dispatch port");
+    for (const scope of ["global", "project"]) {
+      await resetStopRaceFixture(pool);
+      fixture = await createStopRaceFixture(pool, "enqueue");
+      await new QueueService({
+        store: new PostgresQueueStore(pool), clock: { now: () => Date.now() }, ids: { next: () => randomUUID() },
+      }).enqueue({
+        eventId: `jv263-${scope}-${fixture.taskId}`, taskId: fixture.taskId, payload: { taskId: fixture.taskId, projectId: fixture.projectId },
+        deadline: Date.now() + 60_000, maxAttempts: 2, retry: { baseDelay: 10, maxDelay: 100 },
+      });
+      const initialProcess = await runWorker("stop", scope);
+      const replacementProcess = await runWorker("check", scope);
+      assert.notEqual(initialProcess.pid, replacementProcess.pid, `${scope} replacement must be a distinct OS process`);
+      const stoppedState = scope === "global" ? replacementProcess.global : replacementProcess.project;
+      const initialStoppedState = scope === "global" ? initialProcess.global : initialProcess.project;
+      assert.equal(initialStoppedState.stopped, true, `initial process observes the persisted ${scope} stop before exiting`);
+      assert.equal(stoppedState.stopped, true, `replacement observes persisted ${scope} stop state`);
+      assert.equal(initialProcess.dispatchCount, 0);
+      assert.equal(replacementProcess.outcome, "idle", `replacement worker cannot claim queued work while ${scope}-stopped`);
+      assert.equal(replacementProcess.dispatchCount, 0, `${scope}-stopped worker does not invoke dispatch`);
+      if (scope === "global") assert.equal(replacementProcess.project, null, "global stop does not create project stop state");
+      else assert.equal(replacementProcess.global.stopped, false, "project stop leaves global execution resumed");
+      assert.equal((await new PostgresQueueStore(pool).get(fixture.taskId)).status, "queued", `${scope} stop preserves queued work`);
+
+      const snapshot = await controls.get({ projectId: fixture.projectId });
+      const current = scope === "global" ? snapshot.global : snapshot.project;
+      await controls.set({ ...(scope === "project" ? { projectId: fixture.projectId } : {}), stopped: false, expectedVersion: current?.version ?? 0, ownerId: "owner" });
+      const resumedProcess = await runWorker("check", scope);
+      assert.notEqual(resumedProcess.pid, replacementProcess.pid, `${scope} post-resume worker is another OS process`);
+      assert.equal(resumedProcess.outcome, "completed", `${scope} worker proceeds after explicit owner resume`);
+      assert.equal(resumedProcess.dispatchCount, 1, `${scope} resumed worker invokes dispatch`);
+      if (scope === "global") assert.equal(resumedProcess.project, null, "global resume leaves project state absent");
+      else assert.equal(resumedProcess.global.stopped, false, "project resume leaves global state resumed");
+    }
   } catch (error) {
     testFailure = error;
   }
