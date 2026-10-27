@@ -1375,6 +1375,9 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     let resolveSandboxCancelObserved;
     const sandboxCancelObserved = new Promise((resolve) => { resolveSandboxCancelObserved = resolve; });
     let rejectNextSandboxCancel = false;
+    let withholdNextSandboxCancelResponse = false;
+    let withheldCancelResponseStartedAt;
+    let withheldCancelResponseClosedAt;
     const sandboxMappings = createSandboxLeaseStore(pool);
     let activeSandboxIdentity;
     tlsFixture = createSyntheticSandboxTls();
@@ -1389,13 +1392,19 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           sandboxStops.push({ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: body.leaseEpoch });
           resolveSandboxCancelObserved(performance.now());
-          if (rejectNextSandboxCancel) { rejectNextSandboxCancel = false; res.writeHead(503); res.end(); }
+          if (withholdNextSandboxCancelResponse) {
+            withholdNextSandboxCancelResponse = false;
+            withheldCancelResponseStartedAt = performance.now();
+            res.on("close", () => { withheldCancelResponseClosedAt = performance.now(); });
+          }
+          else if (rejectNextSandboxCancel) { rejectNextSandboxCancel = false; res.writeHead(503); res.end(); }
           else { res.writeHead(204); res.end(); }
         } else { res.writeHead(404); res.end(); }
       });
     });
     await new Promise((resolve) => sandboxServer.listen(0, "127.0.0.1", resolve));
-    const sandboxClient = createSandboxManagerHttpClient({ endpoint: new URL(`https://127.0.0.1:${sandboxServer.address().port}`), key: tlsFixture.workerKey, cert: tlsFixture.workerCert, ca: tlsFixture.ca, timeoutMs: 1000 });
+    const sandboxCancelTimeoutMs = 300;
+    const sandboxClient = createSandboxManagerHttpClient({ endpoint: new URL(`https://127.0.0.1:${sandboxServer.address().port}`), key: tlsFixture.workerKey, cert: tlsFixture.workerCert, ca: tlsFixture.ca, timeoutMs: sandboxCancelTimeoutMs });
     const unknownEffects = [];
     const beforeFailedRestore = await controls.get({});
     const { rows: [auditCountBeforeFailedRestore] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
@@ -1550,6 +1559,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     while (dispatchStarted.length === 0 && Date.now() < deadline) await delay(5);
     assert.equal(dispatchStarted.length, 1, "resumed project can claim and reach sandbox-backed dispatch");
     const stopStarted = performance.now();
+    withholdNextSandboxCancelResponse = true;
     const stopped = await globalThis.fetch(`${apiOrigin}/api/v1/stop/projects/${fixture.projectId}`, {
       method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" },
       body: JSON.stringify({ stopped: true, expectedVersion: paused.project.version + 1 }),
@@ -1565,9 +1575,18 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     const cancelRequestElapsedMs = sandboxCancelObservedAt - stopStarted;
     assert.ok(cancelRequestElapsedMs <= 10_000, `active stop to synthetic manager cancellation request took ${cancelRequestElapsedMs.toFixed(2)}ms`);
     assert.equal(await running, "unknown", "a possible accepted effect is retained as unknown");
+    assert.equal(dispatchStarted.length, 1, "manager cancellation timeout does not dispatch an additional external effect");
     const elapsedMs = performance.now() - stopStarted;
-    assert.ok(elapsedMs < 2_000, `persisted stop/cancel took ${elapsedMs.toFixed(2)}ms`);
-    context.diagnostic(`single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt ${noDispatchElapsedMs.toFixed(2)}ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request ${cancelRequestElapsedMs.toFixed(2)}ms; active stop/cancel completion ${elapsedMs.toFixed(2)}ms. Local synthetic evidence only; no OS process restart or production latency qualification.`);
+    assert.ok(withheldCancelResponseStartedAt !== undefined, "synthetic manager accepted cancellation before withholding its response");
+    assert.ok(withheldCancelResponseClosedAt !== undefined, "client closed the withheld manager response after timing out");
+    const withheldDurationMs = withheldCancelResponseClosedAt - withheldCancelResponseStartedAt;
+    assert.ok(withheldDurationMs >= sandboxCancelTimeoutMs - 50,
+      `synthetic manager must withhold its response for the configured ${sandboxCancelTimeoutMs}ms timeout; observed ${withheldDurationMs.toFixed(2)}ms`);
+    assert.ok(withheldDurationMs < sandboxCancelTimeoutMs + 1_000,
+      `client must close the withheld response within the configured ${sandboxCancelTimeoutMs}ms timeout bound; observed ${withheldDurationMs.toFixed(2)}ms`);
+    assert.ok(elapsedMs >= sandboxCancelTimeoutMs - 50, `manager cancellation must remain pending until the configured ${sandboxCancelTimeoutMs}ms timeout; observed ${elapsedMs.toFixed(2)}ms`);
+    assert.ok(elapsedMs < sandboxCancelTimeoutMs + 1_000, `persisted stop/cancel must remain bounded by its ${sandboxCancelTimeoutMs}ms manager timeout; observed ${elapsedMs.toFixed(2)}ms`);
+    context.diagnostic(`single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt ${noDispatchElapsedMs.toFixed(2)}ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request ${cancelRequestElapsedMs.toFixed(2)}ms; manager accepted request but withheld response for ${withheldDurationMs.toFixed(2)}ms; configured client timeout ${sandboxCancelTimeoutMs}ms; active stop/cancel completion ${elapsedMs.toFixed(2)}ms. Local synthetic evidence only; no OS process restart or production latency qualification.`);
     const persisted = await queueStore.get(task.id);
     assert.equal(persisted.status, "reconciliation_required");
     assert.deepEqual(sandboxStops, [{ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 }], "the API stop handler reaches exact durable mapping and sandbox cancellation");
