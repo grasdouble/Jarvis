@@ -100,34 +100,41 @@ def host_environment() -> dict[str, str]:
 
 
 def run_host(command: list[str], *, timeout=COMMAND_TIMEOUT, cwd=None, input_text=None,
-             output_limit=MAX_OUTPUT_BYTES) -> str:
+             output_limit=MAX_OUTPUT_BYTES, return_stderr=False) -> str | tuple[str, str]:
     # Drain into bounded memory so noisy subprocesses cannot accumulate output;
     # unlike RLIMIT_FSIZE this does not cap
     # unrelated files created by the command (such as the trusted seed archive).
     process = None
     captured = bytearray()
+    captured_stderr = bytearray()
+    captured_size = 0
+    capture_lock = threading.Lock()
     overflow = threading.Event()
     write_error = []
     try:
         process = subprocess.Popen(
             command, cwd=cwd, env=host_environment(),
             stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         )
 
-        def drain():
+        def drain(stream, destination):
+            nonlocal captured_size
             while True:
-                chunk = process.stdout.read(65536)
+                chunk = stream.read(65536)
                 if not chunk:
                     return
-                if len(captured) + len(chunk) > output_limit:
-                    overflow.set()
+                with capture_lock:
+                    if captured_size + len(chunk) > output_limit:
+                        overflow.set()
+                    else:
+                        destination.extend(chunk)
+                        captured_size += len(chunk)
+                if overflow.is_set():
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                    continue
-                captured.extend(chunk)
 
         def feed():
             try:
@@ -136,8 +143,12 @@ def run_host(command: list[str], *, timeout=COMMAND_TIMEOUT, cwd=None, input_tex
             except (BrokenPipeError, OSError) as error:
                 write_error.append(error)
 
-        reader = threading.Thread(target=drain, daemon=True)
-        reader.start()
+        readers = [
+            threading.Thread(target=drain, args=(process.stdout, captured), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, captured_stderr), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
         writer = None
         if input_text is not None:
             writer = threading.Thread(target=feed, daemon=True)
@@ -151,7 +162,8 @@ def run_host(command: list[str], *, timeout=COMMAND_TIMEOUT, cwd=None, input_tex
                     except ProcessLookupError:
                         pass
                     process.wait()
-                    reader.join(timeout=2)
+                    for reader in readers:
+                        reader.join(timeout=2)
                     if writer is not None:
                         writer.join(timeout=2)
                     raise InterruptedValidation("validation cancelled; host process group reaped")
@@ -164,7 +176,8 @@ def run_host(command: list[str], *, timeout=COMMAND_TIMEOUT, cwd=None, input_tex
                 except ProcessLookupError:
                     pass
                 process.wait()
-                reader.join(timeout=2)
+                for reader in readers:
+                    reader.join(timeout=2)
                 if writer is not None:
                     writer.join(timeout=2)
                 raise ValidationError(f"trusted host command timed out: {Path(command[0]).name}") from error
@@ -175,8 +188,9 @@ def run_host(command: list[str], *, timeout=COMMAND_TIMEOUT, cwd=None, input_tex
                 continue
         if writer is not None:
             writer.join(timeout=2)
-        reader.join(timeout=2)
-        if reader.is_alive():
+        for reader in readers:
+            reader.join(timeout=2)
+        if any(reader.is_alive() for reader in readers):
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -194,19 +208,24 @@ def run_host(command: list[str], *, timeout=COMMAND_TIMEOUT, cwd=None, input_tex
             except ProcessLookupError:
                 pass
             process.wait()
-        if "reader" in locals():
-            reader.join(timeout=2)
+        if "readers" in locals():
+            for reader in readers:
+                reader.join(timeout=2)
         if "writer" in locals() and writer is not None:
             writer.join(timeout=2)
         raise
     finally:
         if process is not None:
-            if process.stdout is not None:
-                process.stdout.close()
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
             if process.stdin is not None and not process.stdin.closed:
                 process.stdin.close()
     if process.returncode:
         raise ValidationError(f"trusted host command failed: {Path(command[0]).name} (exit {process.returncode})")
+    stderr_text = captured_stderr.decode("utf-8", errors="replace")
+    if return_stderr:
+        return text, stderr_text
     return text.strip()
 
 
@@ -354,7 +373,21 @@ def verify_workspace(workspace: Path, base: str, head: str) -> dict:
 
 
 def instance_records() -> list[dict]:
-    return parse_list_json(run_host(["limactl", "list", "--json"], timeout=30, output_limit=4 * 1024 * 1024))
+    stdout, stderr = run_host(
+        ["limactl", "list", "--json"], timeout=30,
+        output_limit=4 * 1024 * 1024, return_stderr=True,
+    )
+    if stderr:
+        warning_line = stderr[:-1] if stderr.endswith("\n") else stderr
+        empty_inventory_warning = re.fullmatch(
+            r'time="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?'
+            r'(?:Z|[+-]\d{2}:\d{2})" level=warning '
+            r'msg="No instance found\. Run `limactl create` to create an instance\."',
+            warning_line,
+        )
+        if stdout or empty_inventory_warning is None:
+            raise ValidationError("limactl list returned unexpected stderr")
+    return parse_list_json(stdout)
 
 
 def get_instance(name: str) -> dict:
