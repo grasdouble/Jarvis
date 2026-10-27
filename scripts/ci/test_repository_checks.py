@@ -193,19 +193,34 @@ key: duplicate
         failure = next(step for step in steps if step.get('name') == 'Fail when required runtime integration evidence is missing or failed')
         self.assertIn('steps.runtime-integration-tests.outcome != \'success\'', failure['if'])
 
-    def test_configuration_and_runtime_integration_use_isolated_ephemeral_databases(self):
+    def test_integration_jobs_use_unique_per_run_database_names(self):
         root = Path(__file__).resolve().parents[2]
         workflow = load_yaml((root / '.github/workflows/repository-checks.yml').read_text())
-        for job_name, database in [('configuration', 'jarvis_integration_auto'),
-                                   ('runtime-integration', 'jarvis_integration_manual')]:
+        for job_name, kind in [('configuration', 'auto'), ('runtime-integration', 'manual')]:
             with self.subTest(job=job_name):
                 job = workflow['jobs'][job_name]
-                self.assertEqual(job['services']['postgres']['env']['POSTGRES_DB'], database)
-                self.assertEqual(job['services']['postgres']['image'],
+                database = f'jarvis_integration_{kind}_${{{{ github.run_id }}}}_${{{{ github.run_attempt }}}}'
+                service = job['services']['postgres']
+                self.assertEqual(service['env']['POSTGRES_DB'], database)
+                self.assertEqual(service['image'],
                                  'postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c')
-                self.assertIn(f'pg_isready -U jarvis_ci -d {database}', job['services']['postgres']['options'])
+                self.assertIn('pg_isready -U jarvis_ci -d $POSTGRES_DB', service['options'])
                 self.assertEqual(job['env']['POSTGRES_DB'], database)
                 self.assertEqual(job['env']['JARVIS_TEST_DATABASE_URL'].rsplit('/', 1)[-1], database)
+                self.assertEqual(job['env']['JARVIS_TEST_EXPECTED_DATABASE_NAME'], database)
+                self.assertEqual(service['ports'], ['5432:5432'])
+                self.assertIn('${{ github.run_id }}', database)
+                self.assertIn('${{ github.run_attempt }}', database)
+
+    def test_integration_test_guard_uses_explicit_run_database_contract(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / 'packages/persistence/test/persistence.integration.test.mjs').read_text()
+        guard = source[source.index('function validateExpectedDatabaseName'):source.index('function validateRestoreGateDatabaseUrl')]
+        self.assertIn('const expectedDatabaseName = process.env.JARVIS_TEST_EXPECTED_DATABASE_NAME;', source)
+        self.assertIn(r'/^jarvis_integration_(?:auto|manual)_[0-9]+_[0-9]+$/', guard)
+        self.assertIn('assert.equal(database.name, expectedDatabaseName', source)
+        self.assertNotIn('jarvis_integration_auto', guard)
+        self.assertNotIn('jarvis_integration_manual', guard)
 
     def test_existing_local_link_passes(self):
         with tempfile.TemporaryDirectory() as temporary:
