@@ -188,9 +188,16 @@ export function childEnvironment(token, temporary) {
 export function parseArguments(input) {
   const args = [...input];
   if (args[0] === '--dispatch-runtime-integration') {
-    if (args.length !== 3 || !/^[1-9][0-9]*$/.test(args[1]) || !Number.isSafeInteger(Number(args[1])) || !/^[0-9a-f]{40}$/i.test(args[2]))
-      throw new Error('Usage: --dispatch-runtime-integration OPEN_PR_NUMBER EXPECTED_40_CHARACTER_HEAD_SHA');
-    return {write:false, mode:'runtime-dispatch', pullRequest:Number(args[1]), expectedHeadSha:args[2].toLowerCase()};
+    if (args.length !== 2) throw new Error('Usage: --dispatch-runtime-integration BRANCH_OR_REFS_HEADS_BRANCH');
+    if (args[1].startsWith('refs/') && !args[1].startsWith('refs/heads/'))
+      throw new Error('Runtime integration dispatch accepts branch refs only.');
+    const branch = args[1].startsWith('refs/heads/') ? args[1].slice('refs/heads/'.length) : args[1];
+    const components = branch.split('/');
+    if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith('-') || branch.endsWith('/') || branch.endsWith('.') || branch.includes('..') ||
+        branch.includes('@{') || /[\x00-\x20~^:?*[\\]/.test(branch) || branch.includes('//') ||
+        components.some(component => !component || component.startsWith('.') || component.endsWith('.lock')))
+      throw new Error('Runtime integration dispatch requires a valid branch name, not an arbitrary ref.');
+    return {write:false, mode:'runtime-dispatch', branch};
   }
   const write = args[0] === '--write';
   if (write) args.shift();
@@ -408,7 +415,7 @@ async function run(options) {
   const identity = await api('/app', signed, 'GET', undefined, false);
   if (identity.id !== APP.id || identity.slug !== APP.slug) throw new Error('Private key belongs to another GitHub App.');
   const expected = options.mode === 'runtime-dispatch'
-    ? {actions:'write', metadata:'read', pull_requests:'read'} : permissions(options.write);
+    ? {actions:'write'} : permissions(options.write);
   const grant = await api(`/app/installations/${APP.installationId}/access_tokens`, signed, 'POST', {
     repositories: [APP.repository.split('/')[1]], permissions: expected,
   });
@@ -416,19 +423,16 @@ async function run(options) {
   try {
     assertGrant(grant, expected);
     if (options.mode === 'runtime-dispatch') {
-      const pr = await api(`/repos/${APP.repository}/pulls/${options.pullRequest}`, grant.token);
-      if (pr.state !== 'open' || pr.head?.sha?.toLowerCase() !== options.expectedHeadSha)
-        throw new Error('Pull request is not open at the expected head SHA; no workflow was dispatched.');
-      const dispatch = await api(`/repos/${APP.repository}/actions/workflows/on-demand-runtime-integration.yml/dispatches`, grant.token, 'POST', {
-        ref:'main', inputs:{pull_request:String(options.pullRequest), expected_head_sha:options.expectedHeadSha},
+      const dispatch = await api(`/repos/${APP.repository}/actions/workflows/repository-checks.yml/dispatches`, grant.token, 'POST', {
+        ref:options.branch,
       }, false);
       const runId = dispatch?.workflow_run_id;
       const runUrl = `https://api.github.com/repos/${APP.repository}/actions/runs/${runId}`;
       const htmlUrl = `https://github.com/${APP.repository}/actions/runs/${runId}`;
       if (!Number.isSafeInteger(runId) || runId < 1 || dispatch.run_url !== runUrl || dispatch.html_url !== htmlUrl)
         throw new Error('Workflow dispatch response did not provide valid run metadata; run outcome is unknown. Reconcile Actions state before any retry.');
-      console.log(JSON.stringify({dispatched:true, workflow:'on-demand-runtime-integration.yml', ref:'main', pullRequest:options.pullRequest,
-        expectedHeadSha:options.expectedHeadSha, runId, runUrl:htmlUrl}));
+      console.log(JSON.stringify({dispatched:true, workflow:'repository-checks.yml', ref:options.branch,
+        runId, runUrl:htmlUrl}));
       return 0;
     }
     if (options.mode === 'verify') {

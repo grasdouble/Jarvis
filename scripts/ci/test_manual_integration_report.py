@@ -35,37 +35,29 @@ class ManualIntegrationReportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     report.parse_tap(tap)
 
-    def test_metadata_rejects_invalid_pr_and_sha_before_network(self):
-        for pr, sha in [('0', 'a' * 40), ('7;id', 'a' * 40), ('7', 'A' * 40)]:
-            with self.subTest(pr=pr, sha=sha), patch.object(report, 'urlopen') as request:
-                with self.assertRaises(ValueError):
-                    report.metadata(pr, sha, 'token')
-                request.assert_not_called()
-
-    def test_metadata_requires_open_matching_head(self):
-        class Response:
-            def __enter__(self): return self
-            def __exit__(self, *_): pass
-            def read(self): return json.dumps({'state': 'open', 'head': {'sha': 'b' * 40},
-                                               'base': {'sha': 'c' * 40}}).encode()
-
-        with patch.dict('os.environ', {'GITHUB_REPOSITORY': 'owner/repo'}), \
-                patch.object(report, 'urlopen', return_value=Response()):
-            with self.assertRaises(ValueError):
-                report.metadata('7', 'a' * 40, 'token')
-
-    def test_validated_metadata_is_emitted_as_explicit_outputs_and_bound_to_report(self):
-        data = {'pr': 17, 'base': 'b' * 40, 'head': 'a' * 40}
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'github-output'
-            report.write_github_output(output, data)
-            self.assertEqual(output.read_text(), f'pr=17\nbase={"b" * 40}\nhead={"a" * 40}\n')
-        self.assertEqual(report.candidate_from_values('17', 'b' * 40, 'a' * 40), data)
-        with self.assertRaises(ValueError):
-            report.candidate_from_values('17', '../bad', 'a' * 40)
+    def test_event_context_validation_preserves_pr_context_and_rejects_bad_values(self):
+        data = report.candidate_from_values('pull_request', 'refs/pull/17/merge', 'a' * 40,
+                                            '17', 'b' * 40, 'a' * 40)
+        self.assertEqual(data, {'event': 'pull_request', 'ref': 'refs/pull/17/merge', 'sha': 'a' * 40,
+                                'pr': 17, 'base': 'b' * 40, 'head': 'a' * 40})
+        self.assertEqual(report.candidate_from_values('workflow_dispatch', 'refs/heads/feature/test', 'c' * 40),
+                         {'event': 'workflow_dispatch', 'ref': 'refs/heads/feature/test', 'sha': 'c' * 40})
+        self.assertEqual(report.candidate_from_values('push', 'refs/heads/main', 'd' * 40),
+                         {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'd' * 40})
+        for args in [('push', 'refs/heads/main', 'A' * 40),
+                     ('push', 'refs/heads/../main', 'a' * 40),
+                     ('push', 'refs/tags/v1', 'a' * 40),
+                     ('workflow_dispatch', 'refs/tags/release', 'a' * 40),
+                     ('pull_request', 'refs/pull/17/merge', 'a' * 40, '', 'b' * 40, 'a' * 40),
+                     ('pull_request', 'refs/pull/18/merge', 'a' * 40, '17', 'b' * 40, 'a' * 40),
+                     ('pull_request', 'refs/pull/17/merge', 'c' * 40, '17', 'b' * 40, 'a' * 40),
+                     ('workflow_dispatch', 'refs/heads/main', 'a' * 40, '17', 'b' * 40, 'a' * 40)]:
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                report.candidate_from_values(*args)
 
     def test_exact_required_scenario_controls_report_success(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
 
         def run(tap):
             results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
@@ -83,7 +75,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
         required = report.REQUIRED_SCENARIO
         passing = run(base.format(case=f'ok 2 - {required}', passed=2, failed=0, skipped=0))
         self.assertEqual(passing['result'], 'pass')
-        self.assertEqual({key: passing[key] for key in ('pr', 'base', 'head')}, candidate)
+        self.assertEqual({key: passing[key] for key in candidate}, candidate)
         self.assertEqual(len(passing['commands']), 3)
         self.assertEqual(passing['scenarios'][1], {'status': 'pass', 'name': required})
         for case, passed, failed, skipped in (
@@ -97,7 +89,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
                 self.assertTrue(failed_report['required_scenario_error'])
 
     def test_todo_and_cancelled_tests_fail_closed(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         for counter, value in (('todo', 1), ('cancelled', 1)):
             with self.subTest(counter=counter):
                 tap = (f'TAP version 13\n1..2\nok 1 - unrelated scenario\n'
@@ -117,7 +110,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
                     self.assertIn('# tests 2', saved['failure_diagnostics'])
 
     def test_failure_from_totals_retains_test_output_even_when_command_succeeds(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\nnot ok 2 - another assertion\n'
                '  error: AssertionError: expected 2\n# tests 2\n# pass 1\n# fail 1\n'
                '# cancelled 0\n# skipped 0\n# todo 0\n')
@@ -133,7 +127,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertIn('AssertionError: expected 2', saved['failure_diagnostics'])
 
     def test_setup_failure_is_reported_and_prevents_integration_commands(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 1,
                   'duration_seconds': 1.25, 'started_at_utc': '2026-01-01T00:00:00+00:00',
                   'ended_at_utc': '2026-01-01T00:00:01+00:00'}]
@@ -151,7 +146,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
             self.assertEqual(saved['result'], 'fail')
 
     def test_setup_success_is_accounted_before_all_integration_commands(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 0,
                   'duration_seconds': 1.0}, {'command': 'pnpm install --frozen-lockfile',
                   'exit_code': 0, 'duration_seconds': 2.0}]
@@ -171,7 +167,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertEqual(saved['integration_status'], 'run')
 
     def test_build_failure_is_reported_without_running_persistence_test(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 0,
                   'duration_seconds': 1.0}]
         build_result = type('Result', (), {'returncode': 2, 'stdout': 'build failed'})()
@@ -191,7 +188,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertEqual(saved['exit_code'], 2)
 
     def test_failed_report_has_bounded_sanitized_diagnostics(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         secret = 'fake-secret-token-123'
         tap = (f'not ok 1 - {report.REQUIRED_SCENARIO}\n  error: AssertionError: expected value\n'
                f'  at test.js:12:3\n  connection postgres://user:{secret}@db.example/test\n'
@@ -221,7 +219,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertIn('truncated', first)
 
     def test_passing_report_omits_test_output_diagnostics(self):
-        candidate = {'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
+                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
         tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
                '# cancelled 0\n# skipped 0\n# todo 0\n')
         results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]

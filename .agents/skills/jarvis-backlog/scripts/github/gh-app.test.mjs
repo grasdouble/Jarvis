@@ -84,40 +84,39 @@ test('Git push requires explicit write mode; credential and extension commands a
   assert.throws(() => parseArguments(['--', 'extension', 'exec', 'untrusted']));
 });
 
-test('runtime dispatch mode is purpose-specific and validates its two inputs', () => {
-  assert.deepEqual(parseArguments(['--dispatch-runtime-integration', '244', 'a'.repeat(40)]),
-    {write:false, mode:'runtime-dispatch', pullRequest:244, expectedHeadSha:'a'.repeat(40)});
-  for (const args of [[], ['0', 'a'.repeat(40)], ['01', 'a'.repeat(40)], ['1', 'x'.repeat(40)], ['1', 'a'.repeat(40), 'extra']])
+test('runtime dispatch mode is purpose-specific and accepts only a valid branch/ref', () => {
+  assert.deepEqual(parseArguments(['--dispatch-runtime-integration', 'feature/runtime-test']),
+    {write:false, mode:'runtime-dispatch', branch:'feature/runtime-test'});
+  assert.deepEqual(parseArguments(['--dispatch-runtime-integration', 'refs/heads/main']),
+    {write:false, mode:'runtime-dispatch', branch:'main'});
+  for (const args of [[], [''], ['../main'], ['main;echo'], ['-main'], ['refs/tags/v1'], ['main', 'extra']])
     assert.throws(() => parseArguments(['--dispatch-runtime-integration', ...args]));
 });
 
-test('runtime dispatch preflights exact open PR, requests minimal grant, and never invokes gh', async t => {
-  const sha='a'.repeat(40);
+test('runtime dispatch selects the requested branch on the fixed workflow without PR metadata or gh', async t => {
   const exact={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],
-    permissions:{actions:'write',metadata:'read',pull_requests:'read'}};
-  const r=await fixtureCommand(t,['--dispatch-runtime-integration','244',sha],`
+    permissions:{actions:'write'}};
+  const r=await fixtureCommand(t,['--dispatch-runtime-integration','feature/runtime-test'],`
     if (url.endsWith('/app')) return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
     if (url.endsWith('/access_tokens')) return Response.json(${JSON.stringify(exact)});
-    if (url.endsWith('/pulls/244')) return Response.json({state:'open',head:{sha:${JSON.stringify(sha)}}});
     if (url.endsWith('/dispatches') && options.method==='POST') return Response.json({workflow_run_id:987654,run_url:'https://api.github.com/repos/grasdouble/Jarvis/actions/runs/987654',html_url:'https://github.com/grasdouble/Jarvis/actions/runs/987654'});
     if (options.method==='DELETE') return new Response(null,{status:204});
     throw new Error('Unexpected request');`,{ghScript:'exit 99'});
   assert.equal(r.status,0,r.stderr); assert.equal(r.ghCalls,0);
-  assert.deepEqual(JSON.parse(r.stdout),{dispatched:true,workflow:'on-demand-runtime-integration.yml',ref:'main',pullRequest:244,expectedHeadSha:sha,runId:987654,runUrl:'https://github.com/grasdouble/Jarvis/actions/runs/987654'});
+  assert.deepEqual(JSON.parse(r.stdout),{dispatched:true,workflow:'repository-checks.yml',ref:'feature/runtime-test',runId:987654,runUrl:'https://github.com/grasdouble/Jarvis/actions/runs/987654'});
   const post=r.requests.find(request=>request.url.endsWith('/dispatches'));
-  assert.equal(post.method,'POST'); assert.deepEqual(JSON.parse(post.body),{ref:'main',inputs:{pull_request:'244',expected_head_sha:sha}});
-  assert.deepEqual(r.requests.map(request=>request.method),['GET','POST','GET','POST','DELETE']);
+  assert.equal(post.method,'POST'); assert.deepEqual(JSON.parse(post.body),{ref:'feature/runtime-test'});
+  assert.deepEqual(r.requests.map(request=>request.method),['GET','POST','POST','DELETE']);
   assert.doesNotMatch(r.stdout+r.stderr,/synthetic-test-value|Bearer/i);
 });
 
 test('runtime dispatch never replays a successful response with missing or malformed run metadata',async t=>{
-  const sha='e'.repeat(40),grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write',metadata:'read',pull_requests:'read'}};
+  const grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write'}};
   for(const body of [{},{workflow_run_id:0,run_url:'bad',html_url:'bad'},
     {workflow_run_id:7,run_url:'https://api.github.com/repos/other/repo/actions/runs/7',html_url:'https://github.com/other/repo/actions/runs/7'}]){
-    const r=await fixtureCommand(t,['--dispatch-runtime-integration','7',sha],`
+    const r=await fixtureCommand(t,['--dispatch-runtime-integration','main'],`
       if(url.endsWith('/app'))return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
       if(url.endsWith('/access_tokens'))return Response.json(${JSON.stringify(grantValue)});
-      if(url.endsWith('/pulls/7'))return Response.json({state:'open',head:{sha:${JSON.stringify(sha)}}});
       if(url.endsWith('/dispatches'))return Response.json(${JSON.stringify(body)});
       if(options.method==='DELETE')return new Response(null,{status:204});
       throw new Error('Unexpected request');`);
@@ -126,27 +125,27 @@ test('runtime dispatch never replays a successful response with missing or malfo
   }
 });
 
-test('runtime dispatch denies closed, mismatched, unexpected or missing grants without dispatch',async t=>{
-  const sha='b'.repeat(40), expected={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write',metadata:'read',pull_requests:'read'}};
-  for(const [pr,permission] of [[{state:'closed',head:{sha}},expected],[{state:'open',head:{sha:'c'.repeat(40)}},expected],[{state:'open',head:{sha}},{...expected,permissions:{...expected.permissions,contents:'write'}}],[{state:'open',head:{sha}},{...expected,permissions:{actions:'write',metadata:'read'}}]]){
-    const r=await fixtureCommand(t,['--dispatch-runtime-integration','2',sha],`
+test('runtime dispatch requires only actions write and rejects grants broader than requested',async t=>{
+  const expected={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write'}};
+  for(const permission of [expected,{...expected,permissions:{...expected.permissions,contents:'write'}},{...expected,permissions:{}}]){
+    const r=await fixtureCommand(t,['--dispatch-runtime-integration','main'],`
       if(url.endsWith('/app'))return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
       if(url.endsWith('/access_tokens'))return Response.json(${JSON.stringify(permission)});
-      if(url.endsWith('/pulls/2'))return Response.json(${JSON.stringify(pr)});
+      if(url.endsWith('/dispatches') && options.method==='POST') return Response.json({workflow_run_id:987654,run_url:'https://api.github.com/repos/grasdouble/Jarvis/actions/runs/987654',html_url:'https://github.com/grasdouble/Jarvis/actions/runs/987654'});
       if(options.method==='DELETE')return new Response(null,{status:204});
       throw new Error('Unexpected request');`);
-    assert.equal(r.status,1);assert.equal(r.requests.some(x=>x.url.endsWith('/dispatches')),false);
+    if(permission === expected) assert.equal(r.status,0); else assert.notEqual(r.status,0);
+    assert.equal(r.requests.some(x=>x.url.endsWith('/dispatches')),permission === expected);
     assert.equal(r.requests.at(-1).method,'DELETE');assert.doesNotMatch(r.stderr,/synthetic-test-value/);
   }
 });
 
 test('runtime dispatch denial or ambiguous transport is not replayed',async t=>{
-  const sha='d'.repeat(40),grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write',metadata:'read',pull_requests:'read'}};
+  const grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write'}};
   for(const response of [`return new Response(null,{status:403});`,`throw new TypeError('lost response',{cause:{code:'ECONNRESET'}});`]){
-    const r=await fixtureCommand(t,['--dispatch-runtime-integration','4',sha],`
+    const r=await fixtureCommand(t,['--dispatch-runtime-integration','main'],`
       if(url.endsWith('/app'))return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
       if(url.endsWith('/access_tokens'))return Response.json(${JSON.stringify(grantValue)});
-      if(url.endsWith('/pulls/4'))return Response.json({state:'open',head:{sha:${JSON.stringify(sha)}}});
       if(url.endsWith('/dispatches'))${response}
       if(options.method==='DELETE')return new Response(null,{status:204});
       throw new Error('Unexpected request');`);
