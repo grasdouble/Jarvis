@@ -1472,7 +1472,7 @@ test("persisted stop state survives an operating-system worker restart", {
         hydrate: async (lease) => ({ taskId: lease.task.taskId, projectId: process.env.JV263_PROJECT_ID, capability: "synthetic" }),
         execution: {
           readStop: createPersistedStopReader(controls),
-          dispatch: async () => { dispatchCount += 1; return { kind: "report", id: "synthetic-result" }; },
+          dispatch: async () => { dispatchCount += 1; return { kind: "report", id: "11111111-1111-4111-8111-111111111111" }; },
           revokeCapability: async () => undefined,
           stopSandbox: async () => "stopped",
           recordAcceptedEffectUnknown: async () => undefined,
