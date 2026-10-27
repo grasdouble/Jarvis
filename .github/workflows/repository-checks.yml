@@ -155,8 +155,6 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
-      - name: Preserve report helper outside candidate workspace
-        run: cp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"
       - name: Select exact integration candidate revision
         id: runtime-candidate
         env:
@@ -176,6 +174,10 @@ jobs:
           fi
           git checkout --detach "$candidate_sha"
           test "$(git rev-parse HEAD)" = "$candidate_sha"
+      - name: Preserve candidate report helper outside candidate workspace
+        run: |
+          cp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"
+          cmp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"
       - name: Install pnpm for runtime integration qualification
         id: runtime-pnpm
         continue-on-error: true
