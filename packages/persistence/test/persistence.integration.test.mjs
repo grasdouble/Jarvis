@@ -1524,7 +1524,7 @@ test("persisted stop state survives an operating-system worker restart", {
     for (const scope of ["global", "project"]) {
       await resetStopRaceFixture(pool);
       fixture = await createStopRaceFixture(pool, "enqueue");
-      await new QueueService({
+      const queuedTask = await new QueueService({
         store: new PostgresQueueStore(pool), clock: { now: () => Date.now() }, ids: { next: () => randomUUID() },
       }).enqueue({
         eventId: `jv263-${scope}-${fixture.taskId}`, taskId: fixture.taskId, payload: { taskId: fixture.taskId, projectId: fixture.projectId },
@@ -1542,7 +1542,7 @@ test("persisted stop state survives an operating-system worker restart", {
       assert.equal(replacementProcess.dispatchCount, 0, `${scope}-stopped worker does not invoke dispatch`);
       if (scope === "global") assert.equal(replacementProcess.project, null, "global stop does not create project stop state");
       else assert.equal(replacementProcess.global.stopped, false, "project stop leaves global execution resumed");
-      assert.equal((await new PostgresQueueStore(pool).get(fixture.taskId)).status, "queued", `${scope} stop preserves queued work`);
+      assert.equal((await new PostgresQueueStore(pool).get(queuedTask.id)).status, "queued", `${scope} stop preserves queued work`);
 
       const snapshot = await controls.get({ projectId: fixture.projectId });
       const current = scope === "global" ? snapshot.global : snapshot.project;
