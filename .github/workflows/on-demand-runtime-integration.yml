@@ -110,6 +110,7 @@ jobs:
           CANDIDATE_BASE: ${{ steps.candidate.outputs.base }}
           CANDIDATE_HEAD: ${{ steps.candidate.outputs.head }}
           JARVIS_RUN_STOP_RUNTIME_INTEGRATION: '1'
+          JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: |
           export JARVIS_SETUP_RESULTS="$(python3 -c 'import glob,json,os; print(json.dumps([json.load(open(p)) for p in sorted(glob.glob(os.environ["RUNNER_TEMP"] + "/setup-*.json"))]))')"
           python3 "$RUNNER_TEMP/manual_integration_report.py" run --pr "$CANDIDATE_PR" --base "$CANDIDATE_BASE" --head "$CANDIDATE_HEAD" --output "$RUNNER_TEMP/integration-report.json"
