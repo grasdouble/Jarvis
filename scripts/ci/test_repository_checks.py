@@ -215,8 +215,8 @@ key: duplicate
     def test_integration_test_guard_uses_explicit_run_database_contract(self):
         root = Path(__file__).resolve().parents[2]
         source = (root / 'packages/persistence/test/persistence.integration.test.mjs').read_text()
-        guard = source[source.index('function validateIntegrationDatabaseUrl'):source.index('function validateRestoreGateDatabaseUrl')]
-        self.assertIn('JARVIS_TEST_EXPECTED_DATABASE_NAME', source)
+        guard = source[source.index('function validateExpectedDatabaseName'):source.index('function validateRestoreGateDatabaseUrl')]
+        self.assertIn('const expectedDatabaseName = process.env.JARVIS_TEST_EXPECTED_DATABASE_NAME;', source)
         self.assertIn(r'/^jarvis_integration_(?:auto|manual)_[0-9]+_[0-9]+$/', guard)
         self.assertIn('assert.equal(database.name, expectedDatabaseName', source)
         self.assertNotIn('jarvis_integration_auto', guard)
