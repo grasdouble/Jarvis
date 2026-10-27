@@ -6,10 +6,11 @@ Use the [governance procedure](../project-governance.md) and [template](template
 
 The [architecture decision table](../technical-architecture.md#2-architecture-decisions) already uses ADR01–ADR11 (displayed as ADR 01–ADR 11). Those identities remain stable; a later linked record may partially supersede their scope without rewriting history. PRD Dxx entries are a separate owner-decision register: link a relevant Dxx entry, do not rename it or infer resolution from an ADR title.
 
-Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-title.md`, with heading `ADR-NNNN`; the next unallocated number is currently **0014**. Inspect this index, the target revision and active decision work before assigning a number; coordinate/reconcile collisions before publication. Once published, never renumber or reuse an identity, including a rejected or superseded record. Filename numbers identify decisions, not package/document versions.
+Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-title.md`, with heading `ADR-NNNN`; the next unallocated number is currently **0015**. Inspect this index, the target revision and active decision work before assigning a number; coordinate/reconcile collisions before publication. Once published, never renumber or reuse an identity, including a rejected or superseded record. Filename numbers identify decisions, not package/document versions.
 
 | ID / title | Status | Owner | Scope / related decisions | Record |
 | --- | --- | --- | --- | --- |
+| ADR-0014: Isolated Lima execution for contributor review | Proposed | Owner | Issue #214; reviewer-side destructive persistence validation | [0014-lima-review-execution.md](0014-lima-review-execution.md) |
 | ADR-0013: Proposed gateway egress proxy | Proposed | Owner | Network egress for per-attempt LLM gateway; D02, D05; ADR 05/10 | [0013-gateway-egress-proxy.md](0013-gateway-egress-proxy.md) |
 
 ADR-0012 was withdrawn at the owner's direction before adoption; its standalone candidate record was removed in the JV-125 change. The identifier is retired and will not be reused. The accepted product direction is recorded in [PRD D17](../prd-and-roadmap.md#12-decision-register-and-fallback-values) and its owner evidence in JV-124/JV-125.
