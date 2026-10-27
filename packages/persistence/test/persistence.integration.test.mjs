@@ -1441,4 +1441,114 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
   ]);
   throwCollectedFailures(testFailure, cleanupFailures);
 });
+
+test("persisted stop state survives an operating-system worker restart", {
+  skip: process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION !== "1"
+    ? "set JARVIS_RUN_STOP_RUNTIME_INTEGRATION=1 to run this on-demand integration scenario"
+    : databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
+}, async (context) => {
+  const { spawn } = await import("node:child_process");
+  const pool = new Pool({ connectionString: databaseUrl, max: 4, application_name: "jv263-process-restart-fixture" });
+  const workerSource = `
+    import pg from "pg";
+    const { PostgresQueueStore, PostgresStopControlStore } = await import(process.env.JV263_PERSISTENCE_MODULE);
+    const { QueueService } = await import(process.env.JV263_QUEUE_MODULE);
+    const { createQueueWorker, createPersistedStopReader } = await import(process.env.JV263_WORKER_MODULE);
+    const pool = new pg.Pool({ connectionString: process.env.JARVIS_TEST_DATABASE_URL, max: 2, application_name: process.env.JV263_APPLICATION_NAME });
+    try {
+      const controls = new PostgresStopControlStore(pool);
+      const queue = new QueueService({ store: new PostgresQueueStore(pool), clock: { now: () => Date.now() }, ids: { next: () => crypto.randomUUID() } });
+      let dispatchCount = 0;
+      if (process.env.JV263_PHASE === "stop") {
+        const state = await controls.get({});
+        await controls.set({ stopped: true, expectedVersion: state.global.version, ownerId: "owner" });
+      }
+      const worker = createQueueWorker({
+        queue, workerId: process.env.JV263_APPLICATION_NAME, leaseMs: 30000,
+        restoreGate: { waitUntilActivated: async () => undefined, activateAfterRestore: async () => undefined },
+        hydrate: async (lease) => ({ taskId: lease.task.taskId, projectId: process.env.JV263_PROJECT_ID, capability: "synthetic" }),
+        execution: {
+          readStop: createPersistedStopReader(controls),
+          dispatch: async () => { dispatchCount += 1; return { kind: "report", id: "synthetic-result" }; },
+          revokeCapability: async () => undefined,
+          stopSandbox: async () => "stopped",
+          recordAcceptedEffectUnknown: async () => undefined,
+        },
+      });
+      const outcome = await worker.runOnce();
+      const state = await controls.get({});
+      process.stdout.write(JSON.stringify({ pid: process.pid, outcome, stopped: state.global.stopped, version: state.global.version, dispatchCount }));
+    } finally { await pool.end(); }
+  `;
+  const runWorker = (phase) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", workerSource], {
+      cwd: process.cwd(),
+      env: {
+        PATH: process.env.PATH,
+        NODE_ENV: "test",
+        JARVIS_TEST_DATABASE_URL: databaseUrl,
+        JV263_PERSISTENCE_MODULE: new URL("../dist/index.js", import.meta.url).href,
+        JV263_QUEUE_MODULE: new URL("../../queue/dist/index.js", import.meta.url).href,
+        JV263_WORKER_MODULE: new URL("../../../apps/worker/dist/index.js", import.meta.url).href,
+        JV263_PHASE: phase,
+        JV263_PROJECT_ID: fixture.projectId,
+        JV263_APPLICATION_NAME: `jv263-${phase}-${randomUUID()}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("close", (code, signal) => {
+      clearTimeout(timeout);
+      if (code !== 0) reject(new Error(`worker ${phase} exited code=${code} signal=${signal}: ${stderr}`));
+      else {
+        try { resolve(JSON.parse(stdout)); }
+        catch (error) { reject(new Error(`worker ${phase} returned invalid output: ${stdout}; stderr=${stderr}`, { cause: error })); }
+      }
+    });
+  });
+
+  let testFailure;
+  let fixture;
+  try {
+    await new PostgresPersistence(pool).migrate();
+    await resetStopRaceFixture(pool);
+    fixture = await createStopRaceFixture(pool, "enqueue");
+    await new QueueService({
+      store: new PostgresQueueStore(pool), clock: { now: () => Date.now() }, ids: { next: () => randomUUID() },
+    }).enqueue({
+      eventId: `jv263-${fixture.taskId}`, taskId: fixture.taskId, payload: { taskId: fixture.taskId, projectId: fixture.projectId },
+      deadline: Date.now() + 60_000, maxAttempts: 2, retry: { baseDelay: 10, maxDelay: 100 },
+    });
+    const initialProcess = await runWorker("stop");
+    const replacementProcess = await runWorker("check");
+    assert.notEqual(initialProcess.pid, replacementProcess.pid, "replacement must be a distinct OS process");
+    assert.equal(initialProcess.stopped, true);
+    assert.equal(initialProcess.dispatchCount, 0);
+    assert.equal(replacementProcess.stopped, true, "replacement reads durable stop state from PostgreSQL");
+    assert.equal(replacementProcess.outcome, "idle", "replacement worker cannot claim queued work while stopped");
+    assert.equal(replacementProcess.dispatchCount, 0, "stopped worker does not invoke dispatch");
+    assert.equal((await new PostgresQueueStore(pool).get(fixture.taskId)).status, "queued");
+
+    const controls = new PostgresStopControlStore(pool);
+    const stopped = await controls.get({});
+    await controls.set({ stopped: false, expectedVersion: stopped.global.version, ownerId: "owner" });
+    const resumedProcess = await runWorker("check");
+    assert.notEqual(resumedProcess.pid, replacementProcess.pid, "post-resume worker is another OS process");
+    assert.equal(resumedProcess.stopped, false);
+    assert.equal(resumedProcess.outcome, "completed", "later worker process proceeds after explicit owner resume");
+    assert.equal(resumedProcess.dispatchCount, 1, "resumed worker invokes the dispatch port");
+  } catch (error) {
+    testFailure = error;
+  }
+  const cleanupFailures = await runCleanupSteps([
+    async () => { if (fixture) await resetStopRaceFixture(pool); },
+    async () => pool.end(),
+  ]);
+  throwCollectedFailures(testFailure, cleanupFailures);
+});
 });
