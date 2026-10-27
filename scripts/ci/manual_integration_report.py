@@ -1,4 +1,4 @@
-"""Validate a manually selected PR revision and emit its integration-test report."""
+"""Run PostgreSQL runtime integration checks and emit a bounded evidence report."""
 
 import argparse
 import json
@@ -9,7 +9,6 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from urllib.request import Request, urlopen
 
 REQUIRED_SCENARIO = 'real PostgreSQL stop controls gate and cancel the real queue worker composition'
 DIAGNOSTIC_BYTES = 8192
@@ -35,39 +34,28 @@ def bounded_diagnostics(text):
     return result
 
 
-def metadata(pr_number, expected_sha, token):
-    if not re.fullmatch(r'[1-9][0-9]{0,8}', pr_number):
-        raise ValueError('PR number must be a positive integer.')
-    if not re.fullmatch(r'[0-9a-f]{40}', expected_sha):
-        raise ValueError('Expected head SHA must be 40 lowercase hexadecimal characters.')
-    if not token:
-        raise ValueError('A read-only GitHub token is required for PR metadata validation.')
-    request = Request(
-        f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/pulls/{pr_number}',
-        headers={'Accept': 'application/vnd.github+json', 'Authorization': f'Bearer {token}',
-                 'X-GitHub-Api-Version': '2022-11-28'},
-    )
-    with urlopen(request, timeout=20) as response:
-        pr = json.load(response)
-    if (pr.get('state') != 'open' or pr.get('head', {}).get('sha') != expected_sha
-            or not re.fullmatch(r'[0-9a-f]{40}', pr.get('base', {}).get('sha', ''))):
-        raise ValueError('PR is not open at the exact expected head SHA.')
-    return {'pr': int(pr_number), 'base': pr['base']['sha'], 'head': pr['head']['sha']}
-
-
-def candidate_from_values(pr_number, base_sha, head_sha):
-    if not re.fullmatch(r'[1-9][0-9]{0,8}', str(pr_number)):
-        raise ValueError('PR number must be a positive integer.')
-    if not re.fullmatch(r'[0-9a-f]{40}', base_sha) or not re.fullmatch(r'[0-9a-f]{40}', head_sha):
-        raise ValueError('Candidate base and head must be 40 lowercase hexadecimal characters.')
-    return {'pr': int(pr_number), 'base': base_sha, 'head': head_sha}
-
-
-def write_github_output(path, candidate):
-    candidate = candidate_from_values(candidate['pr'], candidate['base'], candidate['head'])
-    with Path(path).open('a') as output:
-        for key in ('pr', 'base', 'head'):
-            output.write(f'{key}={candidate[key]}\n')
+def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_sha=''):
+    if event_name not in {'pull_request', 'push', 'workflow_dispatch'}:
+        raise ValueError('Unsupported event name.')
+    if not re.fullmatch(r'[0-9a-f]{40}', sha):
+        raise ValueError('Event SHA must be 40 lowercase hexadecimal characters.')
+    if event_name == 'pull_request':
+        if not re.fullmatch(r'[1-9][0-9]{0,8}', str(pr_number)):
+            raise ValueError('Pull request number must be a positive integer.')
+        if ref != f'refs/pull/{pr_number}/merge':
+            raise ValueError('Pull request ref must match its event number.')
+        if not re.fullmatch(r'[0-9a-f]{40}', base_sha) or not re.fullmatch(r'[0-9a-f]{40}', head_sha):
+            raise ValueError('Pull request base and head must be 40 lowercase hexadecimal characters.')
+        if sha != head_sha:
+            raise ValueError('Pull request candidate SHA must be its exact event head SHA.')
+        return {'event': event_name, 'ref': ref, 'sha': sha,
+                'pr': int(pr_number), 'base': base_sha, 'head': head_sha}
+    if (not re.fullmatch(r'refs/heads/[A-Za-z0-9._/-]+', ref) or '..' in ref or
+            ref.endswith(('/', '.')) or '//' in ref):
+        raise ValueError('Push and manual-dispatch event refs must select a branch.')
+    if any((pr_number, base_sha, head_sha)):
+        raise ValueError('Pull request context is only valid for pull_request events.')
+    return {'event': event_name, 'ref': ref, 'sha': sha}
 
 
 def parse_tap(text):
@@ -148,7 +136,7 @@ def run_report(candidate, output):
         'exit_code': test_result.returncode, 'duration_seconds': round(sum(x['duration_seconds'] for x in command_results), 3), 'tap': totals,
         'scenarios': scenarios, 'tap_parse_error': parse_error, 'required_scenario_error': scenario_error,
         'evidence_limitations': [
-            'Manual qualification evidence only; it does not establish issue acceptance or runtime relay behavior.',
+            'Runtime integration qualification evidence only; it does not establish issue acceptance or runtime relay behavior.',
             'The test suite uses synthetic/local boundaries and an ephemeral PostgreSQL service.',
         ],
     }
@@ -177,33 +165,24 @@ def record_command(command, output):
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='action', required=True)
-    validate = sub.add_parser('validate')
-    validate.add_argument('--pr', required=True)
-    validate.add_argument('--sha', required=True)
-    validate.add_argument('--github-output', required=True)
-    validate.add_argument('--token', default=os.environ.get('GITHUB_TOKEN', ''))
     run = sub.add_parser('run')
-    run.add_argument('--pr', required=True)
-    run.add_argument('--base', required=True)
-    run.add_argument('--head', required=True)
+    run.add_argument('--event', required=True)
+    run.add_argument('--ref', required=True)
+    run.add_argument('--sha', required=True)
+    run.add_argument('--pr', default='')
+    run.add_argument('--base', default='')
+    run.add_argument('--head', default='')
     run.add_argument('--output', required=True)
     record = sub.add_parser('record-command')
     record.add_argument('--output', required=True)
     record.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if args.action == 'validate':
-        try:
-            data = metadata(args.pr, args.sha, args.token)
-        except Exception as error:
-            print(f'Candidate validation failed: {error}', file=sys.stderr)
-            raise SystemExit(1)
-        write_github_output(args.github_output, data)
-    elif args.action == 'record-command':
+    if args.action == 'record-command':
         command = args.command[1:] if args.command and args.command[0] == '--' else args.command
         record_command(command, args.output)
     else:
         try:
-            candidate = candidate_from_values(args.pr, args.base, args.head)
+            candidate = candidate_from_values(args.event, args.ref, args.sha, args.pr, args.base, args.head)
         except ValueError as error:
             print(f'Candidate arguments rejected: {error}', file=sys.stderr)
             raise SystemExit(1)

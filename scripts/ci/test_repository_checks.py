@@ -137,54 +137,72 @@ key: duplicate
         )
         self.assertLess(steps.index(action), next(index for index, step in enumerate(steps) if step.get('name') == 'Restore PR merge candidate checkout'))
 
-    def test_manual_integration_workflow_is_dispatch_only_and_read_only(self):
+    def test_runtime_integration_is_consolidated_and_uses_exact_event_candidate_without_secrets(self):
         root = Path(__file__).resolve().parents[2]
-        workflow = load_yaml((root / '.github/workflows/on-demand-runtime-integration.yml').read_text())
-        self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
-        self.assertEqual(workflow['permissions'], {'contents': 'read', 'pull-requests': 'read'})
-        self.assertEqual(set(workflow['on']['workflow_dispatch']['inputs']), {'pull_request', 'expected_head_sha'})
-        steps = workflow['jobs']['qualify']['steps']
+        self.assertFalse((root / '.github/workflows/on-demand-runtime-integration.yml').exists())
+        workflow = load_yaml((root / '.github/workflows/repository-checks.yml').read_text())
+        self.assertEqual(set(workflow['on']), {'pull_request', 'push', 'workflow_dispatch'})
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        self.assertEqual(workflow['on']['workflow_dispatch'], None)
+        job = workflow['jobs']['runtime-integration']
+        self.assertEqual(job['timeout-minutes'], 25)
+        self.assertEqual(workflow['jobs']['configuration']['timeout-minutes'], 10)
+        self.assertFalse(any(step.get('id') == 'runtime-integration-tests'
+                             for step in workflow['jobs']['configuration']['steps']))
+        steps = job['steps']
         self.assertTrue(all(re.fullmatch(r'[\w.-]+/[\w./-]+@[0-9a-f]{40}', step['uses'])
                             for step in steps if 'uses' in step))
-        existing = load_yaml((root / '.github/workflows/repository-checks.yml').read_text())
-        self.assertEqual(set(existing['on']), {'pull_request', 'push', 'workflow_dispatch'})
-        self.assertEqual(existing['on']['push'], {'branches': ['main']})
-        self.assertEqual(existing['on']['pull_request']['types'],
+        checkout = next(step for step in steps if step.get('uses', '').startswith('actions/checkout@'))
+        self.assertIn('github.event.pull_request.base.sha || github.event.repository.default_branch',
+                      checkout['with']['ref'])
+        self.assertFalse(checkout['with']['persist-credentials'])
+        self.assertEqual(workflow['on']['push'], {'branches': ['main']})
+        self.assertEqual(workflow['on']['pull_request']['types'],
                          ['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review'])
-        names = [step.get('name', '') for step in steps]
-        self.assertLess(names.index('Refuse non-default-branch or cross-repository dispatch before using a token'),
-                        names.index('Verify PR and expected head against GitHub metadata'))
-        metadata = next(step for step in steps if step.get('id') == 'candidate')
-        self.assertIn('GITHUB_OUTPUT', metadata['run'])
-        self.assertNotIn('candidate.json', metadata['run'])
-        helper_copy = next(step for step in steps if step.get('name') == 'Preserve trusted report helper outside candidate workspace')
-        self.assertLess(names.index(helper_copy['name']), names.index('Fetch exact validated candidate revision'))
-        self.assertIn('refs/remotes/pull/$PR_NUMBER/head', next(step for step in steps if step.get('name') == 'Fetch exact validated candidate revision')['run'])
-        self.assertIn('test "$fetched_sha" = "$CANDIDATE_SHA"', next(step for step in steps if step.get('name') == 'Fetch exact validated candidate revision')['run'])
-        report_step = next(step for step in steps if step.get('id') == 'tests')
-        self.assertIn('$RUNNER_TEMP/manual_integration_report.py', report_step['run'])
-        self.assertIn('CANDIDATE_PR', report_step['run'])
-        self.assertIn('--base "$CANDIDATE_BASE"', report_step['run'])
-        self.assertIn('$RUNNER_TEMP/integration-report.json', report_step['run'])
-        self.assertEqual(report_step['env']['CANDIDATE_PR'], '${{ steps.candidate.outputs.pr }}')
-        self.assertIn('CANDIDATE_BASE', report_step['env'])
-        self.assertIn('CANDIDATE_HEAD', report_step['env'])
+        select = next(step for step in steps if step.get('name') == 'Select exact integration candidate revision')
+        self.assertIn('github.event.pull_request.head.sha', select['env']['PR_HEAD_SHA'])
+        self.assertIn('github.sha', select['env']['EVENT_SHA'])
+        self.assertIn('refs/pull/$PR_NUMBER/head', select['run'])
+        self.assertIn('git fetch --no-tags --depth=1 origin "$EVENT_REF"', select['run'])
+        self.assertIn('git rev-parse FETCH_HEAD^{commit}', select['run'])
+        self.assertIn('test "$(git rev-parse HEAD)" = "$candidate_sha"', select['run'])
+        preserve = next(step for step in steps if step.get('name') == 'Preserve candidate report helper outside candidate workspace')
+        self.assertIn('cp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"', preserve['run'])
+        self.assertIn('cmp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"', preserve['run'])
+        pnpm_setup = next(step for step in steps if step.get('id') == 'runtime-pnpm')
+        dependency_setup = next(item for item in steps if item.get('id') == 'runtime-dependencies')
+        self.assertLess(steps.index(select), steps.index(preserve))
+        self.assertLess(steps.index(preserve), steps.index(pnpm_setup))
+        report_step = next(step for step in steps if step.get('id') == 'runtime-integration-tests')
+        self.assertLess(steps.index(preserve), steps.index(report_step))
+        for step in (pnpm_setup, dependency_setup, report_step):
+            self.assertIn('$RUNNER_TEMP/manual_integration_report.py', step['run'])
+            self.assertEqual(step['env']['GH_TOKEN'], '')
+            self.assertEqual(step['env']['GITHUB_TOKEN'], '')
         self.assertEqual(report_step['env']['JARVIS_RUN_STOP_RUNTIME_INTEGRATION'], '1')
+        self.assertIn('github.event_name', report_step['env']['EVENT_NAME'])
+        self.assertIn('github.ref', report_step['env']['EVENT_REF'])
+        self.assertIn('github.event.pull_request.head.sha || github.sha', report_step['env']['EVENT_SHA'])
+        self.assertIn('github.event.pull_request.number', report_step['env']['PR_NUMBER'])
+        self.assertIn('--event "$EVENT_NAME" --ref "$EVENT_REF" --sha "$EVENT_SHA"', report_step['run'])
+        self.assertIn('--pr "$PR_NUMBER" --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA"', report_step['run'])
+        self.assertIn('$RUNNER_TEMP/integration-report.json', report_step['run'])
         artifact = next(step for step in steps if step.get('uses', '').startswith('actions/upload-artifact@'))
         self.assertEqual(artifact['with']['path'], '${{ runner.temp }}/integration-report.json')
-        self.assertNotIn('candidate.json', artifact['with']['path'])
+        self.assertEqual(artifact['with']['name'], 'runtime-integration-report')
+        failure = next(step for step in steps if step.get('name') == 'Fail when required runtime integration evidence is missing or failed')
+        self.assertIn('steps.runtime-integration-tests.outcome != \'success\'', failure['if'])
 
-    def test_integration_workflows_use_distinct_database_names(self):
+    def test_configuration_and_runtime_integration_use_isolated_ephemeral_databases(self):
         root = Path(__file__).resolve().parents[2]
-        workflows = (
-            ('on-demand-runtime-integration.yml', 'qualify', 'jarvis_integration_manual'),
-            ('repository-checks.yml', 'configuration', 'jarvis_integration_auto'),
-        )
-        for filename, job_name, database in workflows:
-            with self.subTest(workflow=filename):
-                workflow = load_yaml((root / f'.github/workflows/{filename}').read_text())
+        workflow = load_yaml((root / '.github/workflows/repository-checks.yml').read_text())
+        for job_name, database in [('configuration', 'jarvis_integration_auto'),
+                                   ('runtime-integration', 'jarvis_integration_manual')]:
+            with self.subTest(job=job_name):
                 job = workflow['jobs'][job_name]
                 self.assertEqual(job['services']['postgres']['env']['POSTGRES_DB'], database)
+                self.assertEqual(job['services']['postgres']['image'],
+                                 'postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c')
                 self.assertIn(f'pg_isready -U jarvis_ci -d {database}', job['services']['postgres']['options'])
                 self.assertEqual(job['env']['POSTGRES_DB'], database)
                 self.assertEqual(job['env']['JARVIS_TEST_DATABASE_URL'].rsplit('/', 1)[-1], database)
