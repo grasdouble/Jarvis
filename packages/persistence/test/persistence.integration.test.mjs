@@ -1384,7 +1384,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
         if (req.method === "POST" && req.url === "/v1/sandboxes") {
-          res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ sandboxId: "11111111-1111-4111-8111-111111111111" }));
+          res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ sandboxId: "11111111-1111-4111-8111-111111111111", state: "running" }));
         } else if (req.method === "POST" && req.url === "/v1/sandboxes/11111111-1111-4111-8111-111111111111/cancel") {
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           sandboxStops.push({ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: body.leaseEpoch });
