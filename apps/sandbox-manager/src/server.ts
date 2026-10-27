@@ -103,7 +103,7 @@ async function handle(
         throw new SandboxManagerError("Idempotency-Key is required.", "INVALID_ARGUMENT");
       }
       const result = await options.manager.create(await readJson(request) as SandboxSpec, idempotencyKey);
-      send(response, 201, result);
+      send(response, 201, { sandboxId: result.sandboxId, state: result.state });
       return;
     }
 

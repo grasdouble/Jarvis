@@ -28,7 +28,7 @@ function certificates() {
 test('sandbox-manager HTTPS client authenticates both TLS peers and sends the closed fixed contract', async (t) => {
   const cert = certificates(); t.after(() => rmSync(cert.dir, { recursive: true, force: true }));
   const calls = [];
-  let createResponse = { sandboxId: '11111111-1111-4111-8111-111111111111' };
+  let createResponse = { sandboxId: '11111111-1111-4111-8111-111111111111', state: 'running' };
   const server = https.createServer({ key: cert.serverKey, cert: cert.serverCert, ca: cert.ca, requestCert: true, rejectUnauthorized: true }, (req, res) => {
     if (req.socket.getPeerCertificate().subjectaltname !== 'URI:spiffe://jarvis/worker') { req.socket.destroy(); return; }
     calls.push({ method: req.method, url: req.url, worker: req.socket.getPeerCertificate().subjectaltname });
@@ -54,7 +54,7 @@ test('sandbox-manager HTTPS client authenticates both TLS peers and sends the cl
   await client.cancel('11111111-1111-4111-8111-111111111111', 4);
   assert.deepEqual(calls.map(({ method, url }) => [method, url]), [['POST', '/v1/sandboxes'], ['POST', '/v1/sandboxes/resolve'], ['POST', '/v1/sandboxes/11111111-1111-4111-8111-111111111111/cancel']]);
   assert.equal(calls[0].worker, 'URI:spiffe://jarvis/worker'); assert.deepEqual(calls[0].body, spec); assert.equal(calls[0].key, 't:a:4'); assert.deepEqual(calls[1].body, spec); assert.deepEqual(calls[2].body, { leaseEpoch: 4 });
-  for (const invalid of [{}, { sandboxId: 'not-a-uuid' }, { sandboxId: '11111111-1111-4111-8111-111111111111', extra: 'untrusted' }, { sandboxId: 7 }]) {
+  for (const invalid of [{}, { sandboxId: 'not-a-uuid', state: 'running' }, { sandboxId: '11111111-1111-4111-8111-111111111111', state: 'running', extra: 'untrusted' }, { sandboxId: 7, state: 'running' }, { sandboxId: '11111111-1111-4111-8111-111111111111' }, { sandboxId: '11111111-1111-4111-8111-111111111111', state: 7 }]) {
     createResponse = invalid;
     await assert.rejects(client.create(spec, 'bad-response'), /invalid response/);
   }
