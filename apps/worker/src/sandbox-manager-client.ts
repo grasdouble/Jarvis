@@ -61,9 +61,10 @@ export function createSandboxManagerHttpClient(options: SandboxManagerHttpOption
       return send("POST", "/v1/sandboxes", spec, { "idempotency-key": idempotencyKey }, (value) => {
         const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
         if (value === null || typeof value !== "object" || Array.isArray(value) ||
-            Object.keys(value).length !== 1 || !Object.hasOwn(value, "sandboxId") ||
+            Object.keys(value).length !== 2 || !Object.hasOwn(value, "sandboxId") || !Object.hasOwn(value, "state") ||
             typeof (value as { sandboxId?: unknown }).sandboxId !== "string" ||
-            !uuid.test((value as { sandboxId: string }).sandboxId)) {
+            !uuid.test((value as { sandboxId: string }).sandboxId) ||
+            typeof (value as { state?: unknown }).state !== "string") {
           throw new Error("invalid sandbox response");
         }
         return { sandboxId: (value as { sandboxId: string }).sandboxId };
