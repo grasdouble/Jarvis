@@ -29,6 +29,7 @@ import { QueueError, QueueService } from "@jarvis/queue";
 
 const { Pool } = pg;
 const databaseUrl = process.env.JARVIS_TEST_DATABASE_URL;
+const restoreGateDatabaseUrl = process.env.JV265_RESTORE_GATE_DATABASE_URL;
 const originalConfig = {
   schemaVersion: 1,
   repository: { owner: "owner-a", name: "repo-a" },
@@ -40,6 +41,88 @@ const canonical = (value) => Array.isArray(value)
     ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
 const originalConfigHash = createHash("sha256").update(canonical(originalConfig)).digest("hex");
+
+test("JV-265 restored PostgreSQL state stays behind the real worker activation gate", {
+  skip: restoreGateDatabaseUrl === undefined ? "set JV265_RESTORE_GATE_DATABASE_URL to the run-owned disposable restored database" : false,
+}, async () => {
+  const url = new URL(restoreGateDatabaseUrl);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(url.hostname), "restore-gate test accepts loopback PostgreSQL only");
+  const databaseName = decodeURIComponent(url.pathname.slice(1));
+  assert.match(databaseName, /^jv265_restore_[a-f0-9-]+$/i, "refusing a database not explicitly named as a JV-265 disposable restore target");
+  const pool = new Pool({ connectionString: restoreGateDatabaseUrl, max: 3, application_name: "jv265-restore-gate-integration" });
+  try {
+    const { rows: [identity] } = await pool.query("SELECT current_database() AS name");
+    assert.equal(identity.name, databaseName);
+    const { PostgresPersistence } = await import("../dist/index.js");
+    const { createRestoreActivationGate, createQueueWorker } = await import("../../../apps/worker/dist/index.js");
+    const persistence = new PostgresPersistence(pool);
+    await persistence.migrate();
+    const controls = new PostgresStopControlStore(pool);
+    const beforeRestoreActivation = await controls.get({});
+    assert.equal(beforeRestoreActivation.global.stopped, false, "source backup must retain a resumed global control before restore activation");
+    const { rows: [restoredResume] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+      WHERE actor='owner' AND action='stop.resume' AND resource='global'`);
+    assert.equal(restoredResume.count, 1, "restored database must contain the source's durable resume audit");
+
+    const gate = createRestoreActivationGate(async () => controls.suspendAfterRestore());
+    const taskId = `jv265-${randomUUID()}`;
+    const task = { id: taskId, taskId };
+    const leases = [1, 2].map((epoch) => ({ task, worker: "jv265-restore-worker", attemptId: `${taskId}-${epoch}`, epoch,
+      expiresAt: Date.now() + 60_000 }));
+    let claims = 0;
+    let dispatches = 0;
+    let cancellations = 0;
+    const queue = {
+      claim: async () => { claims += 1; return leases.shift() ?? null; },
+      complete: async () => {}, fail: async () => {}, cancel: async () => { cancellations += 1; },
+    };
+    const worker = createQueueWorker({
+      queue, workerId: "jv265-restore-worker", leaseMs: 30_000,
+      hydrate: async () => ({ taskId, projectId: "synthetic-project", capability: "synthetic-only" }),
+      restoreGate: gate,
+      execution: {
+        readStop: async () => {
+          const state = await controls.get({});
+          return { stopped: state.global.stopped || state.project?.stopped === true, version: state.global.version };
+        },
+        dispatch: async () => { dispatches += 1; return { kind: "synthetic-complete" }; },
+        revokeCapability: async () => {}, stopSandbox: async () => "stopped", recordAcceptedEffectUnknown: async () => {},
+      },
+    });
+
+    let activated = false;
+    const waiting = worker.runOnce();
+    try {
+      await delay(30);
+      assert.equal(claims, 0, "worker claimed before explicit restore activation");
+      assert.equal(dispatches, 0, "worker dispatched before explicit restore activation");
+      await gate.activateAfterRestore();
+      activated = true;
+      assert.equal(await waiting, "cancelled", "restored stop prevents dispatch after gate activation");
+      assert.equal(claims, 1);
+      assert.equal(cancellations, 1);
+      assert.equal(dispatches, 0);
+      const suspended = await controls.get({});
+      assert.equal(suspended.global.stopped, true);
+      assert.equal(suspended.global.changedBy, "system:restore");
+      assert.equal(suspended.global.version, beforeRestoreActivation.global.version + 1,
+        "durable restore suspension advances the restored global-control fencing version");
+      const { rows: [restoreAudit] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+        WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global'`);
+      assert.equal(restoreAudit.count, 1, "restore suspension audit was not durable exactly once");
+
+      await controls.set({ stopped: false, expectedVersion: suspended.global.version, ownerId: "owner" });
+      assert.equal(await worker.runOnce(), "completed", "explicitly resumed restored database permits fresh synthetic work");
+      assert.equal(claims, 2);
+      assert.equal(dispatches, 1);
+    } finally {
+      if (!activated) await gate.activateAfterRestore().catch(() => undefined);
+      await pool.end();
+    }
+  } finally {
+    if (!pool.ended) await pool.end();
+  }
+});
 
 function createSyntheticSandboxTls() {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-issue242-integration-tls-"));

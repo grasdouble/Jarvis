@@ -4,8 +4,8 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
-
-const input = JSON.parse(await fs.readFile("/workspace/qualification-input.json", "utf8"));
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 function statusFields(text) {
   return Object.fromEntries(text.split("\n").flatMap((line) => {
@@ -20,7 +20,7 @@ async function namespaceIds() {
   })));
 }
 
-async function connect(host, port, timeoutMs = 500) {
+export async function connect(host, port, timeoutMs = 500) {
   return new Promise((resolve) => {
     const socket = net.createConnection({ host, port });
     const finish = (result) => {
@@ -33,7 +33,16 @@ async function connect(host, port, timeoutMs = 500) {
   });
 }
 
-async function networkEvidence() {
+export function targetIsBlocked(target, result) {
+  // A refused loopback connection is expected: the isolated agent owns that
+  // namespace and need not run a local listener. Refusal from the synthetic
+  // witness (or any non-loopback target) is evidence of reachability.
+  return target.label.startsWith("loopback-")
+    ? !result.connected
+    : !result.connected && result.code !== "ECONNREFUSED";
+}
+
+async function networkEvidence(input) {
   const targets = input.targets;
   const attempts = await Promise.all(targets.map(async (target) => {
     const result = await connect(target.address, target.port);
@@ -58,8 +67,8 @@ async function networkEvidence() {
   assert.equal(nonLoopback.length, 0, "the agent has a non-loopback network interface");
   assert.equal(routes.length, 0, "the agent has an IPv4 route outside loopback");
   assert.equal(ipv6Interfaces.length, 0, "the agent has an IPv6 interface outside loopback");
-  assert.equal(attempts.some((attempt) => attempt.connected || attempt.code === "ECONNREFUSED"), false,
-    "a direct IPv4/IPv6 target was reachable or returned an active refusal");
+  assert.equal(attempts.some(({ label, ...result }) => !targetIsBlocked({ label }, result)), false,
+    "a direct target was reachable or returned an active refusal");
   assert.equal(dnsResults.some((result) => result.resolved), false, "DNS resolved from the isolated agent");
   return {
     interfaceCount: interfaces.length,
@@ -70,7 +79,7 @@ async function networkEvidence() {
   };
 }
 
-async function main() {
+async function main(input) {
   assert.equal(process.getuid(), 10001, "unexpected effective UID");
   assert.equal(process.getgid(), 10001, "unexpected effective GID");
   const procStatus = statusFields(await fs.readFile("/proc/self/status", "utf8"));
@@ -107,7 +116,7 @@ async function main() {
   const sensitiveEnvironment = Object.keys(process.env).filter((name) =>
     /(?:github|token|secret|credential|private.?key|aws)/i.test(name));
   assert.deepEqual(sensitiveEnvironment, [], "credential-like environment variables are visible");
-  const network = await networkEvidence();
+  const network = await networkEvidence(input);
 
   const report = {
     uid: process.getuid(),
@@ -133,6 +142,7 @@ if (process.env.JV007_WITNESS === "true") {
     response.end("synthetic internal-network witness\n");
   }));
   server.listen(8181, "0.0.0.0", () => process.stdout.write("JV007_WITNESS_READY\n"));
-} else {
-  await main();
+} else if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  const input = JSON.parse(await fs.readFile("/workspace/qualification-input.json", "utf8"));
+  await main(input);
 }
