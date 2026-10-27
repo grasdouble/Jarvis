@@ -414,10 +414,12 @@ async function run(options) {
   const signed = jwt(await loadKey());
   const identity = await api('/app', signed, 'GET', undefined, false);
   if (identity.id !== APP.id || identity.slug !== APP.slug) throw new Error('Private key belongs to another GitHub App.');
+  const requested = options.mode === 'runtime-dispatch'
+    ? {actions:'write', metadata:'read'} : permissions(options.write);
   const expected = options.mode === 'runtime-dispatch'
-    ? {actions:'write'} : permissions(options.write);
+    ? {actions:'write', metadata:'read'} : requested;
   const grant = await api(`/app/installations/${APP.installationId}/access_tokens`, signed, 'POST', {
-    repositories: [APP.repository.split('/')[1]], permissions: expected,
+    repositories: [APP.repository.split('/')[1]], permissions: requested,
   });
   let temporary;
   try {

@@ -74,6 +74,12 @@ test('grant rejects other repositories, expanded rights, and missing rights', ()
   assert.throws(() => assertGrant(grant({permissions: {metadata: 'read'}}), permissions()));
 });
 
+test('grant rejects implicit metadata when it is not part of the expected permissions', () => {
+  const expected={actions:'write'};
+  const tokenGrant=grant({permissions:{actions:'write',metadata:'read'}});
+  assert.throws(() => assertGrant(tokenGrant, expected), /Unexpected token permission: metadata/);
+});
+
 test('Git push requires explicit write mode; credential and extension commands are rejected', () => {
   assert.equal(parseArguments(['--', 'pr', 'list']).write, false);
   assert.deepEqual(parseArguments(['--roadmap-query']), {write:false, mode:'roadmap-query'});
@@ -95,7 +101,7 @@ test('runtime dispatch mode is purpose-specific and accepts only a valid branch/
 
 test('runtime dispatch selects the requested branch on the fixed workflow without PR metadata or gh', async t => {
   const exact={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],
-    permissions:{actions:'write'}};
+    permissions:{actions:'write',metadata:'read'}};
   const r=await fixtureCommand(t,['--dispatch-runtime-integration','feature/runtime-test'],`
     if (url.endsWith('/app')) return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
     if (url.endsWith('/access_tokens')) return Response.json(${JSON.stringify(exact)});
@@ -108,10 +114,12 @@ test('runtime dispatch selects the requested branch on the fixed workflow withou
   assert.equal(post.method,'POST'); assert.deepEqual(JSON.parse(post.body),{ref:'feature/runtime-test'});
   assert.deepEqual(r.requests.map(request=>request.method),['GET','POST','POST','DELETE']);
   assert.doesNotMatch(r.stdout+r.stderr,/synthetic-test-value|Bearer/i);
+  const tokenRequest=r.requests.find(request=>request.url.endsWith('/access_tokens'));
+  assert.deepEqual(JSON.parse(tokenRequest.body),{repositories:['Jarvis'],permissions:{actions:'write',metadata:'read'}});
 });
 
 test('runtime dispatch never replays a successful response with missing or malformed run metadata',async t=>{
-  const grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write'}};
+  const grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write',metadata:'read'}};
   for(const body of [{},{workflow_run_id:0,run_url:'bad',html_url:'bad'},
     {workflow_run_id:7,run_url:'https://api.github.com/repos/other/repo/actions/runs/7',html_url:'https://github.com/other/repo/actions/runs/7'}]){
     const r=await fixtureCommand(t,['--dispatch-runtime-integration','main'],`
@@ -126,8 +134,13 @@ test('runtime dispatch never replays a successful response with missing or malfo
 });
 
 test('runtime dispatch requires only actions write and rejects grants broader than requested',async t=>{
-  const expected={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write'}};
-  for(const permission of [expected,{...expected,permissions:{...expected.permissions,contents:'write'}},{...expected,permissions:{}}]){
+  const expected={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write',metadata:'read'}};
+  const rejected=[{...expected,permissions:{actions:'read',metadata:'read'}},
+    {...expected,permissions:{metadata:'read'}},
+    {...expected,permissions:{actions:'write'}},
+    {...expected,permissions:{actions:'write',metadata:'write'}},
+    {...expected,permissions:{actions:'write',metadata:'read',contents:'read'}}];
+  for(const permission of [expected,...rejected]){
     const r=await fixtureCommand(t,['--dispatch-runtime-integration','main'],`
       if(url.endsWith('/app'))return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
       if(url.endsWith('/access_tokens'))return Response.json(${JSON.stringify(permission)});
@@ -141,7 +154,7 @@ test('runtime dispatch requires only actions write and rejects grants broader th
 });
 
 test('runtime dispatch denial or ambiguous transport is not replayed',async t=>{
-  const grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write'}};
+  const grantValue={token:'synthetic-test-value',expires_at:'2099-01-01T00:00:00Z',repositories:[{full_name:APP.repository}],permissions:{actions:'write',metadata:'read'}};
   for(const response of [`return new Response(null,{status:403});`,`throw new TypeError('lost response',{cause:{code:'ECONNRESET'}});`]){
     const r=await fixtureCommand(t,['--dispatch-runtime-integration','main'],`
       if(url.endsWith('/app'))return Response.json({id:${APP.id},slug:${JSON.stringify(APP.slug)}});
