@@ -537,11 +537,16 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await exercisePauseRace("checkpoint", scope);
     }
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
-    const expectedDatabaseName = process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION === "1"
-      ? "jarvis_integration_manual"
-      : "jarvis_integration_auto";
-    assert.equal(database.name, expectedDatabaseName,
-      `integration mode requires database ${expectedDatabaseName}, got ${database.name}`);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      const expectedDatabaseName = process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION === "1"
+        ? "jarvis_integration_manual"
+        : "jarvis_integration_auto";
+      assert.equal(database.name, expectedDatabaseName,
+        `GitHub Actions integration mode requires database ${expectedDatabaseName}, got ${database.name}`);
+    } else {
+      assert.match(database.name, /^jarvis_issue8_[a-f0-9]{32}$/,
+        "local reviewer integration requires a uniquely named jarvis_issue8_ disposable database");
+    }
 
     const persistence = new PostgresPersistence(pool);
     await persistence.migrate();
