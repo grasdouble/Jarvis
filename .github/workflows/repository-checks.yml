@@ -114,6 +114,8 @@ jobs:
       - name: Test the sandbox-manager contracts
         run: pnpm --filter @jarvis/sandbox-manager test
       - name: Test PostgreSQL persistence against the ephemeral database
+        env:
+          JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: pnpm --filter @jarvis/persistence test
       - name: Test contributor GitHub tooling without real credentials
         run: node --test .agents/skills/jarvis-backlog/scripts/github/*.test.mjs

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { networkInterfaces } from "node:os";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
+import { performance } from "node:perf_hooks";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "../..");
@@ -26,9 +28,29 @@ const profile = {
 
 function usage() {
   return `Usage: node infra/sandbox-manager/qualify-colima.mjs --profile jarvis\n\n` +
-    `Builds a synthetic-only qualification image and exercises the sandbox-manager ` +
+    `Builds a synthetic-only qualification image and exercises createSandboxManagerServer, ` +
+    `createSandboxQueueWorker, the HTTPS/mTLS client and ` +
     `adapter against the dedicated ${context} Docker Engine. Creates and removes only ` +
-    `resources tagged for this run. It does not start Compose services or provision secrets.\n`;
+    `resources tagged for this run. Stop-to-no-dispatch is bounded to 2 seconds and ` +
+    `stop-to-manager cancellation to 10 seconds. It does not start Compose services or provision secrets.\n`;
+}
+
+function createSyntheticTls() {
+  const dir = mkdtempSync(join(tmpdir(), "jv265-colima-mtls-"));
+  try {
+    const openssl = (...args) => command("openssl", args, { stdio: "ignore" });
+    writeFileSync(join(dir, "server.ext"), "subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n");
+    writeFileSync(join(dir, "worker.ext"), "subjectAltName=URI:spiffe://jarvis/worker\nextendedKeyUsage=clientAuth\n");
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "ca.key"), "-out", join(dir, "ca.crt"), "-subj", "/CN=jv265-synthetic-ca", "-days", "1");
+    for (const name of ["server", "worker"]) {
+      openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, `${name}.key`), "-out", join(dir, `${name}.csr`), "-subj", `/CN=jv265-${name}`);
+      openssl("x509", "-req", "-in", join(dir, `${name}.csr`), "-CA", join(dir, "ca.crt"), "-CAkey", join(dir, "ca.key"), "-CAcreateserial", "-out", join(dir, `${name}.crt`), "-days", "1", "-extfile", join(dir, `${name}.ext`));
+    }
+    return { dir, ...Object.fromEntries(["ca.crt", "server.crt", "server.key", "worker.crt", "worker.key"].map((name) => [name, readFileSync(join(dir, name))])) };
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function docker(...args) {
@@ -40,12 +62,13 @@ function docker(...args) {
 }
 
 function command(file, args, options = {}) {
-  return execFileSync(file, args, {
+  const output = execFileSync(file, args, {
     cwd: repositoryRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     ...options,
-  }).trim();
+  });
+  return typeof output === "string" ? output.trim() : "";
 }
 
 function parseArguments(args) {
@@ -56,65 +79,27 @@ function parseArguments(args) {
   return { help: false };
 }
 
-function localNetworkTargets(witnessAddress, witnessName) {
+function localNetworkTargets(witnessAddress) {
   const targets = new Map();
   const add = (label, address, port = 443) => {
     if (!address || address.includes("%") || !/^[0-9a-fA-F:.]+$/.test(address)) return;
     const key = `${address}|${port}`;
     if (!targets.has(key)) targets.set(key, { label, address, port });
   };
-  for (const [interfaceName, entries] of Object.entries(networkInterfaces())) {
-    for (const entry of entries ?? []) {
-      if (!entry.internal) add(`mac-${interfaceName}-${entry.family}`, entry.address);
-    }
-  }
-  try {
-    const gateway = command("route", ["-n", "get", "default"])
-      .match(/^\s*gateway:\s*(\S+)/m)?.[1];
-    if (gateway) add("lan-gateway", gateway);
-  } catch { /* No default route means there is no discovered host gateway. */ }
-  try {
-    const neighbors = command("arp", ["-an"]);
-    for (const [index, match] of [...neighbors.matchAll(/\(([^)]+)\)/g)].entries()) {
-      if (index >= 32) break;
-      add(`lan-neighbor-${index + 1}`, match[1]);
-    }
-  } catch { /* ARP may be unavailable on an otherwise valid host. */ }
-  try {
-    const networks = docker("network", "ls", "--quiet").split("\n").filter(Boolean);
-    for (const [index, networkId] of networks.entries()) {
-      const name = docker("network", "inspect", "--format", "{{.Name}}", networkId);
-      const gateways = docker("network", "inspect", "--format", "{{range .IPAM.Config}}{{println .Gateway}}{{end}}", networkId)
-        .split("\n").filter(Boolean);
-      for (const [gatewayIndex, gateway] of gateways.entries()) add(`docker-network-${index}-gateway-${gatewayIndex}`, gateway);
-      if (name === "none" || name === "host") continue;
-    }
-    const peers = docker("ps", "--quiet").split("\n").filter(Boolean);
-    let peerIndex = 0;
-    for (const peer of peers) {
-      const name = docker("inspect", "--format", "{{.Name}}", peer).replace(/^\//, "");
-      if (name === witnessName) continue;
-      const networks = JSON.parse(docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", peer));
-      for (const network of Object.values(networks ?? {})) {
-        add(`task-peer-${peerIndex}-ipv4`, network.IPAddress);
-        add(`task-peer-${peerIndex}-ipv6`, network.GlobalIPv6Address);
-        peerIndex += 1;
-      }
-    }
-  } catch { /* Missing or stopped peers do not supply a direct target. */ }
+  add("loopback-ipv4", "127.0.0.1");
+  add("loopback-ipv6", "::1");
   add("core-network-witness", witnessAddress, 8181);
-  add("public-ipv4", "1.1.1.1");
-  add("public-ipv4-secondary", "8.8.8.8");
-  add("public-ipv6", "2606:4700:4700::1111");
   return [...targets.values()];
 }
 
 async function waitForReport(containerId) {
   const stopAt = Date.now() + 20_000;
   let lastError;
+  let lastLogs = "";
   while (Date.now() < stopAt) {
     try {
       const logs = docker("logs", containerId);
+      lastLogs = logs;
       const line = logs.split("\n").find((entry) => entry.startsWith("JV007_QUALIFICATION "));
       if (line) return JSON.parse(line.slice("JV007_QUALIFICATION ".length));
     } catch (error) {
@@ -122,7 +107,7 @@ async function waitForReport(containerId) {
     }
     await delay(250);
   }
-  throw new Error(`The synthetic sandbox did not produce qualification evidence${lastError ? ": Docker logs unavailable" : "."}`);
+  throw new Error(`The synthetic sandbox did not produce qualification evidence${lastError ? ": Docker logs unavailable" : `; logs=${lastLogs.slice(-4_000) || "<empty>"}`}`);
 }
 
 function assertInspection(inspect) {
@@ -168,9 +153,11 @@ async function main(args) {
     return;
   }
 
-  const [{ createSandboxManager }, { DockerEngineClient }] = await Promise.all([
+  const [{ createSandboxManager }, { DockerEngineClient }, { createSandboxManagerServer }, workerApi] = await Promise.all([
     import("../../apps/sandbox-manager/dist/index.js"),
     import("../../apps/sandbox-manager/dist/docker-engine.js"),
+    import("../../apps/sandbox-manager/dist/server.js"),
+    import("../../apps/worker/dist/index.js"),
   ]);
 
   command("bash", [join(repositoryRoot, "infra/colima/verify.sh"), "--profile", "jarvis"]);
@@ -189,11 +176,13 @@ async function main(args) {
   let witnessCreated = false;
   let networkCreated = false;
   let manager;
-  const activeSandboxIds = new Set();
+  let managerServer;
+  let tls;
+  const activeSandboxIds = new Map();
 
   const removeRunResources = async () => {
-    for (const sandboxId of activeSandboxIds) {
-      try { await manager?.destroy(sandboxId, 1); } catch { /* Keep cleanup scoped; report failures below. */ }
+    for (const [sandboxId, leaseEpoch] of activeSandboxIds) {
+      try { await manager?.destroy(sandboxId, leaseEpoch); } catch { /* Keep cleanup scoped; report failures below. */ }
     }
     if (witnessCreated) {
       try { docker("rm", "--force", witnessName); } catch { /* Removed by the engine already. */ }
@@ -202,6 +191,8 @@ async function main(args) {
       try { docker("network", "rm", networkName); } catch { /* Removed with the witness. */ }
     }
     try { docker("image", "rm", imageId ?? imageTag); } catch { /* The engine may still reference it. */ }
+    if (managerServer) await new Promise((resolve) => managerServer.close(resolve));
+    if (tls) rmSync(tls.dir, { recursive: true, force: true });
   };
 
   try {
@@ -218,10 +209,10 @@ async function main(args) {
     const witnessAddress = docker("inspect", "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", witnessName);
     assert.match(witnessAddress, /^\d+\.\d+\.\d+\.\d+$/);
     const referenceNamespaces = namespaceReference(witnessName);
-    const targets = localNetworkTargets(witnessAddress, witnessName);
+    const targets = localNetworkTargets(witnessAddress);
     const seed = {
       targets,
-      dnsNames: ["example.com", "host.lima.internal", "host.docker.internal", "gateway.docker.internal", "core-witness"],
+      dnsNames: ["core-witness"],
       referenceNamespaces: Object.fromEntries(["pid", "net", "mnt", "ipc", "uts"].map((name, index) => [name, referenceNamespaces[index]])),
       limits: { memoryBytes: profile.memoryBytes, nanoCpus: profile.nanoCpus, pids: profile.pidsLimit },
     };
@@ -244,6 +235,30 @@ async function main(args) {
     engine.createContainer = (request) => rawEngine.createContainer({ ...request, image: imageId });
     manager = createSandboxManager({ engine, profiles: [profile] });
 
+    tls = createSyntheticTls();
+    managerServer = createSandboxManagerServer({
+      manager,
+      tls: { key: tls["server.key"], cert: tls["server.crt"], ca: tls["ca.crt"] },
+      authorizeClient: (certificate) => certificate.subjectaltname?.split(", ").includes("URI:spiffe://jarvis/worker") ?? false,
+      sweepIntervalMs: 60_000,
+    });
+    await new Promise((resolve, reject) => {
+      managerServer.once("error", reject);
+      managerServer.listen(0, "127.0.0.1", resolve);
+    });
+    const rawSandboxClient = workerApi.createSandboxManagerHttpClient({
+      endpoint: new URL(`https://127.0.0.1:${managerServer.address().port}`), key: tls["worker.key"],
+      cert: tls["worker.crt"], ca: tls["ca.crt"], timeoutMs: 10_000,
+    });
+    const sandboxClientErrors = [];
+    const sandboxClient = {
+      ...rawSandboxClient,
+      create: async (...args) => {
+        try { return await rawSandboxClient.create(...args); }
+        catch (error) { sandboxClientErrors.push(error instanceof Error ? error.message : String(error)); throw error; }
+      },
+    };
+
     const executeAttempt = async (deadline) => {
       const spec = {
         taskId,
@@ -255,7 +270,7 @@ async function main(args) {
         leaseEpoch: 1,
       };
       const status = await manager.create(spec, `jv007:${randomUUID()}`);
-      activeSandboxIds.add(status.sandboxId);
+      activeSandboxIds.set(status.sandboxId, spec.leaseEpoch);
       const containerId = docker("ps", "--all", "--quiet", "--filter", `label=sandbox_id=${status.sandboxId}`);
       assert.match(containerId, /^[0-9a-f]{12,64}$/i, "manager did not create exactly one labeled container");
       const inspection = JSON.parse(docker("inspect", containerId))[0];
@@ -283,6 +298,77 @@ async function main(args) {
     const cancellationCleanupMs = Date.now() - cancellationStart;
     assert.ok(cancellationCleanupMs < 5 * 60_000, "cancelled attempt cleanup exceeded five minutes");
 
+    const workerTaskId = `jv007-${runId}-worker-task`;
+    const workerId = `jv007-${runId}-worker`;
+    const leases = [1, 2].map((epoch) => ({ task: { id: workerTaskId, taskId: workerTaskId },
+      worker: workerId, attemptId: `jv007-${runId}-worker-attempt-${epoch}`, epoch, expiresAt: Date.now() + 60_000 }));
+    const resumedLease = leases[1];
+    let claimCount = 0;
+    const mapping = new Map();
+    const identity = (value) => `${value.taskId}:${value.attemptId}:${value.leaseEpoch}`;
+    let dispatchCount = 0;
+    let stopSnapshot = { stopped: true, version: 1 };
+    const cancelledTaskIds = [];
+    const workerFailures = [];
+    const queue = { claim: async () => { claimCount += 1; return leases.shift() ?? null; }, complete: async () => {},
+      fail: async (...args) => { workerFailures.push(args); },
+      cancel: async (taskId) => { cancelledTaskIds.push(taskId); } };
+    const mappings = {
+      reserve: async (value) => mapping.set(identity(value), { ...value, sandboxId: null }),
+      bind: async (value) => { mapping.get(identity(value)).sandboxId = value.sandboxId; },
+      get: async (value) => mapping.get(identity(value))?.sandboxId ?? null,
+      clear: async (value) => mapping.delete(identity(value)),
+      getForReconciliation: async (value) => mapping.get(identity(value)),
+      clearAfterReconciliationCancellation: async (value) => mapping.delete(identity(value)),
+      clearAfterReconciliationNoSandbox: async (value) => mapping.delete(identity(value)),
+    };
+    const gate = workerApi.createRestoreActivationGate(async () => {});
+    await gate.activateAfterRestore();
+    const stopWorker = workerApi.createSandboxQueueWorker({
+      queue, workerId, leaseMs: 30_000,
+      hydrate: async () => ({ taskId: workerTaskId, projectId: "synthetic-project", capability: "synthetic-only" }),
+      restoreGate: gate,
+      sandbox: {
+        trustedSpec: async (activeLease) => ({ taskId: activeLease.task.taskId, attemptId: activeLease.attemptId,
+          snapshotId: randomUUID().replaceAll("-", "").padEnd(40, "0").slice(0, 40), profileId: profile.id,
+          modelProfileId: "jv007-synthetic-model-profile", deadline: new Date(activeLease.expiresAt).toISOString(), leaseEpoch: activeLease.epoch }),
+        sandbox: sandboxClient, mappings,
+      },
+      dispatchSandbox: async ({ lease: dispatchedLease, signal }) => {
+        assert.equal(dispatchedLease.attemptId, resumedLease.attemptId, "only the fresh resumed lease may dispatch");
+        assert.equal(dispatchedLease.epoch, resumedLease.epoch, "resumed dispatch must use the new fencing epoch");
+        dispatchCount += 1;
+        return new Promise((resolve) => signal.addEventListener("abort", () => resolve({ kind: "synthetic-cancelled" }), { once: true }));
+      },
+      execution: { readStop: async () => stopSnapshot, revokeCapability: async () => {}, stopSandbox: async () => "stopped", recordAcceptedEffectUnknown: async () => {} },
+    });
+    const noDispatchStart = performance.now();
+    assert.equal(await stopWorker.runOnce(), "cancelled", "stopped worker must not dispatch claimed work");
+    const stopNoDispatchMs = performance.now() - noDispatchStart;
+    assert.ok(stopNoDispatchMs <= 2_000, `stop-to-no-dispatch took ${stopNoDispatchMs.toFixed(2)} ms`);
+    assert.equal(dispatchCount, 0);
+    assert.deepEqual(cancelledTaskIds, [workerTaskId], "the stopped first lease must be cancelled before requesting a fresh lease");
+    stopSnapshot = { stopped: false, version: 2 };
+    const running = stopWorker.runOnce();
+    const dispatchDeadline = Date.now() + 10_000;
+    while (dispatchCount === 0 && Date.now() < dispatchDeadline) await delay(10);
+    if (dispatchCount === 0) {
+      const outcome = await running;
+      assert.equal(dispatchCount, 1, `only the bounded synthetic worker dispatch may start (runOnce=${outcome}, claims=${claimCount}, remainingLeases=${leases.length}, failures=${JSON.stringify(workerFailures)}, sandboxErrors=${JSON.stringify(sandboxClientErrors)})`);
+    }
+    const workerSandboxId = await mappings.get({ taskId: workerTaskId, attemptId: resumedLease.attemptId, leaseEpoch: resumedLease.epoch });
+    assert.ok(workerSandboxId, "actual worker created and bound its manager sandbox");
+    activeSandboxIds.set(workerSandboxId, resumedLease.epoch);
+    const stopAt = performance.now();
+    await stopWorker.stop("synthetic-project");
+    const stopCancelMs = performance.now() - stopAt;
+    assert.ok(stopCancelMs <= 10_000, `stop-to-manager cancellation took ${stopCancelMs.toFixed(2)} ms`);
+    assert.equal(await running, "unknown", "aborted synthetic dispatch remains an unknown external effect");
+    await manager.destroy(workerSandboxId, resumedLease.epoch);
+    activeSandboxIds.delete(workerSandboxId);
+    assert.equal(docker("ps", "--all", "--quiet", "--filter", `label=sandbox_id=${workerSandboxId}`), "", "worker sandbox container remains");
+    assert.equal(docker("volume", "ls", "--quiet", "--filter", `label=sandbox_id=${workerSandboxId}`), "", "worker sandbox volumes remain");
+
     const expiryStart = Date.now();
     const expiring = await executeAttempt(new Date(Date.now() + 8_000).toISOString());
     await delay(8_250);
@@ -298,8 +384,14 @@ async function main(args) {
     process.stdout.write(JSON.stringify({
       profile: "jarvis",
       engine: "linux/arm64",
+      testedCommit: command("git", ["rev-parse", "HEAD"]),
+      platform: command("sw_vers", ["-productVersion"]),
+      toolVersions: { node: process.version, docker: docker("version", "--format", "{{.Client.Version}}"), colima: command("colima", ["version"]) },
+      commands: ["pnpm --filter @jarvis/sandbox-manager build", "pnpm --filter @jarvis/worker build", "node --test infra/sandbox-manager/qualification.test.mjs", "node infra/sandbox-manager/qualify-colima.mjs --profile jarvis"],
       attempts: 2,
       cancellationCleanupMs,
+      stopNoDispatchMs: Number(stopNoDispatchMs.toFixed(2)),
+      stopCancelMs: Number(stopCancelMs.toFixed(2)),
       expiryCleanupMs,
       probe: first.report,
       evidence: "synthetic-only; no repository or real credentials were mounted or sent",

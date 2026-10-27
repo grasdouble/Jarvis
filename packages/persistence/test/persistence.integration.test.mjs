@@ -7,7 +7,7 @@ import { performance } from "node:perf_hooks";
 import https from "node:https";
 import { Buffer } from "node:buffer";
 import { URL } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +29,7 @@ import { QueueError, QueueService } from "@jarvis/queue";
 
 const { Pool } = pg;
 const databaseUrl = process.env.JARVIS_TEST_DATABASE_URL;
+const restoreGateDatabaseUrl = process.env.JV265_RESTORE_GATE_DATABASE_URL;
 const originalConfig = {
   schemaVersion: 1,
   repository: { owner: "owner-a", name: "repo-a" },
@@ -40,6 +41,180 @@ const canonical = (value) => Array.isArray(value)
     ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
 const originalConfigHash = createHash("sha256").update(canonical(originalConfig)).digest("hex");
+
+test("JV-265 restored PostgreSQL state stays behind the real worker activation gate", {
+  skip: restoreGateDatabaseUrl === undefined && process.env.JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID === undefined
+    ? "set JV265_RESTORE_GATE_DATABASE_URL or the trusted ephemeral PostgreSQL service container ID" : false,
+}, async () => {
+  const fixture = restoreGateDatabaseUrl === undefined ? await provisionRestoreGateDatabase() : undefined;
+  const targetUrl = fixture?.url ?? restoreGateDatabaseUrl;
+  const url = new URL(targetUrl);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(url.hostname), "restore-gate test accepts loopback PostgreSQL only");
+  const databaseName = decodeURIComponent(url.pathname.slice(1));
+  assert.match(databaseName, /^jv265_restore_[a-f0-9-]+$/i, "refusing a database not explicitly named as a JV-265 disposable restore target");
+  const pool = new Pool({ connectionString: targetUrl, max: 3, application_name: "jv265-restore-gate-integration" });
+  let testFailure;
+  try {
+    const { rows: [identity] } = await pool.query("SELECT current_database() AS name");
+    assert.equal(identity.name, databaseName);
+    const { PostgresPersistence } = await import("../dist/index.js");
+    const { createRestoreActivationGate, createQueueWorker } = await import("../../../apps/worker/dist/index.js");
+    const persistence = new PostgresPersistence(pool);
+    await persistence.migrate();
+    const controls = new PostgresStopControlStore(pool);
+    const beforeRestoreActivation = await controls.get({});
+    assert.equal(beforeRestoreActivation.global.stopped, false, "source backup must retain a resumed global control before restore activation");
+    const { rows: [restoredResume] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+      WHERE actor='owner' AND action='stop.resume' AND resource='global'`);
+    assert.equal(restoredResume.count, 1, "restored database must contain the source's durable resume audit");
+
+    const gate = createRestoreActivationGate(async () => controls.suspendAfterRestore());
+    const taskId = `jv265-${randomUUID()}`;
+    const task = { id: taskId, taskId };
+    const leases = [1, 2].map((epoch) => ({ task, worker: "jv265-restore-worker", attemptId: `${taskId}-${epoch}`, epoch,
+      expiresAt: Date.now() + 60_000 }));
+    let claims = 0;
+    let dispatches = 0;
+    let cancellations = 0;
+    const queue = {
+      claim: async () => { claims += 1; return leases.shift() ?? null; },
+      complete: async () => {}, fail: async () => {}, cancel: async () => { cancellations += 1; },
+    };
+    const worker = createQueueWorker({
+      queue, workerId: "jv265-restore-worker", leaseMs: 30_000,
+      hydrate: async () => ({ taskId, projectId: "synthetic-project", capability: "synthetic-only" }),
+      restoreGate: gate,
+      execution: {
+        readStop: async () => {
+          const state = await controls.get({});
+          return { stopped: state.global.stopped || state.project?.stopped === true, version: state.global.version };
+        },
+        dispatch: async () => { dispatches += 1; return { kind: "synthetic-complete" }; },
+        revokeCapability: async () => {}, stopSandbox: async () => "stopped", recordAcceptedEffectUnknown: async () => {},
+      },
+    });
+
+    let activated = false;
+    const waiting = worker.runOnce();
+    try {
+      await delay(30);
+      assert.equal(claims, 0, "worker claimed before explicit restore activation");
+      assert.equal(dispatches, 0, "worker dispatched before explicit restore activation");
+      await gate.activateAfterRestore();
+      activated = true;
+      assert.equal(await waiting, "cancelled", "restored stop prevents dispatch after gate activation");
+      assert.equal(claims, 1);
+      assert.equal(cancellations, 1);
+      assert.equal(dispatches, 0);
+      const suspended = await controls.get({});
+      assert.equal(suspended.global.stopped, true);
+      assert.equal(suspended.global.changedBy, "system:restore");
+      assert.equal(suspended.global.version, beforeRestoreActivation.global.version + 1,
+        "durable restore suspension advances the restored global-control fencing version");
+      const { rows: [restoreAudit] } = await pool.query(`SELECT count(*)::integer AS count FROM jarvis.audit_events
+        WHERE actor='system:restore' AND action='stop.restore_suspend' AND resource='global'`);
+      assert.equal(restoreAudit.count, 1, "restore suspension audit was not durable exactly once");
+
+      await controls.set({ stopped: false, expectedVersion: suspended.global.version, ownerId: "owner" });
+      assert.equal(await worker.runOnce(), "completed", "explicitly resumed restored database permits fresh synthetic work");
+      assert.equal(claims, 2);
+      assert.equal(dispatches, 1);
+    } finally {
+      if (!activated) await gate.activateAfterRestore().catch(() => undefined);
+      await pool.end();
+    }
+  } catch (error) {
+    testFailure = error;
+  } finally {
+    const cleanupFailures = await runCleanupSteps([
+      async () => { if (!pool.ended) await pool.end(); },
+      async () => { await fixture?.cleanup(); },
+    ]);
+    throwCollectedFailures(testFailure, cleanupFailures);
+  }
+});
+
+async function provisionRestoreGateDatabase() {
+  const containerId = process.env.JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID;
+  if (!containerId) return undefined;
+  assert.match(containerId, /^[0-9a-f]{12,64}$/i, "invalid ephemeral PostgreSQL service container ID");
+  assert.equal(process.env.GITHUB_ACTIONS, "true", "automatic restore fixture is restricted to trusted GitHub Actions jobs");
+  assert.ok(databaseUrl, "JARVIS_TEST_DATABASE_URL is required with the CI restore fixture");
+  const base = new URL(databaseUrl);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(base.hostname), "CI restore fixture requires loopback PostgreSQL");
+  assert.ok(["jarvis_integration_auto", "jarvis_integration_manual"].includes(decodeURIComponent(base.pathname.slice(1))),
+    "CI restore fixture requires a known ephemeral workflow database");
+  const runId = randomUUID();
+  const sourceName = `jv265_source_${runId.replaceAll("-", "")}`;
+  const targetName = `jv265_restore_${runId}`;
+  const dumpPath = `/tmp/${sourceName}.dump`;
+  assert.match(sourceName, /^jv265_source_[a-f0-9]{32}$/);
+  assert.match(targetName, /^jv265_restore_[a-f0-9-]{36}$/);
+  const adminUrl = new URL(databaseUrl);
+  adminUrl.pathname = "/postgres";
+  const admin = new Pool({ connectionString: adminUrl.toString(), max: 1, application_name: "jv265-restore-fixture" });
+  const exec = (args, input) => {
+    const result = spawnSync("docker", ["exec", ...(input === undefined ? [] : ["-i"]), containerId, ...args], {
+      input, encoding: null, maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, PGPASSWORD: decodeURIComponent(base.password) },
+    });
+    if (result.error) throw result.error;
+    assert.equal(result.status, 0, `PostgreSQL fixture utility failed (${args[0]})`);
+    return result.stdout;
+  };
+  let sourceCreated = false;
+  let targetCreated = false;
+  let transferred = false;
+  let adminEnded = false;
+  let operationFailure;
+  try {
+    await admin.query(`CREATE DATABASE "${sourceName}"`);
+    sourceCreated = true;
+    await admin.query(`CREATE DATABASE "${targetName}"`);
+    targetCreated = true;
+    const sourceUrl = new URL(databaseUrl);
+    sourceUrl.pathname = `/${sourceName}`;
+    const sourcePool = new Pool({ connectionString: sourceUrl.toString(), max: 2 });
+    try {
+      const persistence = new PostgresPersistence(sourcePool);
+      await persistence.migrate();
+      const sourceControls = new PostgresStopControlStore(sourcePool);
+      const initialControls = await sourceControls.get({});
+      await sourceControls.set({ stopped: false, expectedVersion: initialControls.global.version, ownerId: "owner" });
+    } finally { await sourcePool.end(); }
+    exec(["pg_dump", "--format=custom", "--no-owner", "--username", base.username, "--dbname", sourceName, "--file", dumpPath]);
+    exec(["pg_restore", "--no-owner", "--no-acl", "--exit-on-error", "--username", base.username, "--dbname", targetName, dumpPath]);
+    const targetUrl = new URL(databaseUrl);
+    targetUrl.pathname = `/${targetName}`;
+    await admin.end();
+    adminEnded = true;
+    transferred = true;
+    return { url: targetUrl.toString(), cleanup: async () => runCleanupSteps([
+      async () => { exec(["rm", "-f", "--", dumpPath]); },
+      async () => dropOwnedDatabases(),
+    ]).then((failures) => throwCollectedFailures(undefined, failures)) };
+  } catch (error) {
+    operationFailure = error;
+    throw error;
+  } finally {
+    const cleanupFailures = await runCleanupSteps([
+      async () => { if (!adminEnded) await admin.end(); },
+      async () => { if (!transferred) exec(["rm", "-f", "--", dumpPath]); },
+      async () => { if (!transferred) await dropOwnedDatabases(); },
+    ]);
+    throwCollectedFailures(operationFailure, cleanupFailures);
+  }
+
+  async function dropOwnedDatabases() {
+    const cleanup = new Pool({ connectionString: adminUrl.toString(), max: 1 });
+    const failures = await runCleanupSteps([
+      async () => { if (targetCreated) await cleanup.query(`DROP DATABASE IF EXISTS "${targetName}" WITH (FORCE)`); },
+      async () => { if (sourceCreated) await cleanup.query(`DROP DATABASE IF EXISTS "${sourceName}" WITH (FORCE)`); },
+      async () => { await cleanup.end(); },
+    ]);
+    throwCollectedFailures(undefined, failures);
+  }
+}
 
 function createSyntheticSandboxTls() {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-issue242-integration-tls-"));
@@ -1209,7 +1384,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
         if (req.method === "POST" && req.url === "/v1/sandboxes") {
-          res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ sandboxId: "11111111-1111-4111-8111-111111111111" }));
+          res.writeHead(201, { "content-type": "application/json" }); res.end(JSON.stringify({ sandboxId: "11111111-1111-4111-8111-111111111111", state: "running" }));
         } else if (req.method === "POST" && req.url === "/v1/sandboxes/11111111-1111-4111-8111-111111111111/cancel") {
           const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           sandboxStops.push({ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: body.leaseEpoch });
