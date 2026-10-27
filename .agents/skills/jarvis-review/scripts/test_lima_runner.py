@@ -159,6 +159,63 @@ class LimaLifecycleTests(unittest.TestCase):
             runner.run_host([sys.executable, "-c", "print('x' * 1000000)"],
                             timeout=5, output_limit=1024)
 
+    def test_host_command_keeps_successful_stderr_out_of_json_stdout(self):
+        warning = "No instance found. Run `limactl create` to create an instance."
+        code = "import sys; print(" + repr(warning) + ", file=sys.stderr)"
+        stdout = runner.run_host([sys.executable, "-c", code], timeout=5, output_limit=4096)
+        self.assertEqual(stdout, "")
+        self.assertEqual(runner.parse_list_json(stdout), [])
+
+    @patch.object(runner, "run_host", return_value=("", "unexpected warning"))
+    def test_instance_list_rejects_unrecognized_stderr(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "unexpected stderr"):
+            runner.instance_records()
+
+    @patch.object(runner, "run_host", return_value=("", 'time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance."'))
+    def test_instance_list_accepts_timestamped_empty_inventory_warning(self, _command):
+        self.assertEqual(runner.instance_records(), [])
+
+    @patch.object(runner, "run_host", return_value=("", 'time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance."\nunexpected stderr'))
+    def test_instance_list_rejects_expected_warning_with_extra_stderr(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "unexpected stderr"):
+            runner.instance_records()
+
+    @patch.object(runner, "run_host", return_value=("malformed", 'time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance."'))
+    def test_instance_list_rejects_warning_with_nonempty_stdout(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "unexpected stderr"):
+            runner.instance_records()
+
+    @patch.object(runner, "run_host", return_value=(" \n", 'time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance."\n'))
+    def test_instance_list_rejects_whitespace_only_stdout(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "unexpected stderr"):
+            runner.instance_records()
+
+    @patch.object(runner, "run_host", return_value=("", 'time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance."\n\n'))
+    def test_instance_list_rejects_extra_blank_stderr_line(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "unexpected stderr"):
+            runner.instance_records()
+
+    @patch.object(runner, "run_host", return_value=("", ' time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance." '))
+    def test_instance_list_rejects_surrounding_warning_whitespace(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "unexpected stderr"):
+            runner.instance_records()
+
+    def test_run_host_return_stderr_preserves_raw_streams(self):
+        warning = 'time="2026-10-27T23:54:33+01:00" level=warning msg="No instance found. Run `limactl create` to create an instance."'
+        code = "import sys; sys.stdout.write(' \\n'); sys.stderr.write(" + repr(warning + "\n") + ")"
+        self.assertEqual(runner.run_host([sys.executable, "-c", code], return_stderr=True),
+                         (" \n", warning + "\n"))
+
+    @patch.object(runner, "run_host", return_value=("malformed", ""))
+    def test_instance_list_rejects_malformed_stdout(self, _command):
+        with self.assertRaises(runner.LimaValidationError):
+            runner.instance_records()
+
+    @patch.object(runner, "run_host", side_effect=runner.ValidationError("trusted host command failed: limactl (exit 1)"))
+    def test_instance_list_rejects_nonzero_command(self, _command):
+        with self.assertRaisesRegex(runner.ValidationError, "exit 1"):
+            runner.instance_records()
+
     def test_host_timeout_kills_process_group(self):
         with self.assertRaisesRegex(runner.ValidationError, "timed out"):
             runner.run_host([sys.executable, "-c", "import time; time.sleep(30)"],

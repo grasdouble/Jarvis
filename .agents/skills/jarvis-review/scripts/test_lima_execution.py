@@ -55,6 +55,11 @@ class LimaProfileTests(unittest.TestCase):
         with self.assertRaises(lima.LimaValidationError):
             lima.parse_list_json("\n".join((json.dumps(self.record), json.dumps(self.record))))
 
+    def test_empty_inventory_accepts_empty_stdout_despite_stderr_warning(self):
+        # limactl 2.2.1 reports no instances as successful empty stdout plus a
+        # human-readable warning on stderr; stderr must not enter the JSON parser.
+        self.assertEqual(lima.parse_list_json(""), [])
+
     def test_effective_instance_profile_passes_and_unsafe_changes_fail(self):
         self.record["config"]["images"].append({
             "arch": "aarch64", "location": "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img",
