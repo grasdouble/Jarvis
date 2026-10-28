@@ -8,9 +8,9 @@ import manual_integration_report as report
 
 
 class ManualIntegrationReportTests(unittest.TestCase):
-    def test_pr_270_without_producer_uses_bootstrap_compatibility(self):
+    def test_bootstrap_pr_without_producer_uses_compatibility(self):
         candidate = report.candidate_from_values(
-            'pull_request', 'refs/pull/270/merge', 'a' * 40, '270', 'b' * 40, 'a' * 40,
+            'pull_request', 'refs/pull/271/merge', 'a' * 40, '271', 'b' * 40, 'a' * 40,
             producer_present='false')
         self.assertNotIn('metrics_required', candidate)
 
@@ -25,8 +25,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
                                      'synthetic evidence only; no OS process restart or production latency qualification.')
 
     def test_event_base_controls_metrics_requirement_and_dispatch_is_only_an_additional_override(self):
-        pr270 = report.candidate_from_values('pull_request', 'refs/pull/270/merge', 'a' * 40,
-                                             '270', 'b' * 40, 'a' * 40, producer_present='false')
+        bootstrap_candidate = report.candidate_from_values('pull_request', 'refs/pull/271/merge', 'a' * 40,
+                                                           '271', 'b' * 40, 'a' * 40, producer_present='false')
         bootstrap = report.candidate_from_values('pull_request', 'refs/pull/281/merge', 'a' * 40,
                                                  '281', 'b' * 40, 'a' * 40, producer_present='false')
         future_pr = report.candidate_from_values('pull_request', 'refs/pull/999/merge', 'a' * 40,
@@ -37,7 +37,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
                                                require_scenario_metrics='true')
         for required in (future_pr, producer_push, dispatch):
             self.assertTrue(required['metrics_required'])
-        self.assertNotIn('metrics_required', pr270)
+        self.assertNotIn('metrics_required', bootstrap_candidate)
         self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
         self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
         for optional in (bootstrap, early_push):
