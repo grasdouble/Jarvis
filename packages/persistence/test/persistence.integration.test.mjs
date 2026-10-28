@@ -439,7 +439,9 @@ async function createStopRaceFixture(pool, mode, policyVersion = 1) {
     await client.query(`INSERT INTO jarvis.installations(id, github_id, app_id, state)
       VALUES ($1, $2, 2001, 'active')`, [fixture.installationId, fixture.repositoryId]);
     await client.query(`INSERT INTO jarvis.policies(id, version, canonical_json, hash, activated_at)
-      VALUES ($1, $2, '{"version":1}', $3, now())`, [fixture.policyId, policyVersion, fixture.policyHash]);
+      VALUES ($1, $2, $3::jsonb, $4, now())`, [
+      fixture.policyId, policyVersion, JSON.stringify({ version: policyVersion }), fixture.policyHash,
+    ]);
     await client.query(`INSERT INTO jarvis.projects(id, repository_id, installation_id, owner_id, repository_name, state, config_version)
       VALUES ($1, $2, $3, 'owner-race', 'stop-race', 'active', 1)`, [fixture.projectId, fixture.repositoryId, fixture.installationId]);
     await client.query(`INSERT INTO jarvis.project_config_versions
