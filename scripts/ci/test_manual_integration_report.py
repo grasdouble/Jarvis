@@ -8,12 +8,6 @@ import manual_integration_report as report
 
 
 class ManualIntegrationReportTests(unittest.TestCase):
-    def test_bootstrap_pr_without_producer_uses_compatibility(self):
-        candidate = report.candidate_from_values(
-            'pull_request', 'refs/pull/271/merge', 'a' * 40, '271', 'b' * 40, 'a' * 40,
-            producer_present='false')
-        self.assertNotIn('metrics_required', candidate)
-
     scenario_metrics = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt '
                         '12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager '
                         'cancellation request 56.78ms; manager accepted request but withheld response for 301.23ms; '
@@ -25,8 +19,6 @@ class ManualIntegrationReportTests(unittest.TestCase):
                                      'synthetic evidence only; no OS process restart or production latency qualification.')
 
     def test_event_base_controls_metrics_requirement_and_dispatch_is_only_an_additional_override(self):
-        bootstrap_candidate = report.candidate_from_values('pull_request', 'refs/pull/271/merge', 'a' * 40,
-                                                           '271', 'b' * 40, 'a' * 40, producer_present='false')
         bootstrap = report.candidate_from_values('pull_request', 'refs/pull/281/merge', 'a' * 40,
                                                  '281', 'b' * 40, 'a' * 40, producer_present='false')
         future_pr = report.candidate_from_values('pull_request', 'refs/pull/999/merge', 'a' * 40,
@@ -37,7 +29,6 @@ class ManualIntegrationReportTests(unittest.TestCase):
                                                require_scenario_metrics='true')
         for required in (future_pr, producer_push, dispatch):
             self.assertTrue(required['metrics_required'])
-        self.assertNotIn('metrics_required', bootstrap_candidate)
         self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
         self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
         for optional in (bootstrap, early_push):
