@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      require_scenario_metrics:
+        description: Require allowlisted stop-manager timing metrics (use for a post-producer main-branch run)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -210,11 +216,21 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRE_SCENARIO_METRICS: ${{ inputs.require_scenario_metrics }}
         run: |
           export JARVIS_SETUP_RESULTS="$(python3 -c 'import glob,json,os; print(json.dumps([json.load(open(p)) for p in sorted(glob.glob(os.environ["RUNNER_TEMP"] + "/setup-*.json"))]))')"
           set -- --event "$EVENT_NAME" --ref "$EVENT_REF" --sha "$EVENT_SHA"
           if [ -n "$PR_NUMBER" ]; then
             set -- "$@" --pr "$PR_NUMBER" --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA"
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$REQUIRE_SCENARIO_METRICS" in
+              true|false) set -- "$@" --require-scenario-metrics "$REQUIRE_SCENARIO_METRICS" ;;
+              *) echo 'Invalid require_scenario_metrics workflow input.' >&2; exit 1 ;;
+            esac
+          elif [ -n "$REQUIRE_SCENARIO_METRICS" ] && [ "$REQUIRE_SCENARIO_METRICS" != false ]; then
+            echo 'Scenario metrics override is only valid for workflow_dispatch.' >&2
+            exit 1
           fi
           python3 "$RUNNER_TEMP/manual_integration_report.py" run "$@" --output "$RUNNER_TEMP/integration-report.json"
       - name: Add runtime integration report to job summary

@@ -14,9 +14,30 @@ class ManualIntegrationReportTests(unittest.TestCase):
                         'configured client timeout 300ms; active stop/cancel completion 307.89ms. Local synthetic '
                         'evidence only; no OS process restart or production latency qualification.')
     generic_scenario_diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim '
-                                    'attempt 12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS '
-                                    'manager cancellation request 56.78ms; active stop/cancel completion 307.89ms. Local '
-                                    'synthetic evidence only; no OS process restart or production latency qualification.')
+                                     'attempt 12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS '
+                                     'manager cancellation request 56.78ms; active stop/cancel completion 307.89ms. Local '
+                                     'synthetic evidence only; no OS process restart or production latency qualification.')
+
+    def test_main_dispatch_can_explicitly_require_metrics_but_main_push_stays_legacy_compatible(self):
+        dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
+                                                require_scenario_metrics='true')
+        self.assertTrue(dispatch['metrics_required'])
+        push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40)
+        self.assertNotIn('metrics_required', push)
+        for args in (
+                ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'true'),
+                ('workflow_dispatch', 'refs/heads/release', 'd' * 40, '', '', '', 'true'),
+                ('workflow_dispatch', 'refs/heads/main', 'd' * 40, '', '', '', 'yes')):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                report.candidate_from_values(*args)
+
+    def test_workflow_dispatch_exposes_and_safely_forwards_metrics_switch(self):
+        workflow = (Path(__file__).parents[2] / '.github/workflows/repository-checks.yml').read_text()
+        self.assertIn('require_scenario_metrics:', workflow)
+        self.assertIn('type: boolean', workflow)
+        self.assertIn('REQUIRE_SCENARIO_METRICS: ${{ inputs.require_scenario_metrics }}', workflow)
+        self.assertIn('case "$REQUIRE_SCENARIO_METRICS" in', workflow)
+        self.assertIn('set -- "$@" --require-scenario-metrics "$REQUIRE_SCENARIO_METRICS"', workflow)
 
     def test_actual_node_tap_output_is_parsed_with_scenarios(self):
         # Captured from pnpm --filter @jarvis/persistence test on this checkout.
@@ -286,6 +307,43 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertEqual(saved['result'], 'fail')
         self.assertIn('metrics', saved['scenario_metrics_error'])
         self.assertNotIn('scenario_metrics', saved)
+
+    def test_main_push_before_producer_lands_passes_without_metrics(self):
+        candidate = {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
+               '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'pass')
+        self.assertNotIn('scenario_metrics', saved)
+
+    def test_explicit_main_dispatch_requires_metrics_and_accepts_valid_metrics(self):
+        candidate = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'a' * 40,
+                                                 require_scenario_metrics='true')
+        for diagnostic in (None, self.scenario_metrics):
+            tap = f'ok 1 - {report.REQUIRED_SCENARIO}\n'
+            if diagnostic:
+                tap += diagnostic + '\n'
+            tap += '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n'
+            results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+            results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / 'report.json'
+                with patch.object(report.subprocess, 'run', side_effect=results):
+                    if diagnostic is None:
+                        with self.assertRaises(SystemExit):
+                            report.run_report(candidate, output)
+                    else:
+                        report.run_report(candidate, output)
+                saved = json.loads(output.read_text())
+            self.assertEqual(saved['result'], 'pass' if diagnostic else 'fail')
+            if diagnostic:
+                self.assertEqual(saved['scenario_metrics']['scenario'], 'stop-manager-nonresponse')
 
     def test_pr_281_generic_current_main_diagnostic_passes_without_metrics(self):
         candidate = {'event': 'pull_request', 'ref': 'refs/pull/281/merge', 'sha': 'a' * 40,
