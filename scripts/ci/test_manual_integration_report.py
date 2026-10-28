@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,7 +15,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
                         'cancellation request 56.78ms; manager accepted request but withheld response for 301.23ms; '
                         'configured client timeout 300ms; active stop/cancel completion 307.89ms. Local synthetic '
                         'evidence only; no OS process restart or production latency qualification.')
-    def test_event_base_controls_metrics_requirement_and_dispatch_is_only_an_additional_override(self):
+    def test_producer_contexts_automatically_require_metrics(self):
         with self.assertRaises(ValueError):
             report.candidate_from_values('pull_request', 'refs/pull/281/merge', 'a' * 40,
                                          '281', 'b' * 40, 'a' * 40, producer_present='false')
@@ -22,38 +24,38 @@ class ManualIntegrationReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='false')
         producer_push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true')
-        dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
-                                               require_scenario_metrics='true')
-        for required in (future_pr, producer_push, dispatch):
-            self.assertTrue(required['metrics_required'])
-        self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
-        self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
-
-    def test_main_dispatch_can_explicitly_require_metrics_and_invalid_contexts_are_rejected(self):
         with self.assertRaises(ValueError):
             report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
                                          producer_present='false')
         dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
-                                                require_scenario_metrics='true', producer_present='false')
-        self.assertEqual(dispatch['metrics_requirement_source'], 'manual-dispatch-override')
-        self.assertTrue(dispatch['metrics_required'])
-        push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true')
-        self.assertTrue(push['metrics_required'])
+                                                producer_present='true')
+        for required in (future_pr, producer_push, dispatch):
+            self.assertTrue(required['metrics_required'])
+        self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
+        self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
+        self.assertEqual(dispatch['metrics_requirement_source'], 'producer-in-event-revision')
+        with self.assertRaisesRegex(ValueError, 'Unsupported event name'):
+            report.candidate_from_values('schedule', 'refs/heads/main', 'd' * 40, producer_present='true')
+
+    def test_main_dispatch_without_producer_and_invalid_producer_flags_are_rejected(self):
+        with self.assertRaises(ValueError):
+            report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
+                                         producer_present='false')
         for args in (
-                ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'true'),
-                ('workflow_dispatch', 'refs/heads/release', 'd' * 40, '', '', '', 'true'),
-                ('workflow_dispatch', 'refs/heads/main', 'd' * 40, '', '', '', 'yes'),
-                ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'false', 'yes')):
+                ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'yes'),
+                ('workflow_dispatch', 'refs/heads/main', 'd' * 40, '', '', '', 'yes')):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 report.candidate_from_values(*args)
 
-    def test_workflow_dispatch_exposes_and_safely_forwards_metrics_switch(self):
+    def test_workflow_dispatch_has_no_metrics_switch_and_forwards_producer_presence(self):
         workflow = (Path(__file__).parents[2] / '.github/workflows/repository-checks.yml').read_text()
-        self.assertIn('require_scenario_metrics:', workflow)
-        self.assertIn('type: boolean', workflow)
-        self.assertIn('REQUIRE_SCENARIO_METRICS: ${{ inputs.require_scenario_metrics }}', workflow)
-        self.assertIn('case "$REQUIRE_SCENARIO_METRICS" in', workflow)
-        self.assertIn('set -- "$@" --require-scenario-metrics "$REQUIRE_SCENARIO_METRICS"', workflow)
+        self.assertNotIn('require_scenario_metrics', workflow)
+        self.assertNotIn('--require-scenario-metrics', workflow)
+        cli_help = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name('manual_integration_report.py')), 'run', '--help'],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        self.assertNotIn('--require-scenario-metrics', cli_help)
         self.assertIn('PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}', workflow)
         self.assertIn('EVENT_SHA: ${{ github.sha }}', workflow)
         self.assertIn('SCENARIO_PRODUCER_PRESENT: ${{ steps.scenario-producer.outputs.present }}', workflow)
@@ -350,9 +352,9 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertEqual(saved['result'], 'fail')
         self.assertIn('metrics', saved['scenario_metrics_error'])
 
-    def test_explicit_main_dispatch_requires_metrics_and_accepts_valid_metrics(self):
+    def test_producer_main_dispatch_requires_metrics_and_accepts_valid_metrics(self):
         candidate = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'a' * 40,
-                                                 require_scenario_metrics='true')
+                                                 producer_present='true')
         for diagnostic in (None, self.scenario_metrics):
             tap = f'ok 1 - {report.REQUIRED_SCENARIO}\n'
             if diagnostic:

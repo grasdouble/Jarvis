@@ -36,14 +36,9 @@ def bounded_diagnostics(text):
     return result
 
 
-def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_sha='',
-                          require_scenario_metrics='false', producer_present='false'):
-    if require_scenario_metrics not in {'true', 'false'}:
-        raise ValueError('Scenario metrics override must be true or false.')
+def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_sha='', producer_present='false'):
     if producer_present not in {'true', 'false'}:
         raise ValueError('Scenario producer presence must be true or false.')
-    if require_scenario_metrics == 'true' and (event_name != 'workflow_dispatch' or ref != 'refs/heads/main'):
-        raise ValueError('Required scenario metrics may be explicitly requested only for main workflow_dispatch.')
     if event_name not in {'pull_request', 'push', 'workflow_dispatch'}:
         raise ValueError('Unsupported event name.')
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
@@ -72,14 +67,12 @@ def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_
         raise ValueError('Pull request context is only valid for pull_request events.')
     if event_name == 'push' and ref == 'refs/heads/main' and producer_present != 'true':
         raise ValueError('Main push context requires the scenario producer in its event revision.')
-    if (event_name == 'workflow_dispatch' and ref == 'refs/heads/main' and producer_present != 'true' and
-            require_scenario_metrics != 'true'):
-        raise ValueError('Main workflow-dispatch context requires the scenario producer or explicit metrics override.')
+    if event_name == 'workflow_dispatch' and ref == 'refs/heads/main' and producer_present != 'true':
+        raise ValueError('Main workflow-dispatch context requires the scenario producer in its event revision.')
     candidate = {'event': event_name, 'ref': ref, 'sha': sha}
-    if producer_present == 'true' or require_scenario_metrics == 'true':
+    if producer_present == 'true':
         candidate['metrics_required'] = True
-        candidate['metrics_requirement_source'] = ('producer-in-event-revision' if producer_present == 'true'
-                                                   else 'manual-dispatch-override')
+        candidate['metrics_requirement_source'] = 'producer-in-event-revision'
     return candidate
 
 
@@ -268,7 +261,6 @@ def main():
     run.add_argument('--pr', default='')
     run.add_argument('--base', default='')
     run.add_argument('--head', default='')
-    run.add_argument('--require-scenario-metrics', choices=('true', 'false'), default='false')
     run.add_argument('--producer-present', choices=('true', 'false'), default='false')
     run.add_argument('--output', required=True)
     record = sub.add_parser('record-command')
@@ -281,7 +273,7 @@ def main():
     else:
         try:
             candidate = candidate_from_values(args.event, args.ref, args.sha, args.pr, args.base, args.head,
-                                              args.require_scenario_metrics, args.producer_present)
+                                              args.producer_present)
         except ValueError as error:
             print(f'Candidate arguments rejected: {error}', file=sys.stderr)
             raise SystemExit(1)
