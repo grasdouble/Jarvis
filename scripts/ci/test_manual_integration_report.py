@@ -8,6 +8,63 @@ import manual_integration_report as report
 
 
 class ManualIntegrationReportTests(unittest.TestCase):
+    scenario_metrics = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt '
+                        '12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager '
+                        'cancellation request 56.78ms; manager accepted request but withheld response for 301.23ms; '
+                        'configured client timeout 300ms; active stop/cancel completion 307.89ms. Local synthetic '
+                        'evidence only; no OS process restart or production latency qualification.')
+    generic_scenario_diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim '
+                                     'attempt 12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS '
+                                     'manager cancellation request 56.78ms; active stop/cancel completion 307.89ms. Local '
+                                     'synthetic evidence only; no OS process restart or production latency qualification.')
+
+    def test_event_base_controls_metrics_requirement_and_dispatch_is_only_an_additional_override(self):
+        pr270 = report.candidate_from_values('pull_request', 'refs/pull/270/merge', 'a' * 40,
+                                             '270', 'b' * 40, 'a' * 40, producer_present='false')
+        bootstrap = report.candidate_from_values('pull_request', 'refs/pull/281/merge', 'a' * 40,
+                                                 '281', 'b' * 40, 'a' * 40, producer_present='false')
+        future_pr = report.candidate_from_values('pull_request', 'refs/pull/999/merge', 'a' * 40,
+                                                 '999', 'b' * 40, 'a' * 40, producer_present='true')
+        early_push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='false')
+        producer_push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true')
+        dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
+                                               require_scenario_metrics='true')
+        for required in (pr270, future_pr, producer_push, dispatch):
+            self.assertTrue(required['metrics_required'])
+        self.assertEqual(pr270['metrics_requirement_source'], 'initial-target-pr')
+        self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
+        self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
+        for optional in (bootstrap, early_push):
+            self.assertNotIn('metrics_required', optional)
+
+    def test_main_dispatch_can_explicitly_require_metrics_and_invalid_contexts_are_rejected(self):
+        dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
+                                                require_scenario_metrics='true')
+        self.assertTrue(dispatch['metrics_required'])
+        push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40)
+        self.assertNotIn('metrics_required', push)
+        for args in (
+                ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'true'),
+                ('workflow_dispatch', 'refs/heads/release', 'd' * 40, '', '', '', 'true'),
+                ('workflow_dispatch', 'refs/heads/main', 'd' * 40, '', '', '', 'yes'),
+                ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'false', 'yes')):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                report.candidate_from_values(*args)
+
+    def test_workflow_dispatch_exposes_and_safely_forwards_metrics_switch(self):
+        workflow = (Path(__file__).parents[2] / '.github/workflows/repository-checks.yml').read_text()
+        self.assertIn('require_scenario_metrics:', workflow)
+        self.assertIn('type: boolean', workflow)
+        self.assertIn('REQUIRE_SCENARIO_METRICS: ${{ inputs.require_scenario_metrics }}', workflow)
+        self.assertIn('case "$REQUIRE_SCENARIO_METRICS" in', workflow)
+        self.assertIn('set -- "$@" --require-scenario-metrics "$REQUIRE_SCENARIO_METRICS"', workflow)
+        self.assertIn('PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}', workflow)
+        self.assertIn('EVENT_SHA: ${{ github.sha }}', workflow)
+        self.assertIn('SCENARIO_PRODUCER_PRESENT: ${{ steps.scenario-producer.outputs.present }}', workflow)
+        self.assertIn("const sandboxCancelTimeoutMs = 300;", workflow)
+        self.assertIn('manager accepted request but withheld response for ${withheldDurationMs.toFixed(2)}ms', workflow)
+        self.assertIn('--producer-present "$SCENARIO_PRODUCER_PRESENT"', workflow)
+
     def test_actual_node_tap_output_is_parsed_with_scenarios(self):
         # Captured from pnpm --filter @jarvis/persistence test on this checkout.
         tap = '''✔ PostgresOwnerAuthStore is exported and maps the single owner credential (41.810041ms)
@@ -71,9 +128,9 @@ class ManualIntegrationReportTests(unittest.TestCase):
                         pass
                 return json.loads(output.read_text())
 
-        base = '''TAP version 13\n1..2\nok 1 - unrelated scenario\n{case}\n# tests 2\n# pass {passed}\n# fail {failed}\n# cancelled 0\n# skipped {skipped}\n# todo 0\n'''
+        base = '''TAP version 13\n1..2\nok 1 - unrelated scenario\n{case}\n{metrics}\n# tests 2\n# pass {passed}\n# fail {failed}\n# cancelled 0\n# skipped {skipped}\n# todo 0\n'''
         required = report.REQUIRED_SCENARIO
-        passing = run(base.format(case=f'ok 2 - {required}', passed=2, failed=0, skipped=0))
+        passing = run(base.format(case=f'ok 2 - {required}', metrics=self.scenario_metrics, passed=2, failed=0, skipped=0))
         self.assertEqual(passing['result'], 'pass')
         self.assertEqual({key: passing[key] for key in candidate}, candidate)
         self.assertEqual(len(passing['commands']), 3)
@@ -84,7 +141,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
             (f'not ok 2 - {required}', 1, 1, 0),
         ):
             with self.subTest(case=case):
-                failed_report = run(base.format(case=case, passed=passed, failed=failed, skipped=skipped))
+                failed_report = run(base.format(case=case, metrics=self.scenario_metrics, passed=passed, failed=failed, skipped=skipped))
                 self.assertEqual(failed_report['result'], 'fail')
                 self.assertTrue(failed_report['required_scenario_error'])
 
@@ -94,7 +151,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
         for counter, value in (('todo', 1), ('cancelled', 1)):
             with self.subTest(counter=counter):
                 tap = (f'TAP version 13\n1..2\nok 1 - unrelated scenario\n'
-                       f'ok 2 - {report.REQUIRED_SCENARIO}\n# tests 2\n# pass 2\n'
+                       f'ok 2 - {report.REQUIRED_SCENARIO}\n{self.scenario_metrics}\n# tests 2\n# pass 2\n'
                        f'# fail 0\n# cancelled {value if counter == "cancelled" else 0}\n'
                        f'# skipped 0\n# todo {value if counter == "todo" else 0}\n')
                 results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
@@ -151,7 +208,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
         setup = [{'command': 'npm install --global pnpm@12.5.1', 'exit_code': 0,
                   'duration_seconds': 1.0}, {'command': 'pnpm install --frozen-lockfile',
                   'exit_code': 0, 'duration_seconds': 2.0}]
-        tap = (f'TAP version 13\n1..1\nok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n'
+        tap = (f'TAP version 13\n1..1\nok 1 - {report.REQUIRED_SCENARIO}\n{self.scenario_metrics}\n# tests 1\n'
                '# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
         results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
         results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
@@ -221,7 +278,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
     def test_passing_report_omits_test_output_diagnostics(self):
         candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
                      'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
-        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.scenario_metrics}\n# tests 1\n# pass 1\n# fail 0\n'
                '# cancelled 0\n# skipped 0\n# todo 0\n')
         results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
         results.append(type('Result', (), {'returncode': 0, 'stdout': tap + 'SECRET TEST OUTPUT'})())
@@ -232,6 +289,161 @@ class ManualIntegrationReportTests(unittest.TestCase):
             serialized = output.read_text()
             self.assertNotIn('failure_diagnostics', saved)
             self.assertNotIn('SECRET TEST OUTPUT', serialized)
+
+    def test_successful_report_retains_only_validated_scenario_metrics(self):
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
+                     'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40,
+                     'metrics_required': True, 'metrics_requirement_source': 'initial-target-pr'}
+        diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt 12.34ms '
+                      '(no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request '
+                      '56.78ms; manager accepted request but withheld response for 301.23ms; configured client timeout '
+                      '300ms; active stop/cancel completion 307.89ms. Local synthetic evidence only; no OS process restart '
+                      'or production latency qualification.')
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{diagnostic}\n# tests 1\n# pass 1\n'
+               '# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap + 'unrelated output\n'})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+            serialized = output.read_text()
+        self.assertEqual(saved['scenario_metrics'], {
+            'scenario': 'stop-manager-nonresponse', 'configured_client_timeout_ms': 300,
+            'no_dispatch_stop_to_worker_claim_attempt_ms': 12.34,
+            'active_stop_to_cancel_request_ms': 56.78,
+            'manager_withheld_response_ms': 301.23,
+            'active_stop_cancel_completion_ms': 307.89,
+        })
+        self.assertNotIn('unrelated output', serialized)
+
+    def test_target_pr_270_missing_metrics_fails_closed(self):
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
+                     'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40,
+                     'metrics_required': True, 'metrics_requirement_source': 'initial-target-pr'}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
+               '# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                with self.assertRaises(SystemExit):
+                    report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'fail')
+        self.assertIn('metrics', saved['scenario_metrics_error'])
+        self.assertNotIn('scenario_metrics', saved)
+
+    def test_main_push_before_producer_lands_passes_without_metrics(self):
+        candidate = {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
+               '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'pass')
+        self.assertNotIn('scenario_metrics', saved)
+
+    def test_explicit_main_dispatch_requires_metrics_and_accepts_valid_metrics(self):
+        candidate = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'a' * 40,
+                                                 require_scenario_metrics='true')
+        for diagnostic in (None, self.scenario_metrics):
+            tap = f'ok 1 - {report.REQUIRED_SCENARIO}\n'
+            if diagnostic:
+                tap += diagnostic + '\n'
+            tap += '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n'
+            results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+            results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / 'report.json'
+                with patch.object(report.subprocess, 'run', side_effect=results):
+                    if diagnostic is None:
+                        with self.assertRaises(SystemExit):
+                            report.run_report(candidate, output)
+                    else:
+                        report.run_report(candidate, output)
+                saved = json.loads(output.read_text())
+            self.assertEqual(saved['result'], 'pass' if diagnostic else 'fail')
+            if diagnostic:
+                self.assertEqual(saved['scenario_metrics']['scenario'], 'stop-manager-nonresponse')
+
+    def test_pr_281_generic_current_main_diagnostic_passes_without_metrics(self):
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/281/merge', 'sha': 'a' * 40,
+                     'pr': 281, 'base': 'b' * 40, 'head': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
+               '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'pass')
+        self.assertIsNone(saved['scenario_metrics_error'])
+        self.assertNotIn('scenario_metrics', saved)
+
+    def test_producer_base_requires_metrics_while_bootstrap_base_accepts_legacy_report(self):
+        for number, producer_present, expected in ((281, 'false', 'pass'),
+                                                    (999, 'true', 'fail')):
+            candidate = report.candidate_from_values(
+                'pull_request', f'refs/pull/{number}/merge', 'a' * 40, str(number),
+                'b' * 40, 'a' * 40, producer_present=producer_present)
+            tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
+                   '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+            results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+            results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+            with self.subTest(number=number), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / 'report.json'
+                with patch.object(report.subprocess, 'run', side_effect=results):
+                    if expected == 'fail':
+                        with self.assertRaises(SystemExit):
+                            report.run_report(candidate, output)
+                    else:
+                        report.run_report(candidate, output)
+                saved = json.loads(output.read_text())
+                self.assertEqual(saved['result'], expected)
+
+    def test_missing_malformed_over_limit_or_secret_metrics_fail_closed(self):
+        valid = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt 12.34ms '
+                 '(no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request '
+                 '56.78ms; manager accepted request but withheld response for 301.23ms; configured client timeout '
+                 '300ms; active stop/cancel completion 307.89ms. Local synthetic evidence only; no OS process restart '
+                 'or production latency qualification.')
+        for diagnostic in (None, valid.replace('timeout 300ms', 'timeout 301ms'),
+                           valid.replace('attempt 12.34ms', 'attempt 2001ms'),
+                           valid.replace('withheld response for 301.23ms', 'withheld response for NaNms'),
+                           valid.replace('# single PostgreSQL-backed in-process sample:', '# untrusted sample:'),
+                           valid + ('x' * report.SCENARIO_METRIC_LINE_BYTES),
+                           valid.replace('completion 307.89ms.', 'completion 307.89ms token=synthetic-secret-value.'),
+                           valid + '\n' + valid):
+            with self.subTest(diagnostic=diagnostic):
+                tap = f'ok 1 - {report.REQUIRED_SCENARIO}\n'
+                if diagnostic is not None:
+                    tap += diagnostic + '\n'
+                tap += '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n'
+                results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+                results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+                candidate = ({'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
+                              'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40,
+                              'metrics_required': True, 'metrics_requirement_source': 'initial-target-pr'}
+                             if diagnostic is None else
+                             {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40})
+                with tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / 'report.json'
+                    with patch.object(report.subprocess, 'run', side_effect=results):
+                        with self.assertRaises(SystemExit):
+                            report.run_report(candidate, output)
+                    saved = json.loads(output.read_text())
+                    self.assertEqual(saved['result'], 'fail')
+                    self.assertNotIn('scenario_metrics', saved)
+                    self.assertNotIn('synthetic-secret-value', output.read_text())
 
 
 if __name__ == '__main__':
