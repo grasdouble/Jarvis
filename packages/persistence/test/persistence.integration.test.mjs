@@ -29,7 +29,52 @@ import { QueueError, QueueService } from "@jarvis/queue";
 
 const { Pool } = pg;
 const databaseUrl = process.env.JARVIS_TEST_DATABASE_URL;
+const expectedDatabaseName = process.env.JARVIS_TEST_EXPECTED_DATABASE_NAME;
 const restoreGateDatabaseUrl = process.env.JV265_RESTORE_GATE_DATABASE_URL;
+function parseSafePostgresUrl(value, { allowLocalhost = false } = {}) {
+  assert.equal(typeof value, "string", "a PostgreSQL URL is required");
+  let url;
+  try { url = new URL(value); }
+  catch { throw new Error("database URL must be a valid PostgreSQL URL"); }
+  assert.ok(["postgres:", "postgresql:"].includes(url.protocol), "database must use PostgreSQL");
+  assert.ok(url.hostname === "127.0.0.1" || (allowLocalhost && url.hostname === "localhost"),
+    "database must use explicit IPv4 loopback or localhost with an expected workflow database name");
+  assert.ok(url.port !== "" && Number(url.port) >= 1 && Number(url.port) <= 65535, "database must specify a valid local mapped port");
+  assert.ok(url.username && url.password, "database credentials are required");
+  assert.equal(url.search, "", "database URL options are not permitted");
+  assert.equal(url.hash, "", "database URL fragments are not permitted");
+  return { url, databaseName: decodeURIComponent(url.pathname.slice(1)) };
+}
+function validateExpectedDatabaseName(value) {
+  if (value !== undefined) {
+    assert.match(value, /^jarvis_integration_(?:auto|manual)_[0-9]+_[0-9]+$/,
+      "expected workflow database must use the per-run naming scheme");
+  }
+}
+function validateIntegrationDatabaseUrl(value, { expectedDatabaseName } = {}) {
+  validateExpectedDatabaseName(expectedDatabaseName);
+  const { databaseName } = parseSafePostgresUrl(value, { allowLocalhost: expectedDatabaseName !== undefined });
+  if (expectedDatabaseName !== undefined) {
+    assert.equal(databaseName, expectedDatabaseName, "database URL must match the expected workflow database");
+  } else {
+    assert.match(databaseName, /^jarvis_issue8_[a-f0-9]{32}$/,
+      "local integration requires a uniquely named jarvis_issue8_ disposable database");
+  }
+  return databaseName;
+}
+function validateRestoreGateDatabaseUrl(value, { expectedDatabaseName } = {}) {
+  validateExpectedDatabaseName(expectedDatabaseName);
+  const { databaseName } = parseSafePostgresUrl(value, { allowLocalhost: expectedDatabaseName !== undefined });
+  assert.match(databaseName, /^jv265_restore_[a-f0-9-]{36}$/i,
+    "refusing a database not explicitly named as a JV-265 disposable restore target");
+  return databaseName;
+}
+if (databaseUrl !== undefined) {
+  validateIntegrationDatabaseUrl(databaseUrl, { expectedDatabaseName });
+}
+if (restoreGateDatabaseUrl !== undefined) {
+  validateRestoreGateDatabaseUrl(restoreGateDatabaseUrl, { expectedDatabaseName });
+}
 const originalConfig = {
   schemaVersion: 1,
   repository: { owner: "owner-a", name: "repo-a" },
@@ -48,10 +93,7 @@ test("JV-265 restored PostgreSQL state stays behind the real worker activation g
 }, async () => {
   const fixture = restoreGateDatabaseUrl === undefined ? await provisionRestoreGateDatabase() : undefined;
   const targetUrl = fixture?.url ?? restoreGateDatabaseUrl;
-  const url = new URL(targetUrl);
-  assert.ok(["localhost", "127.0.0.1", "::1"].includes(url.hostname), "restore-gate test accepts loopback PostgreSQL only");
-  const databaseName = decodeURIComponent(url.pathname.slice(1));
-  assert.match(databaseName, /^jv265_restore_[a-f0-9-]+$/i, "refusing a database not explicitly named as a JV-265 disposable restore target");
+  const databaseName = validateRestoreGateDatabaseUrl(targetUrl, { expectedDatabaseName });
   const pool = new Pool({ connectionString: targetUrl, max: 3, application_name: "jv265-restore-gate-integration" });
   let testFailure;
   try {
@@ -138,12 +180,10 @@ async function provisionRestoreGateDatabase() {
   const containerId = process.env.JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID;
   if (!containerId) return undefined;
   assert.match(containerId, /^[0-9a-f]{12,64}$/i, "invalid ephemeral PostgreSQL service container ID");
-  assert.equal(process.env.GITHUB_ACTIONS, "true", "automatic restore fixture is restricted to trusted GitHub Actions jobs");
+  assert.ok(expectedDatabaseName !== undefined, "automatic restore fixture requires an explicit per-run workflow database name");
   assert.ok(databaseUrl, "JARVIS_TEST_DATABASE_URL is required with the CI restore fixture");
-  const base = new URL(databaseUrl);
-  assert.ok(["localhost", "127.0.0.1", "::1"].includes(base.hostname), "CI restore fixture requires loopback PostgreSQL");
-  assert.ok(["jarvis_integration_auto", "jarvis_integration_manual"].includes(decodeURIComponent(base.pathname.slice(1))),
-    "CI restore fixture requires a known ephemeral workflow database");
+  validateIntegrationDatabaseUrl(databaseUrl, { expectedDatabaseName });
+  const { url: base } = parseSafePostgresUrl(databaseUrl, { allowLocalhost: true });
   const runId = randomUUID();
   const sourceName = `jv265_source_${runId.replaceAll("-", "")}`;
   const targetName = `jv265_restore_${runId}`;
@@ -246,6 +286,59 @@ function throwCollectedFailures(testFailure, cleanupFailures) {
 }
 
 describe("PostgreSQL persistence integration", { concurrency: false }, () => {
+test("integration URL guard rejects unsafe targets before a pool can be created", () => {
+  const valid = "postgresql://test:secret@127.0.0.1:54321/jarvis_issue8_0123456789abcdef0123456789abcdef";
+  assert.equal(validateIntegrationDatabaseUrl(valid), "jarvis_issue8_0123456789abcdef0123456789abcdef");
+  const runDatabase = "jarvis_integration_auto_123456789_2";
+  assert.throws(() => validateIntegrationDatabaseUrl(`postgresql://test:secret@127.0.0.1:5432/${runDatabase}`),
+    "local mode must retain its dedicated reviewer database-name contract");
+  assert.equal(validateIntegrationDatabaseUrl(`postgresql://test:secret@localhost:5432/${runDatabase}`,
+    { expectedDatabaseName: runDatabase }), runDatabase);
+  for (const target of [
+    "postgresql://test:secret@example.com:5432/jarvis_issue8_0123456789abcdef0123456789abcdef",
+    "postgresql://test:secret@localhost:5432/jarvis_issue8_0123456789abcdef0123456789abcdef",
+    "postgresql://test:secret@[::1]:5432/jarvis_issue8_0123456789abcdef0123456789abcdef",
+    "postgresql://test:secret@127.0.0.1:5432/jarvis_production",
+    "postgresql://test:secret@127.0.0.1:5432/jarvis_issue8_0123456789abcdef0123456789abcdef?host=remote.example",
+    "postgresql://test:secret@127.0.0.1:5432/jarvis_integration_auto",
+    "postgresql://test:secret@127.0.0.1:5432/jarvis_integration_manual",
+  ]) {
+    assert.throws(() => validateIntegrationDatabaseUrl(target));
+  }
+  assert.throws(() => validateIntegrationDatabaseUrl(
+    "postgresql://test:secret@localhost:5432/jarvis_integration_auto", { expectedDatabaseName: "jarvis_integration_auto" }),
+  "fixed workflow database names must remain rejected");
+  assert.throws(() => validateIntegrationDatabaseUrl(
+    `postgresql://test:secret@localhost:5432/${runDatabase}`, { expectedDatabaseName: "jarvis_integration_auto" }),
+  "expected name must match the per-run workflow naming scheme");
+  assert.throws(() => validateIntegrationDatabaseUrl(
+    `postgresql://test:secret@localhost:5432/${runDatabase}`,
+    { expectedDatabaseName: `${runDatabase}?options=-c%20search_path=public` }),
+  "expected name must not accept URL options or arbitrary suffixes");
+});
+
+test("restore-gate URL guard rejects unsafe supplied targets before a pool can be created", () => {
+  const valid = "postgresql://test:secret@127.0.0.1:54321/jv265_restore_01234567-89ab-cdef-0123-456789abcdef";
+  assert.equal(validateRestoreGateDatabaseUrl(valid), "jv265_restore_01234567-89ab-cdef-0123-456789abcdef");
+  for (const target of [
+    "postgresql://test:secret@db.example:5432/jv265_restore_01234567-89ab-cdef-0123-456789abcdef",
+    "postgresql://test:secret@localhost:5432/jv265_restore_01234567-89ab-cdef-0123-456789abcdef",
+    "postgresql://test:secret@[::1]:5432/jv265_restore_01234567-89ab-cdef-0123-456789abcdef",
+    "postgresql://test:secret@127.0.0.1:5432/jv265_source_0123456789abcdef0123456789abcdef",
+    "postgresql://test:secret@127.0.0.1:5432/jv265_restore_01234567-89ab-cdef-0123-456789abcdef?host=remote.example",
+  ]) {
+    assert.throws(() => validateRestoreGateDatabaseUrl(target));
+  }
+  assert.equal(validateRestoreGateDatabaseUrl(
+    "postgresql://test:secret@localhost:5432/jv265_restore_01234567-89ab-cdef-0123-456789abcdef",
+    { expectedDatabaseName: "jarvis_integration_manual_123456789_2" }), "jv265_restore_01234567-89ab-cdef-0123-456789abcdef");
+  const runnerSourceUrl = new URL("postgresql://test:secret@localhost:5432/jarvis_integration_auto_123456789_2");
+  runnerSourceUrl.pathname = "/jv265_restore_01234567-89ab-cdef-0123-456789abcdef";
+  assert.equal(validateRestoreGateDatabaseUrl(runnerSourceUrl.toString(), { expectedDatabaseName: "jarvis_integration_auto_123456789_2" }),
+    "jv265_restore_01234567-89ab-cdef-0123-456789abcdef",
+    "the automatic fixture's target URL remains valid on the trusted service-container runner");
+});
+
 test("cleanup records every phase failure and continues later phases", async () => {
   const events = [];
   const firstFailure = new Error("rollback failed");
@@ -537,11 +630,13 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await exercisePauseRace("checkpoint", scope);
     }
     const { rows: [database] } = await pool.query("SELECT current_database() AS name");
-    const expectedDatabaseName = process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION === "1"
-      ? "jarvis_integration_manual"
-      : "jarvis_integration_auto";
-    assert.equal(database.name, expectedDatabaseName,
-      `integration mode requires database ${expectedDatabaseName}, got ${database.name}`);
+    if (expectedDatabaseName !== undefined) {
+      assert.equal(database.name, expectedDatabaseName,
+        `integration run requires database ${expectedDatabaseName}, got ${database.name}`);
+    } else {
+      assert.match(database.name, /^jarvis_issue8_[a-f0-9]{32}$/,
+        "local reviewer integration requires a uniquely named jarvis_issue8_ disposable database");
+    }
 
     const persistence = new PostgresPersistence(pool);
     await persistence.migrate();

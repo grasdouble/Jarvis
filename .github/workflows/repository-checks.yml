@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      require_scenario_metrics:
+        description: Require allowlisted stop-manager timing metrics (use for a post-producer main-branch run)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -22,19 +28,20 @@ jobs:
     env:
       POSTGRES_USER: jarvis_ci
       POSTGRES_PASSWORD: jarvis_ci_fake_password
-      POSTGRES_DB: jarvis_integration_auto
-      JARVIS_TEST_DATABASE_URL: postgres://jarvis_ci:jarvis_ci_fake_password@localhost:5432/jarvis_integration_auto
+      POSTGRES_DB: jarvis_integration_auto_${{ github.run_id }}_${{ github.run_attempt }}
+      JARVIS_TEST_DATABASE_URL: postgres://jarvis_ci:jarvis_ci_fake_password@localhost:5432/jarvis_integration_auto_${{ github.run_id }}_${{ github.run_attempt }}
+      JARVIS_TEST_EXPECTED_DATABASE_NAME: jarvis_integration_auto_${{ github.run_id }}_${{ github.run_attempt }}
     services:
       postgres:
         image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
         env:
           POSTGRES_USER: jarvis_ci
           POSTGRES_PASSWORD: jarvis_ci_fake_password
-          POSTGRES_DB: jarvis_integration_auto
+          POSTGRES_DB: jarvis_integration_auto_${{ github.run_id }}_${{ github.run_attempt }}
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U jarvis_ci -d jarvis_integration_auto"
+          --health-cmd "pg_isready -U jarvis_ci -d $POSTGRES_DB"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -119,6 +126,166 @@ jobs:
         run: pnpm --filter @jarvis/persistence test
       - name: Test contributor GitHub tooling without real credentials
         run: node --test .agents/skills/jarvis-backlog/scripts/github/*.test.mjs
+
+  runtime-integration:
+    name: PostgreSQL runtime integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      POSTGRES_USER: jarvis_ci
+      POSTGRES_PASSWORD: jarvis_ci_fake_password
+      POSTGRES_DB: jarvis_integration_manual_${{ github.run_id }}_${{ github.run_attempt }}
+      JARVIS_TEST_DATABASE_URL: postgres://jarvis_ci:jarvis_ci_fake_password@localhost:5432/jarvis_integration_manual_${{ github.run_id }}_${{ github.run_attempt }}
+      JARVIS_TEST_EXPECTED_DATABASE_NAME: jarvis_integration_manual_${{ github.run_id }}_${{ github.run_attempt }}
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+        env:
+          POSTGRES_USER: jarvis_ci
+          POSTGRES_PASSWORD: jarvis_ci_fake_password
+          POSTGRES_DB: jarvis_integration_manual_${{ github.run_id }}_${{ github.run_attempt }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jarvis_ci -d $POSTGRES_DB"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Select exact integration candidate revision
+        id: runtime-candidate
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            candidate_sha="$PR_HEAD_SHA"
+            git fetch --no-tags --depth=1 origin "+refs/pull/$PR_NUMBER/head:refs/remotes/pull/$PR_NUMBER/head"
+            test "$(git rev-parse "refs/remotes/pull/$PR_NUMBER/head^{commit}")" = "$candidate_sha"
+          else
+            candidate_sha="$EVENT_SHA"
+            git fetch --no-tags --depth=1 origin "$EVENT_REF"
+            test "$(git rev-parse FETCH_HEAD^{commit})" = "$candidate_sha"
+          fi
+          git checkout --detach "$candidate_sha"
+          test "$(git rev-parse HEAD)" = "$candidate_sha"
+      - name: Detect scenario timing producer in trusted event base
+        id: scenario-producer
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            source_sha="$PR_BASE_SHA"
+          else
+            source_sha="$EVENT_SHA"
+          fi
+          python3 - "$source_sha" <<'PY'
+          import subprocess
+          import os
+          import sys
+
+          source = subprocess.run(
+              ['git', 'show', f'{sys.argv[1]}:packages/persistence/test/persistence.integration.test.mjs'],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          contract = (
+              'const sandboxCancelTimeoutMs = 300;',
+              'manager accepted request but withheld response for ${withheldDurationMs.toFixed(2)}ms; configured client timeout ${sandboxCancelTimeoutMs}ms',
+          )
+          present = all(fragment in source for fragment in contract)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'present={str(present).lower()}\n')
+          PY
+      - name: Preserve candidate report helper outside candidate workspace
+        run: |
+          cp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"
+          cmp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"
+      - name: Install pnpm for runtime integration qualification
+        id: runtime-pnpm
+        continue-on-error: true
+        env:
+          GH_TOKEN: ''
+          GITHUB_TOKEN: ''
+        run: python3 "$RUNNER_TEMP/manual_integration_report.py" record-command --output "$RUNNER_TEMP/setup-pnpm.json" -- npm install --global pnpm@12.5.1
+      - name: Install workspace dependencies for runtime integration qualification
+        id: runtime-dependencies
+        if: steps.runtime-pnpm.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ''
+          GITHUB_TOKEN: ''
+        run: python3 "$RUNNER_TEMP/manual_integration_report.py" record-command --output "$RUNNER_TEMP/setup-dependencies.json" -- pnpm install --frozen-lockfile
+      - name: Build and run PostgreSQL runtime integration qualification
+        id: runtime-integration-tests
+        if: always() && steps.runtime-candidate.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ''
+          GITHUB_TOKEN: ''
+          JARVIS_RUN_STOP_RUNTIME_INTEGRATION: '1'
+          JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REQUIRE_SCENARIO_METRICS: ${{ inputs.require_scenario_metrics }}
+          SCENARIO_PRODUCER_PRESENT: ${{ steps.scenario-producer.outputs.present }}
+        run: |
+          export JARVIS_SETUP_RESULTS="$(python3 -c 'import glob,json,os; print(json.dumps([json.load(open(p)) for p in sorted(glob.glob(os.environ["RUNNER_TEMP"] + "/setup-*.json"))]))')"
+          set -- --event "$EVENT_NAME" --ref "$EVENT_REF" --sha "$EVENT_SHA"
+          case "$SCENARIO_PRODUCER_PRESENT" in
+            true|false) set -- "$@" --producer-present "$SCENARIO_PRODUCER_PRESENT" ;;
+            *) echo 'Invalid scenario producer detection result.' >&2; exit 1 ;;
+          esac
+          if [ -n "$PR_NUMBER" ]; then
+            set -- "$@" --pr "$PR_NUMBER" --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA"
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            case "$REQUIRE_SCENARIO_METRICS" in
+              true|false) set -- "$@" --require-scenario-metrics "$REQUIRE_SCENARIO_METRICS" ;;
+              *) echo 'Invalid require_scenario_metrics workflow input.' >&2; exit 1 ;;
+            esac
+          elif [ -n "$REQUIRE_SCENARIO_METRICS" ] && [ "$REQUIRE_SCENARIO_METRICS" != false ]; then
+            echo 'Scenario metrics override is only valid for workflow_dispatch.' >&2
+            exit 1
+          fi
+          python3 "$RUNNER_TEMP/manual_integration_report.py" run "$@" --output "$RUNNER_TEMP/integration-report.json"
+      - name: Add runtime integration report to job summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/integration-report.json" ]; then
+            python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("# PostgreSQL runtime integration report\n\n```json\n" + json.dumps(d, indent=2) + "\n```")' "$RUNNER_TEMP/integration-report.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '# PostgreSQL runtime integration report' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Qualification did not reach report generation; see preceding setup/checkout failure.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: runtime-integration-report
+          path: ${{ runner.temp }}/integration-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Fail when required runtime integration evidence is missing or failed
+        if: always() && (steps.runtime-candidate.outcome != 'success' || steps.runtime-pnpm.outcome != 'success' || steps.runtime-dependencies.outcome != 'success' || steps.runtime-integration-tests.outcome != 'success')
+        run: exit 1
 
   pr-title:
     name: Conventional PR title
