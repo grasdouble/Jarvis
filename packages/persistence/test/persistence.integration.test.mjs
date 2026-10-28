@@ -417,7 +417,7 @@ async function lockProjectRow(pool, repositoryId) {
   };
 }
 
-async function createStopRaceFixture(pool, mode) {
+async function createStopRaceFixture(pool, mode, policyVersion = 1) {
   await new PostgresPersistence(pool).migrate();
   const fixture = {
     installationId: randomUUID(),
@@ -427,7 +427,7 @@ async function createStopRaceFixture(pool, mode) {
     taskId: randomUUID(),
     attemptId: randomUUID(),
     repositoryId: Math.floor(Math.random() * 1_000_000_000) + 1_000_000_000,
-    policyHash: "b".repeat(64),
+    policyHash: policyVersion === 1 ? "b".repeat(64) : String(policyVersion).padStart(64, "0"),
     profileHash: "f".repeat(64),
     promptDigest: "e".repeat(64),
     state: mode === "checkpoint" ? "running" : "queued",
@@ -439,7 +439,7 @@ async function createStopRaceFixture(pool, mode) {
     await client.query(`INSERT INTO jarvis.installations(id, github_id, app_id, state)
       VALUES ($1, $2, 2001, 'active')`, [fixture.installationId, fixture.repositoryId]);
     await client.query(`INSERT INTO jarvis.policies(id, version, canonical_json, hash, activated_at)
-      VALUES ($1, 1, '{"version":1}', $2, now())`, [fixture.policyId, fixture.policyHash]);
+      VALUES ($1, $2, '{"version":1}', $3, now())`, [fixture.policyId, policyVersion, fixture.policyHash]);
     await client.query(`INSERT INTO jarvis.projects(id, repository_id, installation_id, owner_id, repository_name, state, config_version)
       VALUES ($1, $2, $3, 'owner-race', 'stop-race', 'active', 1)`, [fixture.projectId, fixture.repositoryId, fixture.installationId]);
     await client.query(`INSERT INTO jarvis.project_config_versions
@@ -1726,6 +1726,152 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     async () => { if (sandboxServer) await new Promise((resolve) => sandboxServer.close(resolve)); },
     async () => { if (tlsFixture) rmSync(tlsFixture.dir, { recursive: true, force: true }); },
     async () => { if (fixture) await resetStopRaceFixture(pool); },
+    async () => pool.end(),
+  ]);
+  throwCollectedFailures(testFailure, cleanupFailures);
+});
+
+test("PostgreSQL stop during persisted retry backoff preserves eligibility and isolates project workers", {
+  skip: process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION !== "1"
+    ? "set JARVIS_RUN_STOP_RUNTIME_INTEGRATION=1 to run this on-demand integration scenario"
+    : databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
+}, async () => {
+  const [{ createQueueWorker }, api, { QueueService: RuntimeQueueService }, { Pool: PgPool }] = await Promise.all([
+    import("../../../apps/worker/dist/index.js"),
+    import("../../../apps/api/dist/runtime-composition.js"),
+    import("@jarvis/queue"),
+    import("pg"),
+  ]);
+  const pool = new PgPool({ connectionString: databaseUrl, max: 8, application_name: "jv286-stop-retry-integration" });
+  const restoreGate = { waitUntilActivated: async () => undefined, activateAfterRestore: async () => undefined };
+  let apiServer;
+  let fixtureA;
+  let fixtureB;
+  let testFailure;
+  try {
+    await new PostgresPersistence(pool).migrate();
+    await resetStopRaceFixture(pool);
+    fixtureA = await createStopRaceFixture(pool, "enqueue");
+    fixtureB = await createStopRaceFixture(pool, "enqueue", 2);
+    let now = Date.now();
+    const queueStore = new PostgresQueueStore(pool);
+    const queue = new RuntimeQueueService({ store: queueStore, clock: { now: () => now }, ids: { next: () => randomUUID() } });
+    const enqueue = (fixture, suffix) => queue.enqueue({
+      eventId: `jv286-${suffix}-${fixture.taskId}`, taskId: fixture.taskId, payload: { taskId: fixture.taskId },
+      deadline: now + 60_000, maxAttempts: 3, retry: { baseDelay: 4_000, maxDelay: 4_000 },
+    });
+    const taskA = await enqueue(fixtureA, "retry");
+    const controls = new PostgresStopControlStore(pool);
+    const auth = {
+      authorizeRead: async () => ({ authorized: true, auth: { ownerId: "owner" }, headers: {} }),
+      authorizeMutation: async ({ headers }) => headers.authorization === "Bearer synthetic-owner"
+        ? { authorized: true, auth: { ownerId: "owner" }, headers: {} }
+        : { authorized: false, response: { status: 401, body: { error: "unauthorized" } } },
+    };
+    const dispatched = [];
+    let forceFirstRetry = true;
+    const makeWorker = (projectId, workerId, retryFirst = false) => {
+      const workerQueue = {
+        claim: (...args) => queue.claim(...args),
+        complete: async (lease, result) => {
+          if (retryFirst && forceFirstRetry) {
+            forceFirstRetry = false;
+            return queue.fail(lease, { kind: "transient", code: "synthetic-transient" });
+          }
+          return queue.complete(lease, result);
+        },
+        fail: (...args) => queue.fail(...args),
+        cancel: (...args) => queue.cancel(...args),
+      };
+      return createQueueWorker({
+        queue: workerQueue, workerId, leaseMs: 30_000, restoreGate,
+        hydrate: async (lease) => ({ taskId: lease.task.taskId, projectId, capability: "synthetic-only" }),
+        execution: {
+          readStop: async () => {
+            const state = await controls.get({ projectId });
+            return { stopped: state.global.stopped || state.project?.stopped === true, version: state.global.version };
+          },
+          dispatch: async () => { dispatched.push({ workerId, projectId }); return { kind: "report", id: randomUUID() }; },
+          revokeCapability: async () => undefined,
+          stopSandbox: async () => "stopped",
+          recordAcceptedEffectUnknown: async () => undefined,
+        },
+      });
+    };
+    const workerA = makeWorker(fixtureA.projectId, "jv286-worker-a", true);
+    const workerB = makeWorker(fixtureB.projectId, "jv286-worker-b");
+    const composition = api.createRuntimeComposition({ store: controls, auth, worker: workerA, dashboard: async () => ({ status: 404 }) });
+    await new Promise((resolve) => { apiServer = composition.server.listen(0, "127.0.0.1", resolve); });
+    const origin = `http://127.0.0.1:${apiServer.address().port}`;
+    const ownerPost = async (path, body) => globalThis.fetch(`${origin}${path}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-owner" }, body: JSON.stringify(body),
+    });
+
+    assert.equal(await workerA.runOnce(), "completed");
+    let persistedA = await queueStore.get(taskA.id);
+    assert.equal(persistedA.status, "queued", "synthetic transient failure persists a retry rather than consuming the task");
+    assert.equal(persistedA.attempt, 1);
+    assert.ok(persistedA.availableAt > now, "retry remains unavailable during persisted backoff");
+    const { rows: [retryRow] } = await pool.query("SELECT state, attempt_count, available_at > clock_timestamp() AS delayed FROM jarvis.queue_entries WHERE id=$1", [taskA.id]);
+    assert.deepEqual(retryRow, { state: "queued", attempt_count: 1, delayed: true });
+
+    const stopped = await ownerPost(`/api/v1/stop/projects/${fixtureA.projectId}`, { stopped: true, expectedVersion: 0 });
+    assert.equal(stopped.status, 200);
+    const stoppedState = await stopped.json();
+    assert.equal(stoppedState.global.stopped, false);
+    assert.equal(stoppedState.project.stopped, true);
+    assert.equal(await workerA.runOnce(), "idle", "stopped A cannot consume its delayed retry");
+    assert.equal(await queueStore.get(taskA.id).then((saved) => saved.attempt), 1);
+
+    const taskB = await enqueue(fixtureB, "independent");
+    assert.equal(await workerB.runOnce(), "completed", "project B remains eligible while A is stopped");
+    assert.deepEqual(dispatched, [{ workerId: "jv286-worker-a", projectId: fixtureA.projectId }, { workerId: "jv286-worker-b", projectId: fixtureB.projectId }]);
+    assert.equal((await queueStore.get(taskB.id)).status, "succeeded");
+    let savedScopes = await new PostgresStopControlStore(pool).get({ projectId: fixtureA.projectId });
+    assert.equal(savedScopes.global.stopped, false, "A stop does not mutate persisted global scope");
+    assert.equal(savedScopes.project.stopped, true, "A project stop survives store reconstruction");
+    const savedScopesB = await new PostgresStopControlStore(pool).get({ projectId: fixtureB.projectId });
+    assert.equal(savedScopesB.global.stopped, false, "B remains globally resumed while A is stopped");
+    assert.equal(savedScopesB.project, null, "B has no persisted project stop");
+
+    let eligible = false;
+    const eligibilityDeadline = Date.now() + 6_000;
+    while (!eligible && Date.now() < eligibilityDeadline) {
+      const { rows: [eligibility] } = await pool.query("SELECT available_at <= clock_timestamp() AS ready FROM jarvis.queue_entries WHERE id=$1", [taskA.id]);
+      eligible = eligibility.ready;
+      if (!eligible) await delay(25);
+    }
+    assert.equal(eligible, true, "PostgreSQL confirms the durable retry backoff elapsed while project A remains stopped");
+    assert.equal(await workerA.runOnce(), "idle", "stopped A cannot consume its eligible retry");
+    persistedA = await queueStore.get(taskA.id);
+    assert.equal(persistedA.status, "queued");
+    assert.equal(persistedA.attempt, 1, "stopped eligible claim does not increment the attempt count");
+    assert.equal(dispatched.filter((entry) => entry.projectId === fixtureA.projectId).length, 1,
+      "stopped eligible claim does not dispatch A a second time");
+    savedScopes = await new PostgresStopControlStore(pool).get({ projectId: fixtureA.projectId });
+    assert.equal(savedScopes.global.stopped, false);
+    assert.equal(savedScopes.project.stopped, true);
+
+    const resumed = await ownerPost(`/api/v1/stop/projects/${fixtureA.projectId}`, { stopped: false, expectedVersion: stoppedState.project.version });
+    assert.equal(resumed.status, 200);
+    assert.equal((await resumed.json()).project.stopped, false);
+    assert.equal(await workerA.runOnce(), "completed", "retry proceeds only when eligible after explicit resume");
+    persistedA = await queueStore.get(taskA.id);
+    assert.equal(persistedA.status, "succeeded");
+    assert.equal(persistedA.attempt, 2);
+    savedScopes = await new PostgresStopControlStore(pool).get({ projectId: fixtureA.projectId });
+    assert.equal(savedScopes.global.stopped, false);
+    assert.equal(savedScopes.project.stopped, false);
+    const { rows: [savedQueue] } = await pool.query("SELECT state, attempt_count FROM jarvis.queue_entries WHERE id=$1", [taskA.id]);
+    assert.deepEqual(savedQueue, { state: "succeeded", attempt_count: 2 });
+    assert.equal(dispatched.filter((entry) => entry.projectId === fixtureA.projectId).length, 2);
+    console.log("# synthetic dispatch only; PostgreSQL-backed retry/backoff and project-stop isolation; no provider/GitHub calls or product qualification");
+  } catch (error) {
+    testFailure = error;
+  }
+  const cleanupFailures = await runCleanupSteps([
+    async () => { if (apiServer) await new Promise((resolve) => apiServer.close(resolve)); },
+    async () => { if (fixtureA || fixtureB) await resetStopRaceFixture(pool); },
     async () => pool.end(),
   ]);
   throwCollectedFailures(testFailure, cleanupFailures);
