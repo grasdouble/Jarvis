@@ -182,6 +182,35 @@ jobs:
           fi
           git checkout --detach "$candidate_sha"
           test "$(git rev-parse HEAD)" = "$candidate_sha"
+      - name: Detect scenario timing producer in trusted event base
+        id: scenario-producer
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            source_sha="$PR_BASE_SHA"
+          else
+            source_sha="$EVENT_SHA"
+          fi
+          python3 - "$source_sha" <<'PY'
+          import subprocess
+          import os
+          import sys
+
+          source = subprocess.run(
+              ['git', 'show', f'{sys.argv[1]}:packages/persistence/test/persistence.integration.test.mjs'],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          contract = (
+              'const sandboxCancelTimeoutMs = 300;',
+              'manager accepted request but withheld response for ${withheldDurationMs.toFixed(2)}ms; configured client timeout ${sandboxCancelTimeoutMs}ms',
+          )
+          present = all(fragment in source for fragment in contract)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'present={str(present).lower()}\n')
+          PY
       - name: Preserve candidate report helper outside candidate workspace
         run: |
           cp scripts/ci/manual_integration_report.py "$RUNNER_TEMP/manual_integration_report.py"
@@ -217,9 +246,14 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REQUIRE_SCENARIO_METRICS: ${{ inputs.require_scenario_metrics }}
+          SCENARIO_PRODUCER_PRESENT: ${{ steps.scenario-producer.outputs.present }}
         run: |
           export JARVIS_SETUP_RESULTS="$(python3 -c 'import glob,json,os; print(json.dumps([json.load(open(p)) for p in sorted(glob.glob(os.environ["RUNNER_TEMP"] + "/setup-*.json"))]))')"
           set -- --event "$EVENT_NAME" --ref "$EVENT_REF" --sha "$EVENT_SHA"
+          case "$SCENARIO_PRODUCER_PRESENT" in
+            true|false) set -- "$@" --producer-present "$SCENARIO_PRODUCER_PRESENT" ;;
+            *) echo 'Invalid scenario producer detection result.' >&2; exit 1 ;;
+          esac
           if [ -n "$PR_NUMBER" ]; then
             set -- "$@" --pr "$PR_NUMBER" --base "$PR_BASE_SHA" --head "$PR_HEAD_SHA"
           fi
