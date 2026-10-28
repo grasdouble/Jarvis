@@ -11,9 +11,6 @@ import time
 from datetime import datetime, timezone
 
 REQUIRED_SCENARIO = 'real PostgreSQL stop controls gate and cancel the real queue worker composition'
-# PR #270 remains the initial exact-head acceptance target. Later reports are
-# gated by producer presence in the trusted PR base or event revision.
-METRICS_REQUIRED_PR = 270
 DIAGNOSTIC_BYTES = 8192
 DIAGNOSTIC_LINES = 120
 SCENARIO_METRIC_PREFIX = '# single PostgreSQL-backed in-process sample:'
@@ -65,9 +62,6 @@ def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_
         if producer_present == 'true':
             candidate['metrics_required'] = True
             candidate['metrics_requirement_source'] = 'producer-in-base'
-        elif int(pr_number) == METRICS_REQUIRED_PR:
-            candidate['metrics_required'] = True
-            candidate['metrics_requirement_source'] = 'initial-target-pr'
         return candidate
     if (not re.fullmatch(r'refs/heads/[A-Za-z0-9._/-]+', ref) or '..' in ref or
             ref.endswith(('/', '.')) or '//' in ref):

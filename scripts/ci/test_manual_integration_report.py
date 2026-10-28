@@ -8,6 +8,12 @@ import manual_integration_report as report
 
 
 class ManualIntegrationReportTests(unittest.TestCase):
+    def test_pr_270_without_producer_uses_bootstrap_compatibility(self):
+        candidate = report.candidate_from_values(
+            'pull_request', 'refs/pull/270/merge', 'a' * 40, '270', 'b' * 40, 'a' * 40,
+            producer_present='false')
+        self.assertNotIn('metrics_required', candidate)
+
     scenario_metrics = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt '
                         '12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager '
                         'cancellation request 56.78ms; manager accepted request but withheld response for 301.23ms; '
@@ -29,9 +35,9 @@ class ManualIntegrationReportTests(unittest.TestCase):
         producer_push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true')
         dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
                                                require_scenario_metrics='true')
-        for required in (pr270, future_pr, producer_push, dispatch):
+        for required in (future_pr, producer_push, dispatch):
             self.assertTrue(required['metrics_required'])
-        self.assertEqual(pr270['metrics_requirement_source'], 'initial-target-pr')
+        self.assertNotIn('metrics_required', pr270)
         self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
         self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
         for optional in (bootstrap, early_push):
@@ -291,9 +297,9 @@ class ManualIntegrationReportTests(unittest.TestCase):
             self.assertNotIn('SECRET TEST OUTPUT', serialized)
 
     def test_successful_report_retains_only_validated_scenario_metrics(self):
-        candidate = {'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
-                     'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40,
-                     'metrics_required': True, 'metrics_requirement_source': 'initial-target-pr'}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/999/merge', 'sha': 'a' * 40,
+                     'pr': 999, 'base': 'b' * 40, 'head': 'a' * 40,
+                     'metrics_required': True, 'metrics_requirement_source': 'producer-in-base'}
         diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt 12.34ms '
                       '(no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request '
                       '56.78ms; manager accepted request but withheld response for 301.23ms; configured client timeout '
@@ -318,10 +324,10 @@ class ManualIntegrationReportTests(unittest.TestCase):
         })
         self.assertNotIn('unrelated output', serialized)
 
-    def test_target_pr_270_missing_metrics_fails_closed(self):
-        candidate = {'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
-                     'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40,
-                     'metrics_required': True, 'metrics_requirement_source': 'initial-target-pr'}
+    def test_producer_present_pr_missing_metrics_fails_closed(self):
+        candidate = report.candidate_from_values(
+            'pull_request', 'refs/pull/999/merge', 'a' * 40, '999', 'b' * 40, 'a' * 40,
+            producer_present='true')
         tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
                '# cancelled 0\n# skipped 0\n# todo 0\n')
         results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
@@ -349,6 +355,22 @@ class ManualIntegrationReportTests(unittest.TestCase):
             saved = json.loads(output.read_text())
         self.assertEqual(saved['result'], 'pass')
         self.assertNotIn('scenario_metrics', saved)
+
+    def test_producer_present_main_push_missing_metrics_fails_closed(self):
+        candidate = report.candidate_from_values(
+            'push', 'refs/heads/main', 'a' * 40, producer_present='true')
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
+               '# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                with self.assertRaises(SystemExit):
+                    report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'fail')
+        self.assertIn('metrics', saved['scenario_metrics_error'])
 
     def test_explicit_main_dispatch_requires_metrics_and_accepts_valid_metrics(self):
         candidate = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'a' * 40,
@@ -430,9 +452,9 @@ class ManualIntegrationReportTests(unittest.TestCase):
                 tap += '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n'
                 results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
                 results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
-                candidate = ({'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
-                              'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40,
-                              'metrics_required': True, 'metrics_requirement_source': 'initial-target-pr'}
+                candidate = ({'event': 'pull_request', 'ref': 'refs/pull/999/merge', 'sha': 'a' * 40,
+                              'pr': 999, 'base': 'b' * 40, 'head': 'a' * 40,
+                              'metrics_required': True, 'metrics_requirement_source': 'producer-in-base'}
                              if diagnostic is None else
                              {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40})
                 with tempfile.TemporaryDirectory() as directory:
