@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 
 REQUIRED_SCENARIO = 'real PostgreSQL stop controls gate and cancel the real queue worker composition'
+METRICS_REQUIRED_PR = 270
 DIAGNOSTIC_BYTES = 8192
 DIAGNOSTIC_LINES = 120
 SCENARIO_METRIC_PREFIX = '# single PostgreSQL-backed in-process sample:'
@@ -87,12 +88,18 @@ def parse_tap(text):
     return summaries, scenarios
 
 
-def parse_required_scenario_metrics(text):
-    """Extract only the exact bounded diagnostic emitted by the required scenario."""
-    lines = [line for line in text.splitlines() if line.startswith(SCENARIO_METRIC_PREFIX)]
+def parse_required_scenario_metrics(text, metrics_required):
+    """Extract the exact bounded metric diagnostic; permit the legacy generic diagnostic elsewhere."""
+    lines = [line for line in text.splitlines() if is_scenario_metric_line(line)]
+    if not lines:
+        if metrics_required:
+            raise ValueError('Required stop-manager scenario metrics are missing.')
+        return None
     if len(lines) != 1:
         raise ValueError('Required stop-manager scenario metrics must appear exactly once.')
     line = lines[0]
+    if not line.startswith(SCENARIO_METRIC_PREFIX):
+        raise ValueError('Required stop-manager scenario metrics are malformed.')
     if len(line.encode('utf-8')) > SCENARIO_METRIC_LINE_BYTES:
         raise ValueError('Required stop-manager scenario metrics exceed the line size limit.')
     secrets = [value for key, value in os.environ.items()
@@ -100,6 +107,15 @@ def parse_required_scenario_metrics(text):
     if any(secret in line for secret in secrets) or re.search(
             r'(?i)(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|postgres(?:ql)?://)', line):
         raise ValueError('Required stop-manager scenario metrics contain secret-like data.')
+    legacy_pattern = re.compile(
+        r'^# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt '
+        r'\d+(?:\.\d+)?ms \(no dispatch; task remains queued\); active stop to synthetic HTTPS/mTLS manager '
+        r'cancellation request \d+(?:\.\d+)?ms; active stop/cancel completion \d+(?:\.\d+)?ms\. Local '
+        r'synthetic evidence only; no OS process restart or production latency qualification\.$')
+    if legacy_pattern.fullmatch(line):
+        if metrics_required:
+            raise ValueError('Required stop-manager scenario metrics are missing.')
+        return None
     pattern = re.compile(
         r'^# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt '
         r'(?P<no_dispatch>\d+(?:\.\d+)?)ms \(no dispatch; task remains queued\); active stop to synthetic '
@@ -121,6 +137,11 @@ def parse_required_scenario_metrics(text):
         'manager_withheld_response_ms': values['withheld'],
         'active_stop_cancel_completion_ms': values['completion'],
     }
+
+
+def is_scenario_metric_line(line):
+    return (line.startswith(SCENARIO_METRIC_PREFIX) or
+            re.search(r'(?i)(?:withheld response for|configured client timeout)', line) is not None)
 
 
 def run_report(candidate, output):
@@ -164,7 +185,9 @@ def run_report(candidate, output):
     elif required[0]['status'] != 'pass':
         scenario_error = f'Required scenario did not pass (status: {required[0]["status"]}): {REQUIRED_SCENARIO}'
     try:
-        scenario_metrics = parse_required_scenario_metrics(test_output) if test_was_run and scenario_error is None else None
+        scenario_metrics = parse_required_scenario_metrics(
+            test_output, metrics_required=candidate.get('pr') == METRICS_REQUIRED_PR
+        ) if test_was_run else None
         metrics_error = None
     except ValueError as error:
         scenario_metrics, metrics_error = None, str(error)
@@ -186,11 +209,11 @@ def run_report(candidate, output):
             'Scenario timings are one in-process synthetic HTTPS/mTLS sample; they do not qualify OS process restart, production latency, or Colima/macOS behavior.',
         ],
     }
-    if passed:
+    if passed and scenario_metrics is not None:
         report['scenario_metrics'] = scenario_metrics
     if not passed and test_output:
         safe_test_output = '\n'.join(
-            '[invalid stop-manager scenario metrics omitted]' if line.startswith(SCENARIO_METRIC_PREFIX) else line
+            '[invalid stop-manager scenario metrics omitted]' if is_scenario_metric_line(line) else line
             for line in test_output.splitlines())
         report['failure_diagnostics'] = bounded_diagnostics(safe_test_output)
     Path(output).write_text(json.dumps(report, indent=2) + '\n')

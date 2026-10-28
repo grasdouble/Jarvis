@@ -13,6 +13,10 @@ class ManualIntegrationReportTests(unittest.TestCase):
                         'cancellation request 56.78ms; manager accepted request but withheld response for 301.23ms; '
                         'configured client timeout 300ms; active stop/cancel completion 307.89ms. Local synthetic '
                         'evidence only; no OS process restart or production latency qualification.')
+    generic_scenario_diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim '
+                                    'attempt 12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS '
+                                    'manager cancellation request 56.78ms; active stop/cancel completion 307.89ms. Local '
+                                    'synthetic evidence only; no OS process restart or production latency qualification.')
 
     def test_actual_node_tap_output_is_parsed_with_scenarios(self):
         # Captured from pnpm --filter @jarvis/persistence test on this checkout.
@@ -240,8 +244,8 @@ class ManualIntegrationReportTests(unittest.TestCase):
             self.assertNotIn('SECRET TEST OUTPUT', serialized)
 
     def test_successful_report_retains_only_validated_scenario_metrics(self):
-        candidate = {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'sha': 'a' * 40,
-                     'pr': 7, 'base': 'b' * 40, 'head': 'a' * 40}
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
+                     'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40}
         diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt 12.34ms '
                       '(no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request '
                       '56.78ms; manager accepted request but withheld response for 301.23ms; configured client timeout '
@@ -266,6 +270,39 @@ class ManualIntegrationReportTests(unittest.TestCase):
         })
         self.assertNotIn('unrelated output', serialized)
 
+    def test_target_pr_270_missing_metrics_fails_closed(self):
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
+                     'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n# tests 1\n# pass 1\n# fail 0\n'
+               '# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                with self.assertRaises(SystemExit):
+                    report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'fail')
+        self.assertIn('metrics', saved['scenario_metrics_error'])
+        self.assertNotIn('scenario_metrics', saved)
+
+    def test_pr_281_generic_current_main_diagnostic_passes_without_metrics(self):
+        candidate = {'event': 'pull_request', 'ref': 'refs/pull/281/merge', 'sha': 'a' * 40,
+                     'pr': 281, 'base': 'b' * 40, 'head': 'a' * 40}
+        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
+               '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
+        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
+        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'report.json'
+            with patch.object(report.subprocess, 'run', side_effect=results):
+                report.run_report(candidate, output)
+            saved = json.loads(output.read_text())
+        self.assertEqual(saved['result'], 'pass')
+        self.assertIsNone(saved['scenario_metrics_error'])
+        self.assertNotIn('scenario_metrics', saved)
+
     def test_missing_malformed_over_limit_or_secret_metrics_fail_closed(self):
         valid = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt 12.34ms '
                  '(no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request '
@@ -275,6 +312,7 @@ class ManualIntegrationReportTests(unittest.TestCase):
         for diagnostic in (None, valid.replace('timeout 300ms', 'timeout 301ms'),
                            valid.replace('attempt 12.34ms', 'attempt 2001ms'),
                            valid.replace('withheld response for 301.23ms', 'withheld response for NaNms'),
+                           valid.replace('# single PostgreSQL-backed in-process sample:', '# untrusted sample:'),
                            valid + ('x' * report.SCENARIO_METRIC_LINE_BYTES),
                            valid.replace('completion 307.89ms.', 'completion 307.89ms token=synthetic-secret-value.'),
                            valid + '\n' + valid):
@@ -285,11 +323,15 @@ class ManualIntegrationReportTests(unittest.TestCase):
                 tap += '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n'
                 results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
                 results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
+                candidate = ({'event': 'pull_request', 'ref': 'refs/pull/270/merge', 'sha': 'a' * 40,
+                              'pr': 270, 'base': 'b' * 40, 'head': 'a' * 40}
+                             if diagnostic is None else
+                             {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40})
                 with tempfile.TemporaryDirectory() as directory:
                     output = Path(directory) / 'report.json'
                     with patch.object(report.subprocess, 'run', side_effect=results):
                         with self.assertRaises(SystemExit):
-                            report.run_report({'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40}, output)
+                            report.run_report(candidate, output)
                     saved = json.loads(output.read_text())
                     self.assertEqual(saved['result'], 'fail')
                     self.assertNotIn('scenario_metrics', saved)
