@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 REQUIRED_SCENARIO = 'real PostgreSQL stop controls gate and cancel the real queue worker composition'
 DIAGNOSTIC_BYTES = 8192
 DIAGNOSTIC_LINES = 120
+SCENARIO_METRIC_PREFIX = '# single PostgreSQL-backed in-process sample:'
+SCENARIO_METRIC_LINE_BYTES = 1024
 
 
 def bounded_diagnostics(text):
@@ -85,6 +87,42 @@ def parse_tap(text):
     return summaries, scenarios
 
 
+def parse_required_scenario_metrics(text):
+    """Extract only the exact bounded diagnostic emitted by the required scenario."""
+    lines = [line for line in text.splitlines() if line.startswith(SCENARIO_METRIC_PREFIX)]
+    if len(lines) != 1:
+        raise ValueError('Required stop-manager scenario metrics must appear exactly once.')
+    line = lines[0]
+    if len(line.encode('utf-8')) > SCENARIO_METRIC_LINE_BYTES:
+        raise ValueError('Required stop-manager scenario metrics exceed the line size limit.')
+    secrets = [value for key, value in os.environ.items()
+               if value and re.search(r'(?:TOKEN|PASSWORD|PASS|SECRET|DATABASE_URL|DB_URL)', key, re.I)]
+    if any(secret in line for secret in secrets) or re.search(
+            r'(?i)(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|postgres(?:ql)?://)', line):
+        raise ValueError('Required stop-manager scenario metrics contain secret-like data.')
+    pattern = re.compile(
+        r'^# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt '
+        r'(?P<no_dispatch>\d+(?:\.\d+)?)ms \(no dispatch; task remains queued\); active stop to synthetic '
+        r'HTTPS/mTLS manager cancellation request (?P<request>\d+(?:\.\d+)?)ms; manager accepted request but '
+        r'withheld response for (?P<withheld>\d+(?:\.\d+)?)ms; configured client timeout (?P<timeout>\d+)ms; '
+        r'active stop/cancel completion (?P<completion>\d+(?:\.\d+)?)ms\. Local synthetic evidence only; '
+        r'no OS process restart or production latency qualification\.$')
+    match = pattern.fullmatch(line)
+    if not match:
+        raise ValueError('Required stop-manager scenario metrics are malformed.')
+    values = {key: float(match.group(key)) for key in ('no_dispatch', 'request', 'withheld', 'completion')}
+    if (int(match.group('timeout')) != 300 or values['no_dispatch'] > 2_000 or values['request'] > 10_000 or
+            not 250 <= values['withheld'] <= 1_300 or not 250 <= values['completion'] <= 1_300):
+        raise ValueError('Required stop-manager scenario metrics are outside configured bounds.')
+    return {
+        'scenario': 'stop-manager-nonresponse', 'configured_client_timeout_ms': 300,
+        'no_dispatch_stop_to_worker_claim_attempt_ms': values['no_dispatch'],
+        'active_stop_to_cancel_request_ms': values['request'],
+        'manager_withheld_response_ms': values['withheld'],
+        'active_stop_cancel_completion_ms': values['completion'],
+    }
+
+
 def run_report(candidate, output):
     commands = [
         ['pnpm', '--filter', '@jarvis/api', 'build'],
@@ -125,7 +163,13 @@ def run_report(candidate, output):
         scenario_error = f'Required scenario must appear exactly once: {REQUIRED_SCENARIO}'
     elif required[0]['status'] != 'pass':
         scenario_error = f'Required scenario did not pass (status: {required[0]["status"]}): {REQUIRED_SCENARIO}'
+    try:
+        scenario_metrics = parse_required_scenario_metrics(test_output) if test_was_run and scenario_error is None else None
+        metrics_error = None
+    except ValueError as error:
+        scenario_metrics, metrics_error = None, str(error)
     passed = (not command_failed and test_was_run and parse_error is None and scenario_error is None
+              and metrics_error is None
               and totals['tests'] > 0 and totals['fail'] == 0 and totals['skipped'] == 0
               and totals['cancelled'] == 0 and totals['todo'] == 0)
     report = {
@@ -135,13 +179,20 @@ def run_report(candidate, output):
         'started_at_utc': start_time.isoformat(), 'ended_at_utc': end_time.isoformat(),
         'exit_code': test_result.returncode, 'duration_seconds': round(sum(x['duration_seconds'] for x in command_results), 3), 'tap': totals,
         'scenarios': scenarios, 'tap_parse_error': parse_error, 'required_scenario_error': scenario_error,
+        'scenario_metrics_error': metrics_error,
         'evidence_limitations': [
             'Runtime integration qualification evidence only; it does not establish issue acceptance or runtime relay behavior.',
             'The test suite uses synthetic/local boundaries and an ephemeral PostgreSQL service.',
+            'Scenario timings are one in-process synthetic HTTPS/mTLS sample; they do not qualify OS process restart, production latency, or Colima/macOS behavior.',
         ],
     }
+    if passed:
+        report['scenario_metrics'] = scenario_metrics
     if not passed and test_output:
-        report['failure_diagnostics'] = bounded_diagnostics(test_output)
+        safe_test_output = '\n'.join(
+            '[invalid stop-manager scenario metrics omitted]' if line.startswith(SCENARIO_METRIC_PREFIX) else line
+            for line in test_output.splitlines())
+        report['failure_diagnostics'] = bounded_diagnostics(safe_test_output)
     Path(output).write_text(json.dumps(report, indent=2) + '\n')
     print('Integration report: ' + json.dumps(report, sort_keys=True))
     if not passed:
