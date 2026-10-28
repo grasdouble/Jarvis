@@ -11,9 +11,6 @@ import time
 from datetime import datetime, timezone
 
 REQUIRED_SCENARIO = 'real PostgreSQL stop controls gate and cancel the real queue worker composition'
-# PR #270 remains the initial exact-head acceptance target. Later reports are
-# gated by producer presence in the trusted PR base or event revision.
-METRICS_REQUIRED_PR = 270
 DIAGNOSTIC_BYTES = 8192
 DIAGNOSTIC_LINES = 120
 SCENARIO_METRIC_PREFIX = '# single PostgreSQL-backed in-process sample:'
@@ -39,19 +36,16 @@ def bounded_diagnostics(text):
     return result
 
 
-def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_sha='',
-                          require_scenario_metrics='false', producer_present='false'):
-    if require_scenario_metrics not in {'true', 'false'}:
-        raise ValueError('Scenario metrics override must be true or false.')
+def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_sha='', producer_present='false'):
     if producer_present not in {'true', 'false'}:
         raise ValueError('Scenario producer presence must be true or false.')
-    if require_scenario_metrics == 'true' and (event_name != 'workflow_dispatch' or ref != 'refs/heads/main'):
-        raise ValueError('Required scenario metrics may be explicitly requested only for main workflow_dispatch.')
     if event_name not in {'pull_request', 'push', 'workflow_dispatch'}:
         raise ValueError('Unsupported event name.')
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError('Event SHA must be 40 lowercase hexadecimal characters.')
     if event_name == 'pull_request':
+        if producer_present != 'true':
+            raise ValueError('Pull request context requires the scenario producer in its base revision.')
         if not re.fullmatch(r'[1-9][0-9]{0,8}', str(pr_number)):
             raise ValueError('Pull request number must be a positive integer.')
         if ref != f'refs/pull/{pr_number}/merge':
@@ -65,20 +59,20 @@ def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_
         if producer_present == 'true':
             candidate['metrics_required'] = True
             candidate['metrics_requirement_source'] = 'producer-in-base'
-        elif int(pr_number) == METRICS_REQUIRED_PR:
-            candidate['metrics_required'] = True
-            candidate['metrics_requirement_source'] = 'initial-target-pr'
         return candidate
     if (not re.fullmatch(r'refs/heads/[A-Za-z0-9._/-]+', ref) or '..' in ref or
             ref.endswith(('/', '.')) or '//' in ref):
         raise ValueError('Push and manual-dispatch event refs must select a branch.')
     if any((pr_number, base_sha, head_sha)):
         raise ValueError('Pull request context is only valid for pull_request events.')
+    if event_name == 'push' and ref == 'refs/heads/main' and producer_present != 'true':
+        raise ValueError('Main push context requires the scenario producer in its event revision.')
+    if event_name == 'workflow_dispatch' and ref == 'refs/heads/main' and producer_present != 'true':
+        raise ValueError('Main workflow-dispatch context requires the scenario producer in its event revision.')
     candidate = {'event': event_name, 'ref': ref, 'sha': sha}
-    if producer_present == 'true' or require_scenario_metrics == 'true':
+    if producer_present == 'true':
         candidate['metrics_required'] = True
-        candidate['metrics_requirement_source'] = ('producer-in-event-revision' if producer_present == 'true'
-                                                   else 'manual-dispatch-override')
+        candidate['metrics_requirement_source'] = 'producer-in-event-revision'
     return candidate
 
 
@@ -267,7 +261,6 @@ def main():
     run.add_argument('--pr', default='')
     run.add_argument('--base', default='')
     run.add_argument('--head', default='')
-    run.add_argument('--require-scenario-metrics', choices=('true', 'false'), default='false')
     run.add_argument('--producer-present', choices=('true', 'false'), default='false')
     run.add_argument('--output', required=True)
     record = sub.add_parser('record-command')
@@ -280,7 +273,7 @@ def main():
     else:
         try:
             candidate = candidate_from_values(args.event, args.ref, args.sha, args.pr, args.base, args.head,
-                                              args.require_scenario_metrics, args.producer_present)
+                                              args.producer_present)
         except ValueError as error:
             print(f'Candidate arguments rejected: {error}', file=sys.stderr)
             raise SystemExit(1)
