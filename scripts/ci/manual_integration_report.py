@@ -49,6 +49,8 @@ def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError('Event SHA must be 40 lowercase hexadecimal characters.')
     if event_name == 'pull_request':
+        if producer_present != 'true':
+            raise ValueError('Pull request context requires the scenario producer in its base revision.')
         if not re.fullmatch(r'[1-9][0-9]{0,8}', str(pr_number)):
             raise ValueError('Pull request number must be a positive integer.')
         if ref != f'refs/pull/{pr_number}/merge':
@@ -68,6 +70,11 @@ def candidate_from_values(event_name, ref, sha, pr_number='', base_sha='', head_
         raise ValueError('Push and manual-dispatch event refs must select a branch.')
     if any((pr_number, base_sha, head_sha)):
         raise ValueError('Pull request context is only valid for pull_request events.')
+    if event_name == 'push' and ref == 'refs/heads/main' and producer_present != 'true':
+        raise ValueError('Main push context requires the scenario producer in its event revision.')
+    if (event_name == 'workflow_dispatch' and ref == 'refs/heads/main' and producer_present != 'true' and
+            require_scenario_metrics != 'true'):
+        raise ValueError('Main workflow-dispatch context requires the scenario producer or explicit metrics override.')
     candidate = {'event': event_name, 'ref': ref, 'sha': sha}
     if producer_present == 'true' or require_scenario_metrics == 'true':
         candidate['metrics_required'] = True

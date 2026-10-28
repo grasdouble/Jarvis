@@ -13,17 +13,14 @@ class ManualIntegrationReportTests(unittest.TestCase):
                         'cancellation request 56.78ms; manager accepted request but withheld response for 301.23ms; '
                         'configured client timeout 300ms; active stop/cancel completion 307.89ms. Local synthetic '
                         'evidence only; no OS process restart or production latency qualification.')
-    generic_scenario_diagnostic = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim '
-                                     'attempt 12.34ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS '
-                                     'manager cancellation request 56.78ms; active stop/cancel completion 307.89ms. Local '
-                                     'synthetic evidence only; no OS process restart or production latency qualification.')
-
     def test_event_base_controls_metrics_requirement_and_dispatch_is_only_an_additional_override(self):
-        bootstrap = report.candidate_from_values('pull_request', 'refs/pull/281/merge', 'a' * 40,
-                                                 '281', 'b' * 40, 'a' * 40, producer_present='false')
+        with self.assertRaises(ValueError):
+            report.candidate_from_values('pull_request', 'refs/pull/281/merge', 'a' * 40,
+                                         '281', 'b' * 40, 'a' * 40, producer_present='false')
         future_pr = report.candidate_from_values('pull_request', 'refs/pull/999/merge', 'a' * 40,
                                                  '999', 'b' * 40, 'a' * 40, producer_present='true')
-        early_push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='false')
+        with self.assertRaises(ValueError):
+            report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='false')
         producer_push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true')
         dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
                                                require_scenario_metrics='true')
@@ -31,15 +28,17 @@ class ManualIntegrationReportTests(unittest.TestCase):
             self.assertTrue(required['metrics_required'])
         self.assertEqual(future_pr['metrics_requirement_source'], 'producer-in-base')
         self.assertEqual(producer_push['metrics_requirement_source'], 'producer-in-event-revision')
-        for optional in (bootstrap, early_push):
-            self.assertNotIn('metrics_required', optional)
 
     def test_main_dispatch_can_explicitly_require_metrics_and_invalid_contexts_are_rejected(self):
+        with self.assertRaises(ValueError):
+            report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
+                                         producer_present='false')
         dispatch = report.candidate_from_values('workflow_dispatch', 'refs/heads/main', 'd' * 40,
-                                                require_scenario_metrics='true')
+                                                require_scenario_metrics='true', producer_present='false')
+        self.assertEqual(dispatch['metrics_requirement_source'], 'manual-dispatch-override')
         self.assertTrue(dispatch['metrics_required'])
-        push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40)
-        self.assertNotIn('metrics_required', push)
+        push = report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true')
+        self.assertTrue(push['metrics_required'])
         for args in (
                 ('push', 'refs/heads/main', 'd' * 40, '', '', '', 'true'),
                 ('workflow_dispatch', 'refs/heads/release', 'd' * 40, '', '', '', 'true'),
@@ -91,13 +90,15 @@ class ManualIntegrationReportTests(unittest.TestCase):
 
     def test_event_context_validation_preserves_pr_context_and_rejects_bad_values(self):
         data = report.candidate_from_values('pull_request', 'refs/pull/17/merge', 'a' * 40,
-                                            '17', 'b' * 40, 'a' * 40)
+                                            '17', 'b' * 40, 'a' * 40, producer_present='true')
         self.assertEqual(data, {'event': 'pull_request', 'ref': 'refs/pull/17/merge', 'sha': 'a' * 40,
-                                'pr': 17, 'base': 'b' * 40, 'head': 'a' * 40})
+                                'pr': 17, 'base': 'b' * 40, 'head': 'a' * 40,
+                                'metrics_required': True, 'metrics_requirement_source': 'producer-in-base'})
         self.assertEqual(report.candidate_from_values('workflow_dispatch', 'refs/heads/feature/test', 'c' * 40),
                          {'event': 'workflow_dispatch', 'ref': 'refs/heads/feature/test', 'sha': 'c' * 40})
-        self.assertEqual(report.candidate_from_values('push', 'refs/heads/main', 'd' * 40),
-                         {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'd' * 40})
+        self.assertEqual(report.candidate_from_values('push', 'refs/heads/main', 'd' * 40, producer_present='true'),
+                         {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'd' * 40,
+                          'metrics_required': True, 'metrics_requirement_source': 'producer-in-event-revision'})
         for args in [('push', 'refs/heads/main', 'A' * 40),
                      ('push', 'refs/heads/../main', 'a' * 40),
                      ('push', 'refs/tags/v1', 'a' * 40),
@@ -333,20 +334,6 @@ class ManualIntegrationReportTests(unittest.TestCase):
         self.assertIn('metrics', saved['scenario_metrics_error'])
         self.assertNotIn('scenario_metrics', saved)
 
-    def test_main_push_before_producer_lands_passes_without_metrics(self):
-        candidate = {'event': 'push', 'ref': 'refs/heads/main', 'sha': 'a' * 40}
-        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
-               '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
-        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
-        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'report.json'
-            with patch.object(report.subprocess, 'run', side_effect=results):
-                report.run_report(candidate, output)
-            saved = json.loads(output.read_text())
-        self.assertEqual(saved['result'], 'pass')
-        self.assertNotIn('scenario_metrics', saved)
-
     def test_producer_present_main_push_missing_metrics_fails_closed(self):
         candidate = report.candidate_from_values(
             'push', 'refs/heads/main', 'a' * 40, producer_present='true')
@@ -385,43 +372,6 @@ class ManualIntegrationReportTests(unittest.TestCase):
             self.assertEqual(saved['result'], 'pass' if diagnostic else 'fail')
             if diagnostic:
                 self.assertEqual(saved['scenario_metrics']['scenario'], 'stop-manager-nonresponse')
-
-    def test_pr_281_generic_current_main_diagnostic_passes_without_metrics(self):
-        candidate = {'event': 'pull_request', 'ref': 'refs/pull/281/merge', 'sha': 'a' * 40,
-                     'pr': 281, 'base': 'b' * 40, 'head': 'a' * 40}
-        tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
-               '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
-        results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
-        results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'report.json'
-            with patch.object(report.subprocess, 'run', side_effect=results):
-                report.run_report(candidate, output)
-            saved = json.loads(output.read_text())
-        self.assertEqual(saved['result'], 'pass')
-        self.assertIsNone(saved['scenario_metrics_error'])
-        self.assertNotIn('scenario_metrics', saved)
-
-    def test_producer_base_requires_metrics_while_bootstrap_base_accepts_legacy_report(self):
-        for number, producer_present, expected in ((281, 'false', 'pass'),
-                                                    (999, 'true', 'fail')):
-            candidate = report.candidate_from_values(
-                'pull_request', f'refs/pull/{number}/merge', 'a' * 40, str(number),
-                'b' * 40, 'a' * 40, producer_present=producer_present)
-            tap = (f'ok 1 - {report.REQUIRED_SCENARIO}\n{self.generic_scenario_diagnostic}\n'
-                   '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n')
-            results = [type('Result', (), {'returncode': 0, 'stdout': ''})() for _ in range(2)]
-            results.append(type('Result', (), {'returncode': 0, 'stdout': tap})())
-            with self.subTest(number=number), tempfile.TemporaryDirectory() as directory:
-                output = Path(directory) / 'report.json'
-                with patch.object(report.subprocess, 'run', side_effect=results):
-                    if expected == 'fail':
-                        with self.assertRaises(SystemExit):
-                            report.run_report(candidate, output)
-                    else:
-                        report.run_report(candidate, output)
-                saved = json.loads(output.read_text())
-                self.assertEqual(saved['result'], expected)
 
     def test_missing_malformed_over_limit_or_secret_metrics_fail_closed(self):
         valid = ('# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt 12.34ms '
