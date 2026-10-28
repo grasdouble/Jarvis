@@ -18,6 +18,11 @@ case "$1" in
   up|ps|logs|down) command="$1"; shift ;;
   *) printf 'jarvis-colima: unsupported Compose command: %s\n' "$1" >&2; exit 2 ;;
 esac
+: "${JARVIS_APP_IMAGE:?set JARVIS_APP_IMAGE to a trusted immutable image@sha256:digest reference}"
+[[ "$JARVIS_APP_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || {
+  echo "jarvis-colima: JARVIS_APP_IMAGE must be an immutable repository@sha256:digest reference" >&2
+  exit 2
+}
 
 colima status --profile jarvis >/dev/null
 socket_gid="$(colima ssh --profile jarvis -- getent group docker | awk -F: '$1 == "docker" {print $3}')"
@@ -27,5 +32,5 @@ socket_gid="$(colima ssh --profile jarvis -- getent group docker | awk -F: '$1 =
 }
 compose_profile_args=()
 [[ -z "$compose_profile" ]] || compose_profile_args+=(--profile "$compose_profile")
-colima ssh --profile jarvis -- sudo env "DOCKER_SOCKET_GID=$socket_gid" \
-  docker compose "${compose_profile_args[@]}" -f /etc/jarvis/compose.yaml "$command" "$@"
+colima ssh --profile jarvis -- sudo env "DOCKER_SOCKET_GID=$socket_gid" "JARVIS_APP_IMAGE=$JARVIS_APP_IMAGE" \
+  docker compose "${compose_profile_args[@]}" -f /etc/jarvis/compose.yaml -f /etc/jarvis/app.compose.yaml "$command" "$@"

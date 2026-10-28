@@ -9,6 +9,11 @@ source "$SCRIPT_DIR/versions.env"
   printf 'usage: %s --profile jarvis\n' "$0" >&2
   exit 2
 }
+colima ssh --profile jarvis -- sudo sh -c \
+  'test ! -e /etc/jarvis/compose.yaml && test ! -e /etc/jarvis/app.compose.yaml' || {
+  echo "jarvis-colima: refusing to overwrite an existing guest Compose manifest" >&2
+  exit 1
+}
 
 tmp_dir="$(mktemp -d "${TMPDIR:-$HOME}/jarvis-compose.XXXXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -28,6 +33,8 @@ cat "$binary" | colima ssh --profile jarvis -- sudo sh -c \
 colima ssh --profile jarvis -- sudo install -d -m 0750 /etc/jarvis
 cat "$SCRIPT_DIR/../compose/compose.yaml" | colima ssh --profile jarvis -- sudo sh -c \
   'cat > /etc/jarvis/compose.yaml && chmod 0640 /etc/jarvis/compose.yaml'
+cat "$SCRIPT_DIR/../compose/app.compose.yaml" | colima ssh --profile jarvis -- sudo sh -c \
+  'cat > /etc/jarvis/app.compose.yaml && chmod 0640 /etc/jarvis/app.compose.yaml'
 
 actual="$(colima ssh --profile jarvis -- docker compose version | sed -nE 's/^Docker Compose version v?([0-9.]+)$/\1/p')"
 [[ "$actual" == "$COMPOSE_VERSION" ]] || {
