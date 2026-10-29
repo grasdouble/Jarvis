@@ -1,0 +1,27 @@
+name: jarvis-test
+services:
+  postgres:
+    image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+    platform: linux/arm64
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/test_postgres_password
+      POSTGRES_DB: jarvis_test
+    secrets:
+      - test_postgres_password
+    volumes:
+      - test_postgres_data:/var/lib/postgresql
+    networks: [test_core]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d jarvis_test]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+secrets:
+  test_postgres_password:
+    file: /etc/jarvis-test/secrets/postgres_password
+volumes:
+  test_postgres_data:
+networks:
+  test_core:
+    internal: true
