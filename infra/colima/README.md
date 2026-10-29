@@ -8,6 +8,10 @@ This directory provisions the JARVIS-only Colima profile. It never changes or ac
 
 The owner-selected resource baseline is 4 VM CPUs, 8 GiB RAM, an 80 GiB VM disk, at least 40 GiB free on the Mac before provisioning, and a 2-CPU/4-GiB per-sandbox target. The bootstrap refuses a host below those CPU, memory, architecture, macOS, or free-space requirements. These are selected targets, not a claim that product sandbox quotas are implemented or qualified.
 
+## CI validation boundary
+
+Pull requests and pushes to `main` validate the merged base/application Compose configuration and build and inspect the real API image for `linux/arm64`. CI does not publish the image, produce a registry digest, access a VM or guest, or deploy/start services. Until an operator selects a registry and resolves its pull-authentication requirements, producing and deploying a registry image remains an operator task; live deployment checks described below are not performed by CI.
+
 ## Commands and effects
 
 Run from the repository root:

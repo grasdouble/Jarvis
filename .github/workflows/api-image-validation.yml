@@ -1,0 +1,79 @@
+name: API image validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-image-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-build:
+    name: Compose validation and ARM64 API build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOCKER_SOCKET_GID: '999'
+      JARVIS_APP_IMAGE: jarvis/api:ci-validation@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install and verify pinned Docker Compose
+        env:
+          COMPOSE_SHA256: 40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/docker/compose/releases/download/v5.6.0/docker-compose-linux-x86_64 \
+            --output "$RUNNER_TEMP/docker-compose"
+          printf '%s  %s\n' "$COMPOSE_SHA256" "$RUNNER_TEMP/docker-compose" | sha256sum --check --status
+          sudo install -D -m 0755 "$RUNNER_TEMP/docker-compose" /usr/local/lib/docker/cli-plugins/docker-compose
+      - name: Validate merged base and application Compose configuration
+        run: |
+          set -euo pipefail
+          validation_dir="$(mktemp -d "$RUNNER_TEMP/compose-validation.XXXXXX")"
+          trap 'rm -rf "$validation_dir"' EXIT
+          printf 'synthetic CI validation input\n' > "$validation_dir/secret"
+          cat > "$validation_dir/secrets.compose.yaml" <<EOF
+          secrets:
+            postgres_password:
+              file: $validation_dir/secret
+            sandbox_manager_tls_key:
+              file: $validation_dir/secret
+            sandbox_manager_tls_cert:
+              file: $validation_dir/secret
+            sandbox_manager_client_ca:
+              file: $validation_dir/secret
+            jarvis_migrator_password:
+              file: $validation_dir/secret
+            jarvis_runtime_password:
+              file: $validation_dir/secret
+            owner_onboarding_secret:
+              file: $validation_dir/secret
+          EOF
+          docker compose \
+            --file infra/compose/compose.yaml \
+            --file infra/compose/app.compose.yaml \
+            --file "$validation_dir/secrets.compose.yaml" \
+            config --quiet
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build API image for ARM64 without publishing
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/compose/Dockerfile
+          platforms: linux/arm64
+          tags: jarvis-api:ci-validation
+          push: false
+          load: true
+      - name: Confirm the loaded image architecture
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect jarvis-api:ci-validation --format '{{.Os}}/{{.Architecture}}')" = linux/arm64
