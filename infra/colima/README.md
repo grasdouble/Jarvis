@@ -53,7 +53,7 @@ At task start, inspect the Colima inventory. Do not stop a profile that was alre
 
 ## Isolated local test profile
 
-`jarvis-test` is separate from the accepted `jarvis` baseline and `default`. It has its own Colima config and Engine context (`colima-jarvis-test`), Compose project (`jarvis-test`), database secret path (`/etc/jarvis-test/secrets/postgres_password`), network and persistent volume. It uses ARM64 Docker, Kubernetes off, four CPUs, 8 GiB, 80 GiB, `autoActivate: false`, `mounts: null`, and no SSH-agent forwarding. No test helper falls back to the active context or targets the production profile.
+`jarvis-test` is separate from the accepted `jarvis` baseline and `default`. It has its own Colima config and Engine context (`colima-jarvis-test`), Compose project (`jarvis-test`), database secret path (`/etc/jarvis-test/secrets/postgres_password`), network and persistent volume. It uses ARM64 Docker, Kubernetes off, four CPUs, 8 GiB, 80 GiB, `autoActivate: false`, `mounts: null`, and no SSH-agent forwarding. No test helper falls back to the active context or targets the primary local `jarvis` POC profile.
 
 The test-profile preflight reserves capacity for the complete VM, including checking physical CPU count against all running Colima profiles, currently available host memory, and free host disk. It fails rather than changing another profile or reducing the requested VM. Run it before provisioning:
 
@@ -108,7 +108,7 @@ It verifies the test context points to the exact test socket, invokes `docker co
 
 ## Evidence and limitations
 
-Record the source SHA, exact local image ID and architecture, commands, exit statuses, and test output with each validation run. Report PostgreSQL readiness, API health/authentication, DB behavior, loopback-only listener behavior, and whether a separate LAN device was available as separate observations; do not infer one from another. The source includes the API deployment image and authenticated Compose service, and the PR #288 `jarvis-test` smoke is recorded in the linked issue/PR. It does not establish a registry-published digest, a running production `jarvis` service, a real owner account, or LAN isolation; `jarvis` DNS has not been runtime-verified. No separate-device check is possible from the Mac itself.
+Record the source SHA, exact local image ID and architecture, commands, exit statuses, and test output with each validation run. Report PostgreSQL readiness, API health/authentication, DB behavior, loopback-only listener behavior, and whether a separate LAN device was available as separate observations; do not infer one from another. The PR #288 `jarvis-test` smoke verifies only that separate local test profile. It does not establish the target development POC in the primary `jarvis` profile, its loopback-only `127.0.0.1:3000` listener, an authorized owner session, or separate-device LAN isolation. `jarvis` DNS has not been runtime-verified. No external production environment is in scope for this POC, and no separate-device check is possible from the Mac itself.
 
 ## VM-local secrets
 
@@ -141,7 +141,7 @@ The PostgreSQL service is internal-only and has no host port. `db-bootstrap` and
 
 The sandbox-manager is an opt-in Compose profile, not started by ordinary `up`. Its build script verifies the explicit ARM64 `colima-jarvis` Engine and builds a digest-pinned Node.js 24.22.0 image without starting it. The Compose definition mounts the guest Engine socket only into the manager, uses the guest Docker group resolved by the wrapper, drops capabilities, uses a read-only root filesystem, exposes no host port, and attaches only to the internal `core` network. It cannot start until the owner-controlled profile file and TLS server key/certificate/client CA are provisioned in the guest. These files are not created by `bootstrap.sh` or this change. Do not enable the profile or product tasks until J01 security review and live isolation qualification pass; static configuration and mock API tests are not proof of runtime isolation. See [`infra/sandbox-manager/README.md`](../sandbox-manager/README.md).
 
-The API and React UI production composition is now present in source, but this does not establish a deployed image digest, a running UI listener, a successful owner login, or LAN isolation. The deployment wrapper's host-side forwarding and the separate-device negative test require the selected Mac and a second LAN device; those live checks remain outstanding.
+The API and React UI composition for the local dedicated-`jarvis` POC is present in source, but no `jarvis` POC run has established a pinned image in that VM, a running UI listener, a successful owner-authenticated session, or LAN isolation. The deployment wrapper's host-side forwarding and the separate-device negative test require the selected Mac and a second LAN device; these local POC checks remain outstanding. External production deployment is not part of this POC.
 
 ## Recovery and limitations
 
