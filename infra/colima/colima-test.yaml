@@ -1,0 +1,15 @@
+arch: aarch64
+autoActivate: false
+cpu: 4
+disk: 80
+forwardAgent: false
+memory: 8
+mounts: null
+network:
+  address: false
+  mode: shared
+runtime: docker
+sshConfig: false
+vmType: vz
+kubernetes:
+  enabled: false

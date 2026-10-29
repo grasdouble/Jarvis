@@ -5,13 +5,39 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/versions.env"
 
-[[ "${1:-}" == "--profile" && "${2:-}" == "jarvis" && $# == 2 ]] || {
-  printf 'usage: %s --profile jarvis\n' "$0" >&2
+[[ "${1:-}" == "--profile" && $# == 2 ]] || {
+  printf 'usage: %s --profile {jarvis|jarvis-test}\n' "$0" >&2
   exit 2
 }
-colima ssh --profile jarvis -- sudo sh -c \
-  'test ! -e /etc/jarvis/compose.yaml && test ! -e /etc/jarvis/app.compose.yaml' || {
-  echo "jarvis-colima: refusing to overwrite an existing guest Compose manifest" >&2
+profile="$2"
+case "$profile" in
+  jarvis|jarvis-test) ;;
+  *) printf 'unsupported Colima profile: %s\n' "$profile" >&2; exit 2 ;;
+esac
+context="colima-$profile"
+socket="${COLIMA_HOME:-$HOME/.colima}/$profile/docker.sock"
+case "$profile" in
+  jarvis) guest_config=/etc/jarvis/compose.yaml; host_compose="$SCRIPT_DIR/../compose/compose.yaml" ;;
+  jarvis-test) guest_config=/etc/jarvis-test/compose.yaml; host_compose="$SCRIPT_DIR/compose-test.yaml" ;;
+esac
+guest_dir="${guest_config%/*}"
+
+# Preserve the production helper's refusal to replace either protected manifest.
+if [[ "$profile" == jarvis ]]; then
+  colima ssh --profile jarvis -- sudo sh -c \
+    'test ! -e /etc/jarvis/compose.yaml && test ! -e /etc/jarvis/app.compose.yaml' || {
+    echo "jarvis-colima: refusing to overwrite an existing guest Compose manifest" >&2
+    exit 1
+  }
+fi
+
+docker context inspect "$context" >/dev/null || {
+  printf 'jarvis-colima: required Docker context %s is unavailable\n' "$context" >&2
+  exit 1
+}
+endpoint="$(docker context inspect "$context" --format '{{.Endpoints.docker.Host}}')"
+[[ "$endpoint" == "unix://$socket" ]] || {
+  printf 'jarvis-colima: context %s targets unexpected Engine: %s\n' "$context" "$endpoint" >&2
   exit 1
 }
 
@@ -27,17 +53,19 @@ actual_sha="$(shasum -a 256 "$binary" | awk '{print $1}')"
 }
 
 # Transfer through Colima's authenticated SSH channel; never use a Mac share.
-colima ssh --profile jarvis -- sudo install -d -m 0755 /usr/local/lib/docker/cli-plugins
-cat "$binary" | colima ssh --profile jarvis -- sudo sh -c \
+colima ssh --profile "$profile" -- sudo install -d -m 0755 /usr/local/lib/docker/cli-plugins
+cat "$binary" | colima ssh --profile "$profile" -- sudo sh -c \
   'cat > /usr/local/lib/docker/cli-plugins/docker-compose && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose'
-colima ssh --profile jarvis -- sudo install -d -m 0750 /etc/jarvis
-cat "$SCRIPT_DIR/../compose/compose.yaml" | colima ssh --profile jarvis -- sudo sh -c \
-  'cat > /etc/jarvis/compose.yaml && chmod 0640 /etc/jarvis/compose.yaml'
-cat "$SCRIPT_DIR/../compose/app.compose.yaml" | colima ssh --profile jarvis -- sudo sh -c \
-  'cat > /etc/jarvis/app.compose.yaml && chmod 0640 /etc/jarvis/app.compose.yaml'
+colima ssh --profile "$profile" -- sudo install -d -m 0750 "$guest_dir"
+cat "$host_compose" | colima ssh --profile "$profile" -- sudo sh -c \
+  "cat > '$guest_config' && chmod 0640 '$guest_config'"
+if [[ "$profile" == jarvis ]]; then
+  cat "$SCRIPT_DIR/../compose/app.compose.yaml" | colima ssh --profile jarvis -- sudo sh -c \
+    'cat > /etc/jarvis/app.compose.yaml && chmod 0640 /etc/jarvis/app.compose.yaml'
+fi
 
-actual="$(colima ssh --profile jarvis -- docker compose version | sed -nE 's/^Docker Compose version v?([0-9.]+)$/\1/p')"
+actual="$(colima ssh --profile "$profile" -- docker compose version | sed -nE 's/^Docker Compose version v?([0-9.]+)$/\1/p')"
 [[ "$actual" == "$COMPOSE_VERSION" ]] || {
-  printf 'jarvis-colima: expected Docker Compose %s, found %s\n' "$COMPOSE_VERSION" "$actual" >&2
+  printf '%s-colima: expected Docker Compose %s, found %s\n' "$profile" "$COMPOSE_VERSION" "$actual" >&2
   exit 1
 }
