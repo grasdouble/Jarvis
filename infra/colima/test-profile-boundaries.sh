@@ -5,6 +5,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home/.colima/jarvis-test"
 cp "$SCRIPT_DIR/colima-test.yaml" "$tmp/home/.colima/jarvis-test/colima.yaml"
+printf '\n# Colima normalizes its persisted configuration after first start.\ndns: []\n' >>"$tmp/home/.colima/jarvis-test/colima.yaml"
 cat >"$tmp/bin/colima" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$COLIMA_LOG"
@@ -27,6 +28,7 @@ cat >"$tmp/bin/docker" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$DOCKER_LOG"
 if [[ "$1 $2 $3" == 'context inspect colima-jarvis-test' ]]; then
+  [[ "${ALLOW_MISSING_CONTEXT:-0}" == 0 || -e "$START_MARKER" ]] || exit 1
   [[ -e "$DELETE_MARKER" ]] && exit 1
   [[ -e "$WRONG_ENDPOINT_MARKER" ]] && printf '%s\n' "unix://$COLIMA_HOME/jarvis/docker.sock" || printf '%s\n' "$TEST_ENDPOINT"
   exit 0
@@ -87,6 +89,18 @@ printf 'mock compose binary\n' >"$MOCK_DOWNLOAD"
 export COMPOSE_URL=https://example.invalid/mock-compose
 export DOCKER_ENGINE_VERSION=29.5.2 DOCKER_ENGINE_PACKAGE_VERSION='5:29.5.2-1~ubuntu.24.04~noble' DOCKER_CLI_PACKAGE_VERSION='5:29.5.2-1~ubuntu.24.04~noble' CONTAINERD_PACKAGE_VERSION='2.2.4-1~ubuntu.24.04~noble' COMPOSE_VERSION=5.6.0 COMPOSE_SHA256="$(awk -F= '$1 == "COMPOSE_SHA256" {print $2}' "$SCRIPT_DIR/versions.env")"
 "$SCRIPT_DIR/test-profile.sh" --verify
+printf 'cpu: 8\n' >>"$COLIMA_HOME/jarvis-test/colima.yaml"
+if "$SCRIPT_DIR/test-profile.sh" --verify >"$tmp/verify-output" 2>&1; then
+  echo 'duplicate conflicting CPU setting was accepted' >&2; exit 1
+fi
+cp "$SCRIPT_DIR/colima-test.yaml" "$COLIMA_HOME/jarvis-test/colima.yaml"
+awk '!/^arch:/' "$COLIMA_HOME/jarvis-test/colima.yaml" >"$tmp/wrong-scope.yaml"
+printf '\nother:\n    arch: aarch64\n' >>"$tmp/wrong-scope.yaml"
+cp "$tmp/wrong-scope.yaml" "$COLIMA_HOME/jarvis-test/colima.yaml"
+if "$SCRIPT_DIR/test-profile.sh" --verify >"$tmp/verify-output" 2>&1; then
+  echo 'wrongly scoped security setting was accepted' >&2; exit 1
+fi
+cp "$SCRIPT_DIR/colima-test.yaml" "$COLIMA_HOME/jarvis-test/colima.yaml"
 run_provision_helper_checks() (
   mkdir -p "$tmp/helper-home/.colima/jarvis" "$tmp/helper-home/.colima/jarvis-test" "$tmp/helper-bin"
   export HOME="$tmp/helper-home" COLIMA_HOME="$tmp/helper-home/.colima" HELPER_COLIMA_LOG="$tmp/helper-colima.log" HELPER_DOCKER_LOG="$tmp/helper-docker.log"
@@ -208,15 +222,16 @@ rm -f "$DELETE_MARKER" "$START_MARKER"
 rm -rf "$COLIMA_HOME/jarvis-test"
 export ALLOW_MISSING_CONTEXT=1 INVENTORY_FAIL=1
 : >"$COLIMA_LOG"
-if "$SCRIPT_DIR/test-profile.sh" --apply >/dev/null 2>&1; then
+if "$SCRIPT_DIR/test-profile.sh" --apply >"$tmp/apply-output" 2>&1; then
   echo 'apply continued after Colima inventory command failure' >&2; exit 1
 fi
+grep -Fq 'cannot enumerate Colima profiles for CPU capacity preflight' "$tmp/apply-output" || { cat "$tmp/apply-output" >&2; echo 'apply rejected the missing test context before reaching the capacity preflight' >&2; exit 1; }
 [[ ! -e "$START_MARKER" && ! -e "$COLIMA_HOME/jarvis-test" ]] || { echo 'inventory command failure performed destructive provisioning' >&2; exit 1; }
 if grep -E 'start jarvis-test|delete ' "$COLIMA_LOG"; then
   echo 'inventory command failure invoked a Colima mutation' >&2; exit 1
 fi
 export INVENTORY_FAIL=0
-printf '%s\n' '{"name":"default","status":"Running","cpus":2}' '{"name":"jarvis","status":"Running","cpus":2}' '{"name":"third-profile","status":"Running","cpus":4}' >"$INVENTORY_FILE"
+printf '%s\n' '{"name":"default","status":"Running","cpus":4}' '{"name":"jarvis","status":"Running","cpus":4}' '{"name":"third-profile","status":"Running","cpus":1}' >"$INVENTORY_FILE"
 : >"$COLIMA_LOG"
 if "$SCRIPT_DIR/test-profile.sh" --apply >/dev/null 2>&1; then
   echo 'apply ignored CPU allocation from a third running Colima profile' >&2; exit 1

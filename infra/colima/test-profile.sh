@@ -60,7 +60,9 @@ print(total)
 
 ensure_test_profile_absent() {
   [[ ! -e "$PROFILE_DIR" && ! -L "$PROFILE_DIR" ]] || fail "refusing to modify existing or dangling-symlink test profile: $PROFILE_DIR"
-  docker context inspect "$CONTEXT" >/dev/null 2>&1 && fail "refusing to replace pre-existing context $CONTEXT"
+  if docker context inspect "$CONTEXT" >/dev/null 2>&1; then
+    fail "refusing to replace pre-existing context $CONTEXT"
+  fi
 }
 
 require_clean_source() {
@@ -72,7 +74,52 @@ require_clean_source() {
 
 verify_profile() {
   [[ -f "$PROFILE_DIR/colima.yaml" ]] || fail 'test profile configuration is missing'
-  cmp -s "$SCRIPT_DIR/colima-test.yaml" "$PROFILE_DIR/colima.yaml" || fail 'test profile configuration differs from the dedicated checked-in configuration'
+  python3 - "$PROFILE_DIR/colima.yaml" <<'PY' || fail 'test profile configuration has missing, conflicting, duplicate, or wrongly scoped security settings'
+import re
+import sys
+
+expected = {
+    ("", "arch"): "aarch64",
+    ("", "autoActivate"): "false",
+    ("", "cpu"): "4",
+    ("", "disk"): "80",
+    ("", "forwardAgent"): "false",
+    ("", "memory"): "8",
+    ("", "mounts"): "null",
+    ("", "runtime"): "docker",
+    ("", "sshConfig"): "false",
+    ("", "vmType"): "vz",
+    ("kubernetes", "enabled"): "false",
+    ("network", "address"): "false",
+    ("network", "mode"): "shared",
+}
+found = {}
+section = None
+with open(sys.argv[1], encoding="utf-8") as config:
+    for line in config:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"( *)([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?\s*", line.rstrip("\n"))
+        if not match:
+            continue
+        indent, key, value = match.groups()
+        path = ("", key) if not indent else (section, key) if len(indent) == 2 else ("<invalid>", key)
+        if not indent and value == "":
+            section = key
+            continue
+        if not indent:
+            section = None
+        if path not in expected:
+            continue
+        value = re.sub(r"[ \t]+#.*$", "", value or "").strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if path in found or value != expected[path]:
+            raise SystemExit(1)
+        found[path] = value
+if found.keys() != expected.keys():
+    raise SystemExit(1)
+PY
   local status expected shared_mounts canary canary_result engine compose_version packages
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/versions.env"
