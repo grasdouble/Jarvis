@@ -23,6 +23,35 @@ infra/colima/verify.sh --profile jarvis --require-ui
 - `--apply` creates the new `~/.colima/jarvis` configuration, starts the isolated named profile without activating a global context, pins guest Engine packages, installs the checksummed Compose plugin, and copies `infra/compose/compose.yaml` through the profile's SSH channel. It fails rather than overwriting any existing `jarvis` profile. It does not start product services or create secrets.
 - `verify.sh` reads the live Colima/Engine state, checks exact package/tool versions, ARM64 identity, effective guest mounts, SSH-agent absence, a temporary host-home canary, and rejects all non-loopback container port bindings. `--require-ui` additionally requires the application listener check below. No command deletes a profile or changes `default`.
 - `verify-listener.sh --profile jarvis` requires a running UI on `127.0.0.1:3000`, checks the host-side listener is bound only to `127.0.0.1`, rejects other published host addresses, and checks that an unauthenticated HTTP request is denied (401 or a same-origin login redirect). A positive authenticated login and a negative test from another LAN device still require the later authenticated UI and a second device; this script cannot establish either by itself.
+## Isolated local test profile
+
+`jarvis-test` is separate from the accepted `jarvis` baseline and `default`. It has its own Colima config and Engine context (`colima-jarvis-test`), Compose project (`jarvis-test`), database secret path (`/etc/jarvis-test/secrets/postgres_password`), network and persistent volume. It uses ARM64 Docker, Kubernetes off, four CPUs, 8 GiB, 80 GiB, `autoActivate: false`, `mounts: null`, and no SSH-agent forwarding. No test helper falls back to the active context or targets the production profile.
+
+The test-profile preflight reserves capacity for the complete VM, including checking physical CPU count against all running Colima profiles, currently available host memory, and free host disk. It fails rather than changing another profile or reducing the requested VM. Run it before provisioning:
+
+```bash
+infra/colima/test-profile.sh --check-host
+infra/colima/test-profile.sh --apply
+infra/colima/test-profile.sh --verify
+infra/colima/test-profile.sh --db-up
+infra/colima/test-profile.sh --db-check
+```
+
+Provisioning refuses existing test-profile configuration or an existing `colima-jarvis-test` context and starts only `jarvis-test` with activation disabled. Verification checks the exact config, VM allocation, context socket identity and ARM64 engine. Never point the test workflow at `colima-jarvis` or rely on Docker's active context.
+
+`infra/colima/test-profile.sh --run <40-character-source-SHA>` requires the argument to match the checked-out commit and refuses any tracked or untracked worktree changes before building. It also fails with a direct prerequisite message unless the root product `Dockerfile` exists; that Dockerfile/API runtime image is currently absent, so no JARVIS image, deployment, or runtime result is available. When the build input exists, the command asks Buildx to build for `linux/arm64`, load in the test Engine, and report the local image ID and platform. It never pushes or logs into a registry. `--apply` creates a random synthetic PostgreSQL password directly in the VM through SSH without printing it. The test Compose project uses an isolated PostgreSQL volume and internal network, with no published host port. Existing ordinary PostgreSQL integration tests continue to use their existing ephemeral/disposable database setup.
+
+Cleanup is deliberately explicit and test-only:
+
+```bash
+infra/colima/test-profile.sh --cleanup
+```
+
+It verifies the test context points to the exact test socket, invokes `docker compose -p jarvis-test ... down --volumes` inside the test VM, then stops and deletes only `jarvis-test`. It does not prune Docker resources or remove any other profile/context. Preserve before/after snapshots of `colima list`, Docker contexts, and container/volume inventories when performing a native smoke; compare both `jarvis` and `default` as unchanged. Behavioral boundary checks: `bash infra/colima/test-profile-boundaries.sh`.
+
+## Evidence and limitations
+
+Record the source SHA, exact local image ID and architecture, commands, exit statuses, and test output with each validation run. Report PostgreSQL readiness, API health/authentication, DB behavior, loopback-only listener behavior, and whether a separate LAN device was available as separate observations; do not infer one from another. The current workspace does not provide a production API deployment image or a complete authenticated product deployment, so those runtime behaviors must be stated unavailable rather than claimed by the profile bootstrap. No separate-device check is possible from the Mac itself.
 
 ## VM-local secrets
 
