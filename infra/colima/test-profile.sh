@@ -10,6 +10,10 @@ COLIMA_HOME="${COLIMA_HOME:-$HOME/.colima}"
 PROFILE_DIR="$COLIMA_HOME/$PROFILE"
 fail() { printf 'jarvis-test: %s\n' "$*" >&2; exit 1; }
 
+host_tool_preflight() {
+  "$SCRIPT_DIR/bootstrap.sh" --check-host || fail 'supported-host and pinned-tool preflight failed'
+}
+
 context_guard() {
   local endpoint expected
   docker context inspect "$CONTEXT" >/dev/null || fail "required Docker context $CONTEXT is unavailable"
@@ -148,13 +152,15 @@ PY
 
 case "${1:-}" in
   --check-host)
+    host_tool_preflight
     capacity_preflight
-    printf 'Full-capacity preflight passed for %s (4 CPU/8 GiB/80 GiB).\n' "$PROFILE"
+    printf 'Host preflight passed; test VM capacity is available (4 CPU/8 GiB/80 GiB, with a 40 GiB host-free-space floor).\n'
     ;;
   --apply)
+    host_tool_preflight
     ensure_test_profile_absent
+    [[ -d "$COLIMA_HOME" && ! -L "$COLIMA_HOME" ]] || fail "Colima home must exist as a real directory: $COLIMA_HOME"
     capacity_preflight
-    [[ -d "$COLIMA_HOME" && ! -L "$COLIMA_HOME" ]] || fail 'Colima home must exist as a real directory, not a symlink'
     install -d -m 0700 "$PROFILE_DIR"
     install -m 0600 "$SCRIPT_DIR/colima-test.yaml" "$PROFILE_DIR/colima.yaml"
     colima start "$PROFILE" --activate=false || fail "Colima start failed; leaving $PROFILE_DIR untouched for explicit inspection"

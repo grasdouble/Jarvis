@@ -6,16 +6,29 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home/.colima/jarvis-test"
 cp "$SCRIPT_DIR/colima-test.yaml" "$tmp/home/.colima/jarvis-test/colima.yaml"
 printf '\n# Colima normalizes its persisted configuration after first start.\ndns: []\n' >>"$tmp/home/.colima/jarvis-test/colima.yaml"
+cat >"$tmp/bin/uname" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == -s ]]; then printf '%s\n' "${MOCK_UNAME_S:-Darwin}"; else printf '%s\n' "${MOCK_UNAME_M:-arm64}"; fi
+MOCK
+cat >"$tmp/bin/sw_vers" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "${MOCK_MACOS_VERSION:-14.0}"
+MOCK
+cat >"$tmp/bin/limactl" <<'MOCK'
+#!/usr/bin/env bash
+printf 'limactl version %s\n' "${MOCK_LIMA_VERSION:-2.2.1}"
+MOCK
 cat >"$tmp/bin/colima" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$COLIMA_LOG"
 case "$*" in
+  *'docker compose version') printf 'Docker Compose version v5.6.0\n' ;;
+  'version') printf 'colima version %s\n' "${MOCK_COLIMA_VERSION:-0.10.3}" ;;
   *'list --json')
     [[ "$INVENTORY_FAIL" == 0 ]] || exit 1
     if [[ -n "${INVENTORY_FILE:-}" && -f "$INVENTORY_FILE" ]]; then cat "$INVENTORY_FILE"; else printf '%s\n' '{"name":"default","status":"Running","cpus":2}' '{"name":"jarvis","status":"Running","cpus":2}'; fi
     ;;
   *'status --profile jarvis-test --json') printf '%s\n' '{"arch":"aarch64","runtime":"docker","cpu":4,"memory":8589934592,"disk":85899345920}' ;;
-  *'docker compose version') printf 'Docker Compose version v5.6.0\n' ;;
   *'dpkg-query -W'*) printf '%s\n' 'docker-ce=5:29.5.2-1~ubuntu.24.04~noble' 'docker-ce-cli=5:29.5.2-1~ubuntu.24.04~noble' 'containerd.io=2.2.4-1~ubuntu.24.04~noble' ;;
   *'findmnt -rn'*) ;;
   *'test -z'*) ;;
@@ -40,7 +53,7 @@ if [[ "$1 $2" == '--context colima-jarvis-test' ]]; then
   esac
   exit 0
 fi
-exit 1
+if [[ "$1" == --version ]]; then printf 'Docker version 29.5.2, build mock\n'; exit 0; fi
 MOCK
 cat >"$tmp/bin/sysctl" <<'MOCK'
 #!/usr/bin/env bash
@@ -80,7 +93,7 @@ source "$TEST_VERSIONS"
 printf '%s  %s\n' "$COMPOSE_SHA256" "$3"
 MOCK
 export TEST_VERSIONS="$SCRIPT_DIR/versions.env"
-chmod +x "$tmp/bin/colima" "$tmp/bin/docker" "$tmp/bin/sysctl" "$tmp/bin/pagesize" "$tmp/bin/vm_stat" "$tmp/bin/df" "$tmp/bin/curl" "$tmp/bin/shasum"
+chmod +x "$tmp/bin/colima" "$tmp/bin/docker" "$tmp/bin/sysctl" "$tmp/bin/pagesize" "$tmp/bin/vm_stat" "$tmp/bin/df" "$tmp/bin/curl" "$tmp/bin/shasum" "$tmp/bin/uname" "$tmp/bin/sw_vers" "$tmp/bin/limactl"
 export CURL_LOG="$tmp/curl.log" MOCK_DOWNLOAD="$tmp/download"
 export INVENTORY_FILE="$tmp/inventory.jsonl" INVENTORY_FAIL=0 ALLOW_MISSING_CONTEXT=0 START_MARKER="$tmp/started"
 export HOME="$tmp/home" COLIMA_HOME="$tmp/home/.colima" PATH="$tmp/bin:$PATH" DOCKER_LOG="$tmp/docker.log" COLIMA_LOG="$tmp/colima.log" DELETE_MARKER="$tmp/deleted" WRONG_ENDPOINT_MARKER="$tmp/wrong-endpoint"
@@ -89,6 +102,35 @@ printf 'mock compose binary\n' >"$MOCK_DOWNLOAD"
 export COMPOSE_URL=https://example.invalid/mock-compose
 export DOCKER_ENGINE_VERSION=29.5.2 DOCKER_ENGINE_PACKAGE_VERSION='5:29.5.2-1~ubuntu.24.04~noble' DOCKER_CLI_PACKAGE_VERSION='5:29.5.2-1~ubuntu.24.04~noble' CONTAINERD_PACKAGE_VERSION='2.2.4-1~ubuntu.24.04~noble' COMPOSE_VERSION=5.6.0 COMPOSE_SHA256="$(awk -F= '$1 == "COMPOSE_SHA256" {print $2}' "$SCRIPT_DIR/versions.env")"
 "$SCRIPT_DIR/test-profile.sh" --verify
+mkdir -p "$tmp/bin-without-limactl"
+for tool in colima docker sysctl pagesize vm_stat df curl shasum uname sw_vers; do
+  ln -s "$tmp/bin/$tool" "$tmp/bin-without-limactl/$tool"
+done
+for tool in awk cut install sed bash python3 mkdir rm dirname mktemp cat printf grep; do
+  ln -s "$(command -v "$tool")" "$tmp/bin-without-limactl/$tool"
+done
+run_host_preflight_rejection() (
+  local case_name="$1" expected_diagnostic="$2"; shift 2
+  rm -rf "$COLIMA_HOME/jarvis-test"
+  : >"$COLIMA_LOG"
+  rm -f "$START_MARKER"
+  if env "$@" "$SCRIPT_DIR/test-profile.sh" --apply >"$tmp/apply-output" 2>&1; then
+    echo "$case_name was accepted by --apply" >&2; exit 1
+  fi
+  grep -Fq "$expected_diagnostic" "$tmp/apply-output" || { echo "$case_name failed for an unexpected reason" >&2; cat "$tmp/apply-output" >&2; exit 1; }
+  [[ ! -e "$START_MARKER" && ! -e "$COLIMA_HOME/jarvis-test" ]] || { echo "$case_name reached profile creation/start" >&2; exit 1; }
+  if grep -Eq 'start jarvis-test|list --json' "$COLIMA_LOG"; then
+    echo "$case_name reached Colima provisioning/capacity commands" >&2; cat "$COLIMA_LOG" >&2; exit 1
+  fi
+)
+run_host_preflight_rejection 'unsupported operating system' 'this bootstrap requires macOS' MOCK_UNAME_S=Linux
+run_host_preflight_rejection 'unsupported host architecture' 'this bootstrap requires an ARM64 Mac' MOCK_UNAME_M=x86_64
+run_host_preflight_rejection 'unsupported macOS version' "Colima's vz runtime requires macOS 13 or newer" MOCK_MACOS_VERSION=12.0
+run_host_preflight_rejection 'unsupported Colima version' 'Colima 0.10.3 required' MOCK_COLIMA_VERSION=0.0.0
+run_host_preflight_rejection 'unsupported Lima version' 'Lima 2.2.1 required' MOCK_LIMA_VERSION=0.0.0
+run_host_preflight_rejection 'missing pinned tool' 'required tool not found: limactl' PATH="$tmp/bin-without-limactl:/usr/bin:/bin" MOCK_UNAME= MOCK_MACOS_VERSION= MOCK_COLIMA_VERSION= MOCK_LIMA_VERSION=
+rm -rf "$COLIMA_HOME/jarvis-test"
+mkdir -p "$COLIMA_HOME/jarvis-test"
 printf 'cpu: 8\n' >>"$COLIMA_HOME/jarvis-test/colima.yaml"
 if "$SCRIPT_DIR/test-profile.sh" --verify >"$tmp/verify-output" 2>&1; then
   echo 'duplicate conflicting CPU setting was accepted' >&2; exit 1
