@@ -23,6 +23,30 @@ infra/colima/verify.sh --profile jarvis --require-ui
 - `--apply` creates the new `~/.colima/jarvis` configuration, starts the isolated named profile without activating a global context, pins guest Engine packages, installs the checksummed Compose plugin, and copies `infra/compose/compose.yaml` through the profile's SSH channel. It fails rather than overwriting any existing `jarvis` profile. It does not start product services or create secrets.
 - `verify.sh` reads the live Colima/Engine state, checks exact package/tool versions, ARM64 identity, effective guest mounts, SSH-agent absence, a temporary host-home canary, and rejects all non-loopback container port bindings. `--require-ui` additionally requires the application listener check below. No command deletes a profile or changes `default`.
 - `verify-listener.sh --profile jarvis` requires a running UI on `127.0.0.1:3000`, checks the host-side listener is bound only to `127.0.0.1`, rejects other published host addresses, and checks that an unauthenticated HTTP request is denied (401 or a same-origin login redirect). A positive authenticated login and a negative test from another LAN device still require the later authenticated UI and a second device; this script cannot establish either by itself.
+
+## On-demand profile lifecycle
+
+The named `jarvis` and `jarvis-test` profiles do not need to run continuously. Start only the profile needed for the current authorized validation. Use an explicit name and disable activation so startup never changes the global Docker context:
+
+```bash
+colima start jarvis --activate=false
+infra/colima/verify.sh --profile jarvis
+colima stop jarvis
+```
+
+For a previously provisioned, stopped test profile, run the full-capacity preflight before starting it, then verify its identity:
+
+```bash
+infra/colima/test-profile.sh --check-host
+colima start jarvis-test --activate=false
+infra/colima/test-profile.sh --verify
+colima stop jarvis-test
+```
+
+`colima stop` preserves the VM, containers, and volumes for the next session. First-time provisioning of an absent profile uses the `--apply` flow above; do not rerun `--apply` for an existing stopped profile. `test-profile.sh --cleanup` is different: it explicitly removes the `jarvis-test` VM and its Compose volumes. Use cleanup only after retaining needed evidence and confirming test data can be discarded.
+
+At task start, inspect the Colima inventory. Do not stop a profile that was already running unless the owner has authorized that run's scheduling; stop only a profile started for the current task after its workloads are no longer needed. The test preflight counts every running profile and fails closed; neither helper automatically stops or resizes another profile. If capacity is insufficient, do not reduce allocations or touch `default`; coordinate an on-demand schedule and rerun preflight.
+
 ## Isolated local test profile
 
 `jarvis-test` is separate from the accepted `jarvis` baseline and `default`. It has its own Colima config and Engine context (`colima-jarvis-test`), Compose project (`jarvis-test`), database secret path (`/etc/jarvis-test/secrets/postgres_password`), network and persistent volume. It uses ARM64 Docker, Kubernetes off, four CPUs, 8 GiB, 80 GiB, `autoActivate: false`, `mounts: null`, and no SSH-agent forwarding. No test helper falls back to the active context or targets the production profile.
