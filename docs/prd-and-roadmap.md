@@ -1,6 +1,6 @@
 # JARVIS v0.1 PRD and roadmap
 
-Document version 1.21 • October 25, 2026 • Personal self-hosted product
+Document version 1.22 • October 29, 2026 • Personal self-hosted product
 
 ## 1 Vision and intended outcome
 
@@ -359,7 +359,7 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 | ID | Decision | Proposal and owner | Deadline or fallback |
 | --- | --- | --- | --- |
-| D01 | Sandbox controller | Owner selected the dedicated containerized controller as the sole Engine-socket holder, with a closed API; recorded in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026 | J01; implement and qualify the restricted controller before project use; no Engine socket in API, worker, or agent |
+| D01 | Sandbox controller | Owner selected the dedicated containerized controller as the sole Engine-socket holder for the JARVIS product agent path, with a closed API; recorded in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026. The owner separately selected one on-demand Portainer instance per Colima profile (`jarvis` and `jarvis-test`) as a trusted local contributor/admin exception, each with full administration only of its corresponding guest Engine; this choice was given in the active contributor session for JV-288 on October 29, 2026. | J01; implement and qualify the restricted controller before product use; no Engine socket in API, worker, agent, or candidate repositories. Portainer topology is a documentation decision only; separately issue and qualify implementation before any use |
 | D02 | Providers and code processing | Owner; one primary provider and one authorized secondary | J00; no private code sent without selection |
 | D03 | Repositories, branch, and required CI | Owner selected `grasdouble/Jarvis-Test` as the only initial project target; the owner reports a local checkout with only `README.md`. `grasdouble/Jarvis` is the product source repository, not the initial JARVIS-operated project. | J00 plan work requires authorized project access and approved provider/data processing; no development task or PR publication until product access, target base branch, required CI, and provenance are verified |
 | D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
@@ -389,7 +389,7 @@ The owner prioritizes consumption monitoring and has not decided whether fixed h
 
 | Decision | Current disposition | Remaining gate |
 | --- | --- | --- |
-| D01 | Owner selected a dedicated containerized controller as the sole Engine-socket holder with a closed API in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026. | Implement and qualify the restricted controller at J01; the agent receives no Engine socket. This design selection alone does not qualify or activate the controller. |
+| D01 | The product controller remains the sole Engine-socket/control interface for the JARVIS product agent path, with a closed API; original selection recorded in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026. Separately, the owner selected one on-demand Portainer instance per Colima profile (`jarvis` and `jarvis-test`) for trusted local contributor administration, with full admin authority limited to its own guest Engine; this choice is recorded in JV-288 and ADR-0015 from the owner's explicit choices in the active contributor session on October 29, 2026. | Preserve the product controller's closed API and no-socket API/worker/agent/candidate boundaries. Portainer is not implemented, qualified, or activated by this documentation decision; separate implementation issue and qualification required before use. |
 | D02 | Provider-group preferences only; exact model/account/route and data handling remain unselected. | Owner selects the actual route and terms; qualify access, confidentiality, isolated transport, and usage reporting before private content or billable calls. |
 | D03 | `grasdouble/Jarvis-Test` is selected as the only initial project target; the owner reports its local checkout contains only `README.md`. `grasdouble/Jarvis` is the contributor source repository, not a JARVIS-operated project. | Verify product-App project access and configuration. Verify the target base branch, required CI identities, and provenance before any `dev` task or PR publication. |
 | D04 | Start work only from authenticated owner requests; no unsolicited event intake. | Keep external event ingress disabled. |
