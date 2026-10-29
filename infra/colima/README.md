@@ -67,7 +67,36 @@ infra/colima/test-profile.sh --db-check
 
 Provisioning refuses existing test-profile configuration or an existing `colima-jarvis-test` context and starts only `jarvis-test` with activation disabled. Verification checks the exact config, VM allocation, context socket identity and ARM64 engine. Never point the test workflow at `colima-jarvis` or rely on Docker's active context.
 
-`infra/colima/test-profile.sh --run <40-character-source-SHA>` requires the argument to match the checked-out commit and refuses any tracked or untracked worktree changes before building. It also fails with a direct prerequisite message unless the root product `Dockerfile` exists; that Dockerfile/API runtime image is currently absent, so no JARVIS image, deployment, or runtime result is available. When the build input exists, the command asks Buildx to build for `linux/arm64`, load in the test Engine, and report the local image ID and platform. It never pushes or logs into a registry. `--apply` creates a random synthetic PostgreSQL password directly in the VM through SSH without printing it. The test Compose project uses an isolated PostgreSQL volume and internal network, with no published host port. Existing ordinary PostgreSQL integration tests continue to use their existing ephemeral/disposable database setup.
+`infra/colima/test-profile.sh --run <40-character-source-SHA>` requires an exact clean worktree and currently expects a repository-root `Dockerfile`; it cannot build this branch's API image at `infra/compose/Dockerfile`. To build the API image for a local test-profile smoke, first verify the issue worktree revision and cleanliness, then use the explicit test context from the worktree root:
+
+```bash
+sha="$(git rev-parse --short HEAD)"
+docker --context colima-jarvis-test build --platform linux/arm64 \
+  --file infra/compose/Dockerfile --tag "jarvis-test/api:${sha}" .
+docker --context colima-jarvis-test image inspect "jarvis-test/api:${sha}" \
+  --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+```
+
+This builds and loads locally in the test Engine; it does not publish an image or deploy services. `--apply` creates a random synthetic PostgreSQL password directly in the VM through SSH without printing it. The test Compose project uses an isolated PostgreSQL volume and internal network, with no published host port. Existing ordinary PostgreSQL integration tests continue to use their existing ephemeral/disposable database setup.
+
+### Guest DNS troubleshooting
+
+`network.dns` configures resolver addresses for the Colima VM, but an existing guest can retain a stale `/etc/resolv.conf` that points to an unresponsive Lima resolver. If `getent ahostsv4 registry-1.docker.io` fails, inspect the guest resolver file and test name resolution from inside that profile. Use only DNS servers approved for the current host/network; the addresses below were the validating Mac's current resolvers, not universal defaults:
+
+```yaml
+network:
+  dns: [1.1.1.1, 1.0.0.1]
+
+provision:
+  - mode: system
+    script: |
+      cat > /etc/resolv.conf <<'EOF'
+      nameserver 1.1.1.1
+      nameserver 1.0.0.1
+      EOF
+```
+
+Replace both address lists with the same approved resolver set. Keep this change in the selected profile's local `~/.colima/<profile>/colima.yaml`; do not edit Colima's global template or the `default` profile. The startup provisioning script rewrites only that VM's `/etc/resolv.conf`. Restart only the authorized target profile when its services can be stopped safely, using `colima start <profile> --activate=false`, then confirm the resolver file and `getent` lookup. `colima stop` preserves the VM and volumes; never delete the profile to repair DNS. This host/VM resolver setup does not authorize external DNS or network access from task/sandbox containers; preserve their separate network-isolation gates.
 
 Cleanup is deliberately explicit and test-only:
 
@@ -79,7 +108,7 @@ It verifies the test context points to the exact test socket, invokes `docker co
 
 ## Evidence and limitations
 
-Record the source SHA, exact local image ID and architecture, commands, exit statuses, and test output with each validation run. Report PostgreSQL readiness, API health/authentication, DB behavior, loopback-only listener behavior, and whether a separate LAN device was available as separate observations; do not infer one from another. The current workspace does not provide a production API deployment image or a complete authenticated product deployment, so those runtime behaviors must be stated unavailable rather than claimed by the profile bootstrap. No separate-device check is possible from the Mac itself.
+Record the source SHA, exact local image ID and architecture, commands, exit statuses, and test output with each validation run. Report PostgreSQL readiness, API health/authentication, DB behavior, loopback-only listener behavior, and whether a separate LAN device was available as separate observations; do not infer one from another. The source includes the API deployment image and authenticated Compose service, and the PR #288 `jarvis-test` smoke is recorded in the linked issue/PR. It does not establish a registry-published digest, a running production `jarvis` service, a real owner account, or LAN isolation; `jarvis` DNS has not been runtime-verified. No separate-device check is possible from the Mac itself.
 
 ## VM-local secrets
 
