@@ -1,0 +1,115 @@
+name: jarvis
+
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: jarvis
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jarvis"]
+
+  db-bootstrap:
+    image: ${JARVIS_APP_IMAGE:?set a local sha256 image ID}
+    pull_policy: never
+    platform: linux/arm64
+    command: ["bootstrap"]
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: jarvis
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      MIGRATOR_PASSWORD_FILE: /run/secrets/jarvis_migrator_password
+      RUNTIME_PASSWORD_FILE: /run/secrets/jarvis_runtime_password
+    secrets:
+      - postgres_password
+      - jarvis_migrator_password
+      - jarvis_runtime_password
+    networks:
+      - core
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    image: ${JARVIS_APP_IMAGE:?set a local sha256 image ID}
+    pull_policy: never
+    platform: linux/arm64
+    command: ["migrate"]
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: jarvis
+      MIGRATOR_PASSWORD_FILE: /run/secrets/jarvis_migrator_password
+    secrets:
+      - jarvis_migrator_password
+    networks:
+      - core
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+
+  api:
+    image: ${JARVIS_APP_IMAGE:?set a local sha256 image ID}
+    pull_policy: never
+    platform: linux/arm64
+    command: ["serve"]
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: jarvis
+      RUNTIME_PASSWORD_FILE: /run/secrets/jarvis_runtime_password
+      ONBOARDING_SECRET_FILE: /run/secrets/owner_onboarding_secret
+      PUBLIC_ORIGIN: http://127.0.0.1:3000
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "3000"
+      WEB_ROOT: /app/apps/web/dist
+    secrets:
+      - jarvis_runtime_password
+      - owner_onboarding_secret
+    # The VM-host proxy provides the owner-facing loopback endpoint.
+    networks:
+      core:
+        ipv4_address: 172.30.132.10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+secrets:
+  jarvis_migrator_password:
+    file: /etc/jarvis/secrets/jarvis_migrator_password
+  jarvis_runtime_password:
+    file: /etc/jarvis/secrets/jarvis_runtime_password
+  owner_onboarding_secret:
+    file: /etc/jarvis/secrets/owner_onboarding_secret
+networks:
+  core:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.132.0/24

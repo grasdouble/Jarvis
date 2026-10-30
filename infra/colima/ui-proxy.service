@@ -1,0 +1,19 @@
+[Unit]
+Description=JARVIS owner UI loopback proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/jarvis-ui-proxy --listen 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=2
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET
+
+[Install]
+WantedBy=multi-user.target

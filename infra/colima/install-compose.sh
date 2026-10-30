@@ -22,6 +22,15 @@ case "$profile" in
 esac
 guest_dir="${guest_config%/*}"
 
+# Preserve the production helper's refusal to replace either protected manifest.
+if [[ "$profile" == jarvis ]]; then
+  colima ssh --profile jarvis -- sudo sh -c \
+    'test ! -e /etc/jarvis/compose.yaml && test ! -e /etc/jarvis/app.compose.yaml' || {
+    echo "jarvis-colima: refusing to overwrite an existing guest Compose manifest" >&2
+    exit 1
+  }
+fi
+
 docker context inspect "$context" >/dev/null || {
   printf 'jarvis-colima: required Docker context %s is unavailable\n' "$context" >&2
   exit 1
@@ -50,6 +59,10 @@ cat "$binary" | colima ssh --profile "$profile" -- sudo sh -c \
 colima ssh --profile "$profile" -- sudo install -d -m 0750 "$guest_dir"
 cat "$host_compose" | colima ssh --profile "$profile" -- sudo sh -c \
   "cat > '$guest_config' && chmod 0640 '$guest_config'"
+if [[ "$profile" == jarvis ]]; then
+  cat "$SCRIPT_DIR/../compose/app.compose.yaml" | colima ssh --profile jarvis -- sudo sh -c \
+    'cat > /etc/jarvis/app.compose.yaml && chmod 0640 /etc/jarvis/app.compose.yaml'
+fi
 
 actual="$(colima ssh --profile "$profile" -- docker compose version | sed -nE 's/^Docker Compose version v?([0-9.]+)$/\1/p')"
 [[ "$actual" == "$COMPOSE_VERSION" ]] || {

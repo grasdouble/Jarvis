@@ -108,7 +108,7 @@ function normalizeHeaders(headers: IncomingHttpHeaders): Record<string, string |
 function send(response: ServerResponse, result: OwnerAuthHttpResponse): void {
   const status = Number.isInteger(result.status) && result.status >= 100 && result.status <= 599 ? result.status : 500;
   const bodyAllowed = status !== 204 && status !== 304;
-  const payload = !bodyAllowed ? "" : typeof result.body === "string" ? result.body : JSON.stringify(result.body ?? null);
+  const payload = !bodyAllowed ? "" : Buffer.isBuffer(result.body) ? result.body : typeof result.body === "string" ? result.body : JSON.stringify(result.body ?? null);
   response.statusCode = status;
   const headers = result.headers ?? {};
   for (const [name, rawValue] of Object.entries(headers)) {
@@ -122,7 +122,7 @@ function send(response: ServerResponse, result: OwnerAuthHttpResponse): void {
   response.setHeader("cache-control", "no-store");
   if (bodyAllowed) {
     if (!response.hasHeader("content-type")) response.setHeader("content-type", "application/json; charset=utf-8");
-    response.setHeader("content-length", Buffer.byteLength(payload, "utf8"));
+    response.setHeader("content-length", Buffer.isBuffer(payload) ? payload.byteLength : Buffer.byteLength(payload, "utf8"));
   }
   response.end(payload);
 }

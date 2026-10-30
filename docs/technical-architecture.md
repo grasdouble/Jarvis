@@ -1,6 +1,6 @@
 # JARVIS v0.1 Technical Architecture
 
-Document version 1.27 • October 28, 2026 • Companion to the PRD and roadmap
+Document version 1.29 • October 30, 2026 • Companion to the PRD and roadmap
 
 ## 1 Summary of design choices
 
@@ -172,7 +172,7 @@ Before first startup, prepare the profile configuration with `runtime: docker`, 
 
 Keep snapshots, state, transport sockets, and database data in Linux named volumes. Build contexts can be uploaded by the Docker client without a permanent Mac directory share. Provision bootstrap secrets through a trusted administrative transfer into restricted VM-local files; Compose secret file sources must exist where the daemon can resolve them. No broad Mac mount is introduced to make provisioning work. Section 16 defines ownership and rotation.
 
-Application ports bind explicitly to `127.0.0.1`. Verify both the guest bindings and the forwarded Mac listeners, including a negative connection test from another LAN device. Publish neither PostgreSQL, the controller, nor OpenCode. Host networking, devices, host namespaces, and additional sharing features are excluded. Sleep suspends execution: no 24/7 SLA can be promised on a laptop.
+For the local authenticated-UI POC, Docker publishes no application port: Engine 29.5.2 suppressed port publication when the API was attached only to the internal `core` network. Proposed [ADR-0015](adr/0015-vm-local-ui-loopback-proxy.md) preserves this boundary: the API has static address `172.30.132.10` in internal subnet `172.30.132.0/24`, and a guest-host proxy binds only `127.0.0.1:3000`, forwarded by Lima to Mac loopback. The helper has no Docker CLI/API discovery, and its systemd unit uses a dynamic unprivileged user with `RestrictAddressFamilies=AF_INET`, excluding AF_UNIX access to the Engine socket. It connects only to the static API address; failed TCP connections return 503. The subnet route after Compose creates the network, persistent installation and runtime behavior are unverified. The October 30 isolated app/auth smoke used a transient proxy with Docker target discovery, not this checked-in design: it evidences app/auth behavior, internal API/DB health/no published ports, the guest-to-Mac loopback mechanism and guest DNS only. It does not validate the static route, fixed target, or persistent unit. The H5 host-side listener address check remains unverified. This host-only POC does not require a separate external-client reachability test; production validation is out of scope. See the [Colima smoke record](../infra/colima/README.md#local-proxy-smoke-october-30-2026).
 
 Docker Desktop ECI is not part of this deployment, and no equivalent extra boundary is assumed. All task containers share the Colima VM kernel. The dedicated profile separates JARVIS from personal containers, but a compromised controller can still control the entire JARVIS Engine. Track macOS, Colima, Lima, Engine, and image versions; rerun isolation acceptance after platform updates before affected profiles or publication are re-enabled.
 

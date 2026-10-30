@@ -17,17 +17,11 @@ while IFS= read -r id; do ids+=("$id"); done <<<"$container_ids"
 inspect="$(docker --context colima-jarvis inspect "${ids[@]}")"
 python3 -c 'import json,sys
 containers=json.load(sys.stdin)
-ui=False
-for container in containers:
-    bindings=container.get("HostConfig",{}).get("PortBindings") or {}
-    for port,mappings in bindings.items():
-        for binding in mappings or []:
-            if binding.get("HostIp") != "127.0.0.1":
-                raise SystemExit(f"non-loopback host binding: {port} -> {binding}")
-            if port == "3000/tcp" and binding.get("HostPort") == "3000":
-                ui=True
-if not ui:
-    raise SystemExit("authenticated UI is not published at 127.0.0.1:3000")' <<<"$inspect"
+apis=[c for c in containers if (c.get("Config",{}).get("Labels") or {}).get("com.docker.compose.service") == "api" and (c.get("Config",{}).get("Labels") or {}).get("com.docker.compose.project") == "jarvis"]
+if len(apis) != 1 or not apis[0].get("State",{}).get("Running"):
+    raise SystemExit("expected exactly one running Compose API service")
+if apis[0].get("HostConfig",{}).get("PortBindings"):
+    raise SystemExit("API must not have Docker-published host ports")' <<<"$inspect"
 
 listener="$(lsof -nP -iTCP:3000 -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 {print $9}')"
 [[ -n "$listener" ]] || {
@@ -41,11 +35,11 @@ while IFS= read -r endpoint; do
   }
 done <<<"$listener"
 
-response="$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code} %{redirect_url}' http://127.0.0.1:3000/)"
+response="$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code} %{redirect_url}' http://127.0.0.1:3000/api/v1/dashboard)"
 status="${response%% *}"
 redirect="${response#* }"
 [[ "$status" == 401 || ( "$status" == 302 && "$redirect" == http://127.0.0.1:3000/* ) ]] || {
-  printf 'jarvis-colima: unauthenticated UI request was not denied (HTTP %s)\n' "$status" >&2
+  printf 'jarvis-colima: unauthenticated dashboard API request was not denied (HTTP %s)\n' "$status" >&2
   exit 1
 }
-printf 'jarvis-colima: UI is loopback-only and denies unauthenticated requests (HTTP %s).\n' "$status"
+printf 'jarvis-colima: UI is loopback-only and the unauthenticated dashboard API request is denied (HTTP %s).\n' "$status"

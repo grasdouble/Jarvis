@@ -8,5 +8,6 @@
     "typecheck": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/persistence run build && tsc --noEmit",
     "test": "pnpm run build && pnpm --filter @jarvis/worker run build && node --test test/*.test.mjs"
   },
-  "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*", "@jarvis/persistence": "workspace:*" }
+  "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*", "@jarvis/persistence": "workspace:*", "pg": "8.23.1" },
+  "devDependencies": { "@types/pg": "8.15.6", "yaml": "2.9.1" }
 }
