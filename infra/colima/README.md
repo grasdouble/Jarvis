@@ -119,21 +119,22 @@ secret-manager read jarvis/postgres-password | infra/colima/provision-secret.sh 
 ```
 
 The value is never a process argument, environment variable, host file, or log entry. It is written by root over Colima SSH to `/etc/jarvis/secrets/<name>` with mode `0400` in a `0700` directory. Existing names are refused unless `--replace` is explicitly given. Do not use `echo`, shell tracing, or a tracked `.env` file. No real secret was provisioned by this change.
-Build and push the application image from the reviewed repository revision using the dedicated ARM64 Engine and the approved registry:
+Build and load the application image locally in the dedicated ARM64 Engine, then pass its immutable local image ID to Compose:
 
 ```bash
 docker --context colima-jarvis buildx build --platform linux/arm64 \
-  --file infra/compose/Dockerfile --tag "$JARVIS_APP_TAG" --push .
-docker --context colima-jarvis buildx imagetools inspect "$JARVIS_APP_TAG"
+  --file infra/compose/Dockerfile --tag jarvis-api:local --load .
+export JARVIS_APP_IMAGE="$(docker --context colima-jarvis image inspect jarvis-api:local --format '{{.Id}}')"
+infra/colima/compose.sh up -d
 ```
 
-Record the actual manifest digest returned by the registry inspection and use its `repository@sha256:...` value for `JARVIS_APP_IMAGE`. A mutable tag is only a build/lookup input; never invent or copy a digest from another build. These commands are deployment guidance, not checks run by this source change.
+The image ID has the form `sha256:<64 lowercase hex>`; Compose uses that local ID and never pulls an app image. The PostgreSQL baseline remains registry-pinned independently. These are deployment instructions, not commands run by this source change.
 
 The application Compose overlay extends the baseline manifest with an API serving the built React UI, a database-role bootstrap job, and a one-shot migration job. The API, PostgreSQL, and application jobs share only internal `core` (`172.30.132.0/24`); API is fixed at `172.30.132.10`, and none has a Docker-published host port. Docker Engine 29.5.2 does not publish a port for a container attached only to an `internal: true` network. After successful `up`, the wrapper installs a guest-host systemd TCP proxy with `DynamicUser=true` and `RestrictAddressFamilies=AF_INET`; the helper has no Docker CLI/API discovery and connects only to `172.30.132.10:3000`. Its listener is fixed to guest `127.0.0.1:3000`; connection failures return 503. The proxy cannot access the Unix Engine socket by address-family restriction. Compose network routing to this subnet after creation, persistent service installation and runtime behavior remain unverified without platform execution.
 
 Before starting the overlay, place the operator-generated `postgres_password`, `jarvis_migrator_password`, `jarvis_runtime_password`, and `owner_onboarding_secret` in the VM secret directory using the trusted secret-source procedure above. Choose passwords outside this chat and provide an onboarding secret of at least 32 UTF-8 bytes. The owner chooses the account password through the UI; no password is preconfigured.
 
-Build `infra/compose/Dockerfile` from the trusted reviewed revision for `linux/arm64`, publish it to the approved image registry, and use the returned digest (not a tag or invented digest) as `JARVIS_APP_IMAGE`. The Dockerfile pins its Node.js base image and the Compose manifests and wrapper require an immutable `repository@sha256:<64-hex-digest>` reference. Set `JARVIS_APP_IMAGE=registry.example/path/jarvis-app@sha256:<registry-returned-digest>` in the trusted local deployment environment, then run `infra/colima/compose.sh up -d`. The wrapper passes this non-secret image reference and guest socket group through the VM SSH command; DB credentials and onboarding material remain mounted from VM-local files. After Compose succeeds, it installs the fixed-address helper and restricted systemd unit. The helper has no Docker CLI/API calls or AF_UNIX access; only the trusted sandbox-manager accesses the guest Engine socket.
+The wrapper passes the local image ID and guest socket group through the VM SSH command; DB credentials and onboarding material remain mounted from VM-local files. After Compose succeeds, it installs the fixed-address helper and restricted systemd unit. The helper has no Docker CLI/API calls or AF_UNIX access; only the trusted sandbox-manager accesses the guest Engine socket.
 
 The API container runs with a read-only root filesystem and all Linux capabilities dropped. The local file-backed Compose secret mounts are root-owned VM files, so the API process runs as container root to read them; it has no host socket or bind mount. Keep the Compose files and all secret files VM-local; never copy them to a Mac-shared path.
 

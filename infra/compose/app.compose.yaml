@@ -8,7 +8,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres -d jarvis"]
 
   db-bootstrap:
-    image: ${JARVIS_APP_IMAGE:?set an immutable @sha256 image reference}
+    image: ${JARVIS_APP_IMAGE:?set a local sha256 image ID}
+    pull_policy: never
     platform: linux/arm64
     command: ["bootstrap"]
     restart: "no"
@@ -34,7 +35,8 @@ services:
         condition: service_healthy
 
   migrate:
-    image: ${JARVIS_APP_IMAGE:?set an immutable @sha256 image reference}
+    image: ${JARVIS_APP_IMAGE:?set a local sha256 image ID}
+    pull_policy: never
     platform: linux/arm64
     command: ["migrate"]
     restart: "no"
@@ -56,7 +58,8 @@ services:
         condition: service_completed_successfully
 
   api:
-    image: ${JARVIS_APP_IMAGE:?set an immutable @sha256 image reference}
+    image: ${JARVIS_APP_IMAGE:?set a local sha256 image ID}
+    pull_policy: never
     platform: linux/arm64
     command: ["serve"]
     restart: unless-stopped

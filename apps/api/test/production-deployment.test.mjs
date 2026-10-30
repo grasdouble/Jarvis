@@ -129,7 +129,10 @@ test("Compose manifests keep the ARM64 API on the internal network without host 
   assert.deepEqual(app.services.api.networks, { core: { ipv4_address: "172.30.132.10" } });
   assert.equal(app.networks.core.internal, true);
   assert.deepEqual(app.networks.core.ipam.config, [{ subnet: "172.30.132.0/24" }]);
-  assert.match(app.services.api.image, /^\$\{JARVIS_APP_IMAGE:\?set an immutable @sha256 image reference\}$/);
+  for (const name of ["db-bootstrap", "migrate", "api"]) {
+    assert.equal(app.services[name].image, "${JARVIS_APP_IMAGE:?set a local sha256 image ID}");
+    assert.equal(app.services[name].pull_policy, "never");
+  }
   assert.equal(app.services.api.platform, "linux/arm64");
   assert.equal(app.services.api.environment.PUBLIC_ORIGIN, "http://127.0.0.1:3000");
   assert.equal(app.services.api.environment.LISTEN_HOST, "0.0.0.0");
@@ -151,12 +154,14 @@ test("Compose manifests keep the ARM64 API on the internal network without host 
   assert.equal(base.secrets.postgres_password.file, "/etc/jarvis/secrets/postgres_password");
 });
 
-test("deployment wrapper rejects mutable image references before any Colima command", () => {
+test("deployment wrapper rejects tags and registry references before invoking Colima", () => {
   const script = new URL("../../../infra/colima/compose.sh", import.meta.url).pathname;
-  const result = spawnSync("bash", [script, "ps"], {
-    encoding: "utf8",
-    env: { ...process.env, JARVIS_APP_IMAGE: "registry.example/jarvis:latest" },
-  });
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /must be an immutable repository@sha256:digest reference/);
+  for (const image of ["registry.example/jarvis:latest", `registry.example/jarvis@sha256:${"a".repeat(64)}`]) {
+    const result = spawnSync("bash", [script, "ps"], {
+      encoding: "utf8",
+      env: { ...process.env, JARVIS_APP_IMAGE: image },
+    });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /must be a local Docker image ID/);
+  }
 });

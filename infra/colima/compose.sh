@@ -19,9 +19,9 @@ case "$1" in
   up|ps|logs|down) command="$1"; shift ;;
   *) printf 'jarvis-colima: unsupported Compose command: %s\n' "$1" >&2; exit 2 ;;
 esac
-: "${JARVIS_APP_IMAGE:?set JARVIS_APP_IMAGE to a trusted immutable image@sha256:digest reference}"
-[[ "$JARVIS_APP_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || {
-  echo "jarvis-colima: JARVIS_APP_IMAGE must be an immutable repository@sha256:digest reference" >&2
+: "${JARVIS_APP_IMAGE:?set JARVIS_APP_IMAGE to the local Docker image ID (sha256:<64 lowercase hex>)}"
+[[ "$JARVIS_APP_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "jarvis-colima: JARVIS_APP_IMAGE must be a local Docker image ID (sha256:<64 lowercase hex>)" >&2
   exit 2
 }
 

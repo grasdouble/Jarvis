@@ -119,7 +119,7 @@ class ProxyTests(unittest.TestCase):
 
 
 class WrapperLifecycleTests(unittest.TestCase):
-    def run_wrapper(self, operation, fail_compose=False):
+    def run_wrapper(self, operation, fail_compose=False, image_id=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             fake_bin = root / "bin"
@@ -141,11 +141,28 @@ class WrapperLifecycleTests(unittest.TestCase):
             result = subprocess.run(
                 ["bash", str(pathlib.Path(__file__).with_name("compose.sh")), operation],
                 env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}", "CALL_LOG": str(log),
-                     "JARVIS_APP_IMAGE": "registry.example/jarvis@sha256:" + "a" * 64,
+                     "JARVIS_APP_IMAGE": image_id or ("sha256:" + "a" * 64),
                      "FAIL_COMPOSE": "1" if fail_compose else "0"},
                 capture_output=True, text=True,
             )
-            return result, log.read_text().splitlines()
+            return result, log.read_text().splitlines() if log.exists() else []
+
+    def test_wrapper_rejects_registry_references_before_colima(self):
+        for image in ("registry.example/jarvis:latest", "registry.example/jarvis@sha256:" + "a" * 64):
+            with self.subTest(image=image):
+                result, calls = self.run_wrapper("ps", image_id=image)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("must be a local Docker image ID", result.stderr)
+                self.assertEqual(calls, [])
+
+
+
+    def test_local_image_id_is_forwarded_to_guest_compose(self):
+        image_id = "sha256:" + "b" * 64
+        result, calls = self.run_wrapper("ps", image_id=image_id)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        compose = next(call for call in calls if "docker compose" in call)
+        self.assertIn(f"JARVIS_APP_IMAGE={image_id}", compose)
 
     def test_up_starts_proxy_only_after_compose_up_succeeds(self):
         result, calls = self.run_wrapper("up")
