@@ -35,11 +35,11 @@ while IFS= read -r endpoint; do
   }
 done <<<"$listener"
 
-response="$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code} %{redirect_url}' http://127.0.0.1:3000/)"
+response="$(curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code} %{redirect_url}' http://127.0.0.1:3000/api/v1/dashboard)"
 status="${response%% *}"
 redirect="${response#* }"
 [[ "$status" == 401 || ( "$status" == 302 && "$redirect" == http://127.0.0.1:3000/* ) ]] || {
-  printf 'jarvis-colima: unauthenticated UI request was not denied (HTTP %s)\n' "$status" >&2
+  printf 'jarvis-colima: unauthenticated dashboard API request was not denied (HTTP %s)\n' "$status" >&2
   exit 1
 }
-printf 'jarvis-colima: UI is loopback-only and denies unauthenticated requests (HTTP %s).\n' "$status"
+printf 'jarvis-colima: UI is loopback-only and the unauthenticated dashboard API request is denied (HTTP %s).\n' "$status"
