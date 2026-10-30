@@ -12,6 +12,7 @@ Reserve numeric ADR identities 1–11. New standalone records use `NNNN-short-ti
 | --- | --- | --- | --- | --- |
 | ADR-0014: Trusted CI evidence for contributor review | Proposed | Owner | Issue #214; reviewer-side persistence validation; CI scope selected 2026-10-28, Lima path unqualified/superseded as required path | [0014-lima-review-execution.md](0014-lima-review-execution.md) |
 | ADR-0013: Proposed gateway egress proxy | Proposed | Owner | Network egress for per-attempt LLM gateway; D02, D05; ADR 05/10 | [0013-gateway-egress-proxy.md](0013-gateway-egress-proxy.md) |
+| ADR-0015: VM-local authenticated UI loopback proxy | Proposed | Owner | Issue #132 / PR #288; internal Compose network with guest-loopback UI endpoint | [0015-vm-local-ui-loopback-proxy.md](0015-vm-local-ui-loopback-proxy.md) |
 
 ADR-0012 was withdrawn at the owner's direction before adoption; its standalone candidate record was removed in the JV-125 change. The identifier is retired and will not be reused. The accepted product direction is recorded in [PRD D17](../prd-and-roadmap.md#12-decision-register-and-fallback-values) and its owner evidence in JV-124/JV-125.
 

@@ -115,7 +115,7 @@ test("database readiness returns unavailable for an unreachable runtime database
   assert.doesNotMatch(responseText, /not-a-real-secret|127\.0\.0\.1|ECONNREFUSED/);
 });
 
-test("Compose manifests parse to an internal ARM64 stack with only a loopback API publication", async () => {
+test("Compose manifests keep the ARM64 API on the internal network without host port publication", async () => {
   const root = new URL("../../../", import.meta.url);
   const base = parse(await readFile(new URL("infra/compose/compose.yaml", root), "utf8"));
   const app = parse(await readFile(new URL("infra/compose/app.compose.yaml", root), "utf8"));
@@ -125,8 +125,10 @@ test("Compose manifests parse to an internal ARM64 stack with only a loopback AP
   assert.deepEqual(base.services["sandbox-manager"].profiles, ["sandbox-manager"]);
   assert.deepEqual(app.services["db-bootstrap"].networks, ["core"]);
   assert.deepEqual(app.services.migrate.networks, ["core"]);
-  assert.deepEqual(app.services.api.networks, ["core"]);
-  assert.deepEqual(app.services.api.ports, ["127.0.0.1:3000:3000"]);
+  assert.deepEqual(app.services.api.ports, undefined);
+  assert.deepEqual(app.services.api.networks, { core: { ipv4_address: "172.30.132.10" } });
+  assert.equal(app.networks.core.internal, true);
+  assert.deepEqual(app.networks.core.ipam.config, [{ subnet: "172.30.132.0/24" }]);
   assert.match(app.services.api.image, /^\$\{JARVIS_APP_IMAGE:\?set an immutable @sha256 image reference\}$/);
   assert.equal(app.services.api.platform, "linux/arm64");
   assert.equal(app.services.api.environment.PUBLIC_ORIGIN, "http://127.0.0.1:3000");

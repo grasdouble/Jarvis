@@ -81,10 +81,10 @@ services:
     secrets:
       - jarvis_runtime_password
       - owner_onboarding_secret
-    ports:
-      - "127.0.0.1:3000:3000"
+    # The VM-host proxy provides the owner-facing loopback endpoint.
     networks:
-      - core
+      core:
+        ipv4_address: 172.30.132.10
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,3 +104,9 @@ secrets:
     file: /etc/jarvis/secrets/jarvis_runtime_password
   owner_onboarding_secret:
     file: /etc/jarvis/secrets/owner_onboarding_secret
+networks:
+  core:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.132.0/24

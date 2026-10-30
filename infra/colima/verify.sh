@@ -97,27 +97,20 @@ if [[ "$canary_result" != unreadable ]]; then
   exit 1
 fi
 
-# No container may publish a non-loopback host listener. A missing UI is
-# reported separately; this check does not claim application authentication.
+# Docker-published host ports are forbidden; the owner-facing VM-host proxy
+# is a separate loopback listener, not a container port publication.
 container_ids="$(docker --context colima-jarvis ps --quiet)"
 if [[ -n "$container_ids" ]]; then
   ids=()
   while IFS= read -r id; do ids+=("$id"); done <<<"$container_ids"
-  inspect="$(docker --context colima-jarvis inspect "${ids[@]}")"
-  python3 -c 'import json,sys
-containers=json.load(sys.stdin)
-for container in containers:
-    bindings=container.get("HostConfig",{}).get("PortBindings") or {}
-    for port,mappings in bindings.items():
-        for binding in mappings or []:
-            if binding.get("HostIp") != "127.0.0.1":
-                raise SystemExit(f"non-loopback host binding: {port} -> {binding}")' <<<"$inspect" || {
-    printf 'jarvis-colima: a container publishes a non-loopback listener\n' >&2
+  docker --context colima-jarvis inspect "${ids[@]}" |
+    python3 "$SCRIPT_DIR/check-port-bindings.py" || {
+    printf 'jarvis-colima: a container publishes a host port\n' >&2
     exit 1
   }
 fi
 if [[ "$REQUIRE_UI" == true ]]; then
-  "$SCRIPT_DIR/verify-listener.sh" --profile "$PROFILE"
+  bash "$SCRIPT_DIR/verify-listener.sh" --profile "$PROFILE"
 elif [[ -z "$container_ids" ]]; then
   printf 'jarvis-colima: no application containers deployed; UI and authentication remain unverified\n' >&2
 fi
