@@ -17,19 +17,16 @@ const report = JSON.stringify({
 const gateway = createBoundedGateway({
   socketPath,
   capability,
-  providerUrl: "https://fixture.invalid/v1/chat/completions",
-  providerApiKey: "non-provider-fixture-key",
+  providerId: "jarvis-fixture",
   model: "fixture-model",
   maxInputBytes: 64 * 1024,
   maxOutputTokens: 256,
   maxRequests: 10,
   requestTimeoutMs: 10_000,
-  maxResponseBytes: 64 * 1024,
-  fetchProvider: async (url, init) => {
-    if (String(url) !== "https://fixture.invalid/v1/chat/completions" || init.method !== "POST") {
-      throw new Error("Unexpected synthetic provider route.");
-    }
-    const body = JSON.parse(Buffer.from(init.body).toString("utf8"));
+  dispatchEnabled: true,
+  dispatchToFilter: {
+    dispatch: async ({ body: bodyBytes, signal }) => {
+      const body = JSON.parse(Buffer.from(bodyBytes).toString("utf8"));
     if (body.model !== "fixture-model") throw new Error("Unexpected synthetic model.");
     const cancelProbe = body.messages?.some((message) => message.content === "__cancel_probe__") ?? false;
     const permissionProbe = body.messages?.some((message) => message.content === "__permission_probe__") ?? false;
@@ -39,7 +36,7 @@ const gateway = createBoundedGateway({
       console.log("JV006_FIXTURE_PERMISSION_PROBE");
       const encoder = new TextEncoder();
       const chunks = [
-        `data: ${JSON.stringify({ id: "fixture-permission", object: "chat.completion.chunk", created: 1, model: "fixture-model", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call_fixture_denied", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: "echo must-not-run" }) } }] }, finish_reason: "tool_calls" }] })}\n\n`,
+        `data: ${JSON.stringify({ id: "fixture-permission", object: "chat.completion.chunk", created: 1, model: "fixture-model", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call_fixture_shell", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: "echo must-not-run" }) } }, { index: 1, id: "call_fixture_edit", type: "function", function: { name: "edit", arguments: JSON.stringify({ filePath: "/state/permission-probe.txt", content: "must-not-write" }) } }] }, finish_reason: "tool_calls" }] })}\n\n`,
         "data: [DONE]\n\n",
       ];
       return new Response(new ReadableStream({
@@ -53,12 +50,12 @@ const gateway = createBoundedGateway({
     if (cancelProbe) {
       console.log("JV006_FIXTURE_PROVIDER_REQUEST_STARTED");
       await new Promise((resolve, reject) => {
-        if (init.signal.aborted) {
+        if (signal.aborted) {
           console.log("JV006_FIXTURE_PROVIDER_REQUEST_ABORTED");
           reject(new DOMException("Synthetic request aborted.", "AbortError"));
           return;
         }
-        init.signal.addEventListener("abort", () => {
+        signal.addEventListener("abort", () => {
           console.log("JV006_FIXTURE_PROVIDER_REQUEST_ABORTED");
           reject(new DOMException("Synthetic request aborted.", "AbortError"));
         }, { once: true });
@@ -77,7 +74,8 @@ const gateway = createBoundedGateway({
         else controller.enqueue(encoder.encode(chunk));
       },
     }), { status: 200, headers: { "content-type": "text/event-stream; charset=utf-8" } });
-  },
+      },
+    },
 });
 
 gateway.listen(socketPath);

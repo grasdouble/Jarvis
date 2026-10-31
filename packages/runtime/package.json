@@ -8,5 +8,9 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs"
   },
-  "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*" }
+  "dependencies": {
+    "@jarvis/contracts": "workspace:*",
+    "@jarvis/domain": "workspace:*",
+    "tar": "7.5.22"
+  }
 }

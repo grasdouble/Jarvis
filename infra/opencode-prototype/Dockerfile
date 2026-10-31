@@ -17,7 +17,9 @@ ENV HOME=/state/home \
 LABEL org.opencontainers.image.version="2.0.32"
 
 COPY apps/llm-gateway/dist/gateway.js /opt/jarvis/gateway.js
-COPY packages/runtime/dist/index.js /opt/jarvis/runtime-client.mjs
+COPY packages/runtime/dist/opencode-client.js /opt/jarvis/runtime-client.mjs
+COPY packages/runtime/dist/advisory-results.js /opt/jarvis/advisory-results.mjs
+COPY packages/runtime/dist/advisory-results.js /opt/jarvis/advisory-results.js
 COPY infra/opencode-prototype/opencode-entrypoint.mjs /opt/jarvis/opencode-entrypoint.mjs
 COPY infra/opencode-prototype/api-probe.mjs /opt/jarvis/api-probe.mjs
 COPY infra/opencode-prototype/fixed-relay.mjs /usr/local/bin/jarvis-opencode-relay
