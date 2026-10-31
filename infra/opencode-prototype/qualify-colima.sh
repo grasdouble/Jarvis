@@ -59,15 +59,23 @@ done
 
 CONFIG_JSON='{
   "$schema": "https://opencode.ai/config.json",
-  "default_agent": "build",
+  "default_agent": "review",
   "update": "disable",
   "model": "jarvis-fixture/fixture-model",
+  "agents": {
+    "plan": { "mode": "primary", "permissions": [{ "action": "*", "resource": "*", "effect": "deny" }, { "action": "read", "resource": "*", "effect": "allow" }, { "action": "glob", "resource": "*", "effect": "allow" }, { "action": "grep", "resource": "*", "effect": "allow" }, { "action": "edit", "resource": "*", "effect": "deny" }, { "action": "shell", "resource": "*", "effect": "deny" }] },
+    "review": { "mode": "primary", "permissions": [{ "action": "*", "resource": "*", "effect": "deny" }, { "action": "read", "resource": "*", "effect": "allow" }, { "action": "glob", "resource": "*", "effect": "allow" }, { "action": "grep", "resource": "*", "effect": "allow" }, { "action": "edit", "resource": "*", "effect": "deny" }, { "action": "shell", "resource": "*", "effect": "deny" }] }
+  },
   "permissions": [
     { "action": "*", "resource": "*", "effect": "deny" },
     { "action": "read", "resource": "*", "effect": "allow" },
     { "action": "glob", "resource": "*", "effect": "allow" },
-    { "action": "grep", "resource": "*", "effect": "allow" }
+    { "action": "grep", "resource": "*", "effect": "allow" },
+    { "action": "edit", "resource": "*", "effect": "deny" },
+    { "action": "shell", "resource": "*", "effect": "deny" }
   ],
+  "plugin": [],
+  "mcp": {},
   "providers": {
     "jarvis-fixture": {
       "name": "JARVIS synthetic fixture",

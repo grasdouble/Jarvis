@@ -8,6 +8,7 @@ test("headless client authenticates, limits requests to loopback, and supports h
   const client = new OpenCodeClient({
     baseUrl: "http://127.0.0.1:4096/",
     password: "per-attempt-password",
+    mode: "plan",
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       if (String(url).endsWith("/api/info")) return globalThis.Response.json({ version: "2.0.32", pid: 1, urls: [], paths: { tmp: "/tmp" } });
@@ -21,7 +22,7 @@ test("headless client authenticates, limits requests to loopback, and supports h
   });
 
   assert.deepEqual(await client.health(), { healthy: true, version: "2.0.32" });
-  const session = await client.createSession("fixture", { providerID: "mock", modelID: "fixture", agent: "build" });
+  const session = await client.createSession("fixture", { providerID: "mock", modelID: "fixture" });
   assert.equal(session.id, "session_1");
   assert.equal((await client.prompt(session.id, "Review this synthetic fixture")).data.id, "input_1");
   assert.equal((await client.messages(session.id))[0].content[0].text, "synthetic");
@@ -36,27 +37,32 @@ test("headless client authenticates, limits requests to loopback, and supports h
   assert.deepEqual(JSON.parse(calls[1].init.body), {
     title: "fixture",
     model: { providerID: "mock", id: "fixture" },
-    agent: "build",
+    agent: "plan",
   });
   assert.deepEqual(JSON.parse(calls[2].init.body), { text: "Review this synthetic fixture", resume: true });
 });
 
 test("headless client rejects remote servers, missing passwords, malformed ids and provider redirects", async () => {
-  assert.throws(() => new OpenCodeClient({ baseUrl: "http://192.0.2.1:4096", password: "secret" }), OpenCodeClientError);
-  assert.throws(() => new OpenCodeClient({ baseUrl: "http://127.0.0.1:4096", password: "" }), OpenCodeClientError);
+  assert.throws(() => new OpenCodeClient({ baseUrl: "http://192.0.2.1:4096", password: "secret", mode: "plan" }), OpenCodeClientError);
+  assert.throws(() => new OpenCodeClient({ baseUrl: "http://127.0.0.1:4096", password: "", mode: "plan" }), OpenCodeClientError);
   const client = new OpenCodeClient({
     baseUrl: "http://127.0.0.1:4096",
     password: "attempt",
+    mode: "plan",
     fetch: async () => globalThis.Response.redirect("http://example.test/", 302),
   });
+  await assert.rejects(() => client.createSession("fixture", { providerID: "mock", modelID: "fixture" }), /HTTP 302/);
   await assert.rejects(() => client.abort("../host"), OpenCodeClientError);
   await assert.rejects(() => client.health(), OpenCodeClientError);
+  assert.throws(() => new OpenCodeClient({ baseUrl: "http://127.0.0.1:4096", password: "attempt" }), /explicit/);
+  assert.throws(() => new OpenCodeClient({ baseUrl: "http://127.0.0.1:4096", password: "attempt", mode: "other" }), /explicit/);
 });
 
 test("headless client rejects malformed v2 responses instead of reporting success", async () => {
   const client = new OpenCodeClient({
     baseUrl: "http://127.0.0.1:4096",
     password: "attempt",
+    mode: "plan",
     fetch: async (url) => String(url).endsWith("/api/info")
       ? globalThis.Response.json({})
       : globalThis.Response.json({ data: "not-a-message-list" }),
