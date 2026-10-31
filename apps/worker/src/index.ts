@@ -5,6 +5,12 @@ import { createSandboxRuntime, type SandboxRuntimePorts } from "./sandbox-runtim
 import { validateTaskResult, type TrustedResultAttribution, type TrustedSnapshotBinding } from "@jarvis/contracts";
 import type { QueueLease, QueueService } from "@jarvis/queue";
 export type UntrustedTaskResultOutput = { readonly payload: unknown };
+type TrustedReviewAttribution = Omit<TrustedResultAttribution, "mode"> & { readonly mode: "review" };
+export type TrustedQueueResultContext = {
+  readonly expected: TrustedResultAttribution | TrustedReviewAttribution;
+  readonly resultId: string;
+  readonly snapshot?: TrustedSnapshotBinding;
+};
 
 export type FixedOpenCodeRequest =
   | { readonly operation: "health" }
@@ -262,12 +268,8 @@ export interface QueueWorkerPorts<T, C> {
   /** Loads trusted project context/capability for the already-claimed durable task. */
   readonly hydrate: (lease: QueueLease<T>) => Promise<StopAwareTask<C>>;
   readonly execution: StopAwareExecutionPorts<C, UntrustedTaskResultOutput>;
-  /** Trusted core attribution and snapshot binding for the result being finalized. */
-  readonly trustedResultContext: (lease: QueueLease<T>, task: StopAwareTask<C>) => Promise<{
-    readonly expected: TrustedResultAttribution;
-    readonly resultId: string;
-    readonly snapshot?: TrustedSnapshotBinding;
-  }>;
+  /** Core-owned result identity/provenance; non-plan/dev modes may complete only with this trusted reference. */
+  readonly trustedResultContext: (lease: QueueLease<T>, task: StopAwareTask<C>) => Promise<TrustedQueueResultContext>;
   /** Required production composition: trusted policy supplies SandboxSpec; this code supplies only the lease identity. */
   readonly sandbox?: Omit<SandboxRuntimePorts<T, UntrustedTaskResultOutput>, "dispatch">;
   readonly dispatchSandbox?: (input: { readonly capability: C; readonly lease: QueueLease<T>; readonly sandboxId: string; readonly signal: AbortSignal }) => Promise<UntrustedTaskResultOutput>;
@@ -395,6 +397,10 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
         if (result.kind === "dispatched") {
           try {
             const trusted = await ports.trustedResultContext(lease, task);
+            if (trusted.expected.mode === "review") {
+              await ports.queue.complete(lease, { kind: "report", id: trusted.resultId });
+              return "completed";
+            }
             const canonical = validateTaskResult({
               schemaVersion: 1,
               ...trusted.expected,

@@ -343,6 +343,34 @@ test("queue lifecycle claims, executes and completes through the lease service",
   assert.equal(await runtime.runOnce(), "completed");
   assert.deepEqual(events, ["claim", "dispatch", "complete:44444444-4444-4444-8444-444444444444:dev"]);
 });
+test("review worker completion uses only its trusted core result reference", async () => {
+  const completions = [];
+  let dispatches = 0;
+  const lease = { task: { id: "review-q", taskId: "22222222-2222-4222-8222-222222222222" }, attemptId: "33333333-3333-4333-8333-333333333333", worker: "w", epoch: 1, expiresAt: Date.now() + 1000 };
+  const runtime = worker.createQueueWorker({
+    queue: {
+      claim: async () => lease,
+      complete: async (_lease, reference, canonical) => { completions.push({ reference, canonical }); },
+      fail: async () => { throw new Error("unexpected fail"); },
+      cancel: async () => undefined,
+    },
+    workerId: "w", leaseMs: 1000, restoreGate: readyRestoreGate,
+    hydrate: async () => ({ taskId: lease.task.taskId, projectId: "p1", capability: "cap" }),
+    trustedResultContext: async () => ({
+      resultId: "44444444-4444-4444-8444-444444444444",
+      expected: { requestId: "11111111-1111-4111-8111-111111111111", taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "review", sourceRevision: "a".repeat(40), snapshotDigest: "b".repeat(64), provider: "openai", model: "gpt-4.1" },
+    }),
+    execution: {
+      readStop: async () => ({ stopped: false, version: 1 }),
+      dispatch: async () => { dispatches += 1; return { payload: { resultId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } }; },
+      revokeCapability: async () => undefined, stopSandbox: async () => "stopped",
+      recordAcceptedEffectUnknown: async () => undefined,
+    },
+  });
+  assert.equal(await runtime.runOnce(), "completed");
+  assert.equal(dispatches, 1);
+  assert.deepEqual(completions, [{ reference: { kind: "report", id: "44444444-4444-4444-8444-444444444444" }, canonical: undefined }]);
+});
 
 test("stop racing a claimed active dispatch fails the lease as unknown, never cancels a possible effect", async () => {
   let stopped = false;
