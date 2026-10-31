@@ -1461,12 +1461,13 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
                   WHEN 'stop_controls' THEN 2
-                  WHEN 'requests' THEN 10
-                  WHEN 'tasks' THEN 7
-                  WHEN 'task_attempts' THEN 5
+                  WHEN 'requests' THEN 11
+                  WHEN 'tasks' THEN 8
+                  WHEN 'task_attempts' THEN 6
                   WHEN 'task_checkpoints' THEN 1
-                  WHEN 'queue_entries' THEN 6
-                  WHEN 'outbox' THEN 14
+                  WHEN 'task_results' THEN 2
+                  WHEN 'queue_entries' THEN 7
+                  WHEN 'outbox' THEN 17
                   ELSE 0
                 END;
                 IF row_count <> expected_count THEN
