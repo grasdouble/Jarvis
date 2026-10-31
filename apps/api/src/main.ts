@@ -6,9 +6,11 @@ import {
   PostgresOwnerAuthStore,
   PostgresPersistence,
   PostgresStopControlStore,
+  PostgresTaskResultReadModel,
 } from "@jarvis/persistence";
 import { createOwnerAuthBoundary, createOwnerAuthService } from "./auth.js";
 import { createOperationalDashboardBoundary, createOperationalDashboardHttpHandler } from "./dashboard.js";
+import { createTaskResultReadBoundary } from "./task-results.js";
 import { createOperationalDashboardServer } from "./http-server.js";
 import { createStaticAssetHandler } from "./static-assets.js";
 import { createStopControlHttpHandler } from "./stop-controls.js";
@@ -82,13 +84,14 @@ async function serve(): Promise<void> {
   const pool = new Pool(poolOptions("jarvis_runtime", runtimePassword));
   const auth = createOwnerAuthBoundary(createOwnerAuthService({ store: new PostgresOwnerAuthStore(pool), onboardingSecret }), { origin: PUBLIC_ORIGIN });
   const dashboard = createOperationalDashboardHttpHandler(createOperationalDashboardBoundary(new PostgresOperationalDashboardReadModel(pool), auth));
+  const taskResults = createTaskResultReadBoundary(new PostgresTaskResultReadModel(pool), auth);
   const stopControls = createStopControlHttpHandler(new PostgresStopControlStore(pool), auth);
   const assets = createStaticAssetHandler(WEB_ROOT);
   const server = createOperationalDashboardServer({ auth, dashboard: async (request) => {
     if (request.url.split("?", 1)[0] === "/healthz") return databaseReadiness(pool);
     if (request.url.split("?", 1)[0]?.startsWith("/api/")) return dashboard(request);
     return assets(request);
-  }, stopControls });
+  }, stopControls, taskResults: (request, taskId) => taskResults.get(request, taskId) });
   try {
     await pool.query("SELECT 1");
     server.listen(LISTEN_PORT, LISTEN_HOST);

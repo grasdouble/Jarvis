@@ -1,3 +1,6 @@
+import type { TaskResult } from "@jarvis/contracts";
+export { canonicalizeTaskResult } from "@jarvis/contracts";
+export type { TaskResult } from "@jarvis/contracts";
 export type TaskStatus = 'queued' | 'leased' | 'succeeded' | 'failed' | 'cancelled' | 'reconciliation_required';
 export interface QueueTask<T = unknown> {
   id: string; eventId: string; taskId: string; payload: T; status: TaskStatus;
@@ -13,7 +16,7 @@ export interface QueueStore<T = unknown> {
   enqueue(task: QueueTask<T>, eventId: string): Promise<QueueTask<T>>;
   claim(worker: string, now: number, leaseMs: number): Promise<QueueLease<T> | null>;
   get(id: string): Promise<QueueTask<T> | undefined>;
-  update(task: QueueTask<T>, lease?: QueueLease<T>): Promise<QueueTask<T>>;
+  update(task: QueueTask<T>, lease?: QueueLease<T>, canonicalResult?: TaskResult): Promise<QueueTask<T>>;
   cancel(id: string): Promise<QueueTask<T>>;
 }
 export interface QueuePorts<T> { store: QueueStore<T>; clock: { now(): number }; ids: { next(): string } }
@@ -59,9 +62,16 @@ export class QueueService<T = unknown> {
     }
     return this.ports.store.claim(worker, this.ports.clock.now(), leaseMs);
   }
-  async complete(lease: QueueLease<T>, result: QueueResult): Promise<QueueTask<T>> {
+  async complete(lease: QueueLease<T>, result: QueueResult, canonicalResult?: TaskResult): Promise<QueueTask<T>> {
     const safeResult = validateResult(result);
-    const task = await this.owned(lease); task.status = 'succeeded'; task.result = safeResult; delete task.error; delete task.lease; return this.ports.store.update(task, lease);
+    if (canonicalResult !== undefined &&
+        (canonicalResult.resultId !== safeResult.id || canonicalResult.taskId !== lease.task.taskId ||
+         canonicalResult.attemptId !== lease.attemptId || canonicalResult.leaseEpoch !== lease.epoch)) {
+      throw new QueueError('INVALID_RESULT', 'Canonical result attribution does not match the active queue lease');
+    }
+    const task = await this.owned(lease);
+    task.status = 'succeeded'; task.result = safeResult; delete task.error; delete task.lease;
+    return this.ports.store.update(task, lease, canonicalResult);
   }
   async fail(lease: QueueLease<T>, failure: QueueFailure): Promise<QueueTask<T>> {
     if (failure.kind === 'unknown_external' && (!failure.effectId || failure.effectId.length > 200)) {

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { URL } from "node:url";
 import * as persistenceModule from "../dist/index.js";
+
 const { CheckpointRejectedError } = persistenceModule;
 
 function createPool(results = []) {

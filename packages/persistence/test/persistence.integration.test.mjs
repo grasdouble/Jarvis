@@ -21,6 +21,7 @@ import {
   PostgresQueueStore,
   PostgresRequestIntakeStore,
   PostgresStopControlStore,
+  PostgresTaskResultReadModel,
   createSandboxLeaseStore,
   SandboxLeaseRejectedError,
 } from "../dist/index.js";
@@ -111,9 +112,9 @@ test("JV-265 restored PostgreSQL state stays behind the real worker activation g
     assert.equal(restoredResume.count, 1, "restored database must contain the source's durable resume audit");
 
     const gate = createRestoreActivationGate(async () => controls.suspendAfterRestore());
-    const taskId = `jv265-${randomUUID()}`;
+    const taskId = randomUUID();
     const task = { id: taskId, taskId };
-    const leases = [1, 2].map((epoch) => ({ task, worker: "jv265-restore-worker", attemptId: `${taskId}-${epoch}`, epoch,
+    const leases = [1, 2].map((epoch) => ({ task, worker: "jv265-restore-worker", attemptId: randomUUID(), epoch,
       expiresAt: Date.now() + 60_000 }));
     let claims = 0;
     let dispatches = 0;
@@ -126,12 +127,16 @@ test("JV-265 restored PostgreSQL state stays behind the real worker activation g
       queue, workerId: "jv265-restore-worker", leaseMs: 30_000,
       hydrate: async () => ({ taskId, projectId: "synthetic-project", capability: "synthetic-only" }),
       restoreGate: gate,
+      trustedResultContext: async (lease) => ({
+        resultId: randomUUID(),
+        expected: { requestId: randomUUID(), taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "review", sourceRevision: "a".repeat(40), snapshotDigest: "b".repeat(64), provider: "synthetic", model: "synthetic" },
+      }),
       execution: {
         readStop: async () => {
           const state = await controls.get({});
           return { stopped: state.global.stopped || state.project?.stopped === true, version: state.global.version };
         },
-        dispatch: async () => { dispatches += 1; return { kind: "synthetic-complete" }; },
+        dispatch: async () => { dispatches += 1; return { payload: { summary: "Synthetic restored task", steps: [], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }; },
         revokeCapability: async () => {}, stopSandbox: async () => "stopped", recordAcceptedEffectUnknown: async () => {},
       },
     });
@@ -430,6 +435,7 @@ async function createStopRaceFixture(pool, mode, policyVersion = 1) {
     policyHash: policyVersion === 1 ? "b".repeat(64) : String(policyVersion).padStart(64, "0"),
     profileHash: "f".repeat(64),
     promptDigest: "e".repeat(64),
+    revision: "a".repeat(40),
     state: mode === "checkpoint" ? "running" : "queued",
   };
   const client = await pool.connect();
@@ -456,10 +462,10 @@ async function createStopRaceFixture(pool, mode, policyVersion = 1) {
       mode === "checkpoint" ? "running" : "queued", `stop-race-${fixture.taskId}`, fixture.policyHash,
     ]);
     await client.query(`INSERT INTO jarvis.tasks
-      (id, request_id, project_id, repository_id, mode, profile_hash, policy_hash, config_version, state, dedupe_key)
-      VALUES ($1, $2, $3, $4, 'plan', $5, $6, 1, $7, $8)`, [
-      fixture.taskId, fixture.requestId, fixture.projectId, fixture.repositoryId, fixture.profileHash,
-      fixture.policyHash, fixture.state, `stop-race-${fixture.taskId}`,
+      (id, request_id, project_id, repository_id, mode, revision, profile_hash, policy_hash, config_version, state, dedupe_key)
+      VALUES ($1, $2, $3, $4, 'plan', $5, $6, $7, 1, $8, $9)`, [
+      fixture.taskId, fixture.requestId, fixture.projectId, fixture.repositoryId, fixture.revision,
+      fixture.profileHash, fixture.policyHash, fixture.state, `stop-race-${fixture.taskId}`,
     ]);
     if (mode === "checkpoint") {
       await client.query(`INSERT INTO jarvis.task_attempts
@@ -644,7 +650,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations", "009_task_results"]);
     const { rows: [initialStop] } = await pool.query("SELECT stopped FROM jarvis.stop_controls WHERE scope='global' AND project_id IS NULL");
     assert.equal(initialStop.stopped, true, "fresh database migration must start fail-closed");
     const restoreControls = new PostgresStopControlStore(pool);
@@ -877,6 +883,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await pool.query("DROP TRIGGER reject_queue_outbox_test ON jarvis.outbox");
       await pool.query("DROP FUNCTION public.reject_queue_outbox_test()");
     }
+    await pool.query("UPDATE jarvis.tasks SET revision = $2 WHERE id = $1", [request.taskId, "a".repeat(40)]);
     const queued = await queue.enqueue(request);
     assert.equal((await queue.enqueue(request)).id, queued.id, "duplicate inbox events return the canonical task");
     await assert.rejects(queue.enqueue({ ...request, deadline: request.deadline + 1 }), QueueError,
@@ -975,7 +982,95 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     const thirdLease = await queue.claim("worker-c", 60_000);
     assert.ok(thirdLease);
     assert.equal(thirdLease.epoch, 3);
-    assert.equal((await queue.complete(thirdLease, { kind: "report", id: "00000000-0000-4000-8000-000000000009" })).status, "succeeded");
+    const canonicalResult = {
+      schemaVersion: 1,
+      requestId: "00000000-0000-4000-8000-000000000007",
+      taskId: request.taskId,
+      attemptId: thirdLease.attemptId,
+      leaseEpoch: thirdLease.epoch,
+      mode: "dev",
+      sourceRevision: "a".repeat(40),
+      snapshotDigest: "b".repeat(64),
+      provider: "openai",
+      model: "gpt-4.1",
+      resultId: "00000000-0000-4000-8000-000000000009",
+      payload: {
+        summary: "Synthetic inert patch report",
+        artifactId: "00000000-0000-4000-8000-000000000010",
+        patchDigest: "c".repeat(64),
+        changedPaths: ["src/index.ts"],
+        limitations: [],
+      },
+    };
+    const resultReference = { kind: "report", id: canonicalResult.resultId };
+    await pool.query(`
+      CREATE FUNCTION public.reject_result_outbox_test() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.event_type = 'queue.task.succeeded' THEN RAISE EXCEPTION 'injected result completion failure'; END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER reject_result_outbox_test BEFORE INSERT ON jarvis.outbox
+      FOR EACH ROW EXECUTE FUNCTION public.reject_result_outbox_test()`);
+    try {
+      await assert.rejects(queue.complete(thirdLease, resultReference, canonicalResult), /injected result completion failure/);
+      const { rows: [rolledBackResult] } = await pool.query("SELECT count(*)::integer AS count FROM jarvis.task_results WHERE task_id = $1", [request.taskId]);
+      assert.equal(rolledBackResult.count, 0, "result persistence rolls back when fenced completion/outbox fails");
+      const { rows: [stillLeased] } = await pool.query("SELECT state FROM jarvis.queue_entries WHERE task_id = $1", [request.taskId]);
+      assert.equal(stillLeased.state, "leased", "queue completion rolls back with result persistence");
+    } finally {
+      await pool.query("DROP TRIGGER reject_result_outbox_test ON jarvis.outbox");
+      await pool.query("DROP FUNCTION public.reject_result_outbox_test()");
+    }
+    assert.equal((await queue.complete(thirdLease, resultReference, canonicalResult)).status, "succeeded");
+    await assert.rejects(queue.complete(thirdLease, resultReference, canonicalResult), { code: "STALE_LEASE" }, "replayed completion cannot replace the canonical result");
+    const resultRead = new PostgresTaskResultReadModel(pool);
+    assert.deepEqual(await resultRead.getForOwner("owner-a", request.taskId), canonicalResult);
+    assert.equal(await resultRead.getForOwner("someone-else", request.taskId), null, "other projects/owners cannot read the canonical result");
+    await pool.query(`
+      INSERT INTO jarvis.requests
+        (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key, config_version, policy_hash)
+      VALUES ($1, 'owner-a', $2, 3001, 'plan', $3, 'queued', 'request-plan-result', 1, $4)`, [
+      "00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000003", "d".repeat(64), "b".repeat(64),
+    ]);
+    await pool.query(`
+      INSERT INTO jarvis.tasks
+        (id, request_id, project_id, repository_id, mode, revision, profile_hash, policy_hash, config_version, state, dedupe_key)
+      VALUES ($1, $2, $3, 3001, 'plan', $4, $5, $6, 1, 'queued', 'task-plan-result')`, [
+      "00000000-0000-4000-8000-000000000012", "00000000-0000-4000-8000-000000000011",
+      "00000000-0000-4000-8000-000000000003", "a".repeat(40), "f".repeat(64), "b".repeat(64),
+    ]);
+    const planQueue = await queue.enqueue({
+      eventId: "plan-result-event", taskId: "00000000-0000-4000-8000-000000000012",
+      payload: { taskId: "00000000-0000-4000-8000-000000000012" },
+      deadline: Date.now() + 60_000, maxAttempts: 2, retry: { baseDelay: 10, maxDelay: 100 },
+    });
+    const planLease = await queue.claim("worker-plan-result", 60_000);
+    assert.ok(planLease);
+    assert.equal(planLease.task.id, planQueue.id);
+    const planResult = {
+      schemaVersion: 1,
+      requestId: "00000000-0000-4000-8000-000000000011",
+      taskId: "00000000-0000-4000-8000-000000000012",
+      attemptId: planLease.attemptId,
+      leaseEpoch: planLease.epoch,
+      mode: "plan",
+      sourceRevision: "a".repeat(40),
+      snapshotDigest: "b".repeat(64),
+      provider: "openai",
+      model: "gpt-4.1",
+      resultId: "00000000-0000-4000-8000-000000000013",
+      payload: {
+        summary: "Synthetic plan",
+        steps: [{ description: "Inspect the included source", sources: ["src/index.ts"] }],
+        affectedAreas: ["runtime"],
+        assumptions: [],
+        risks: [],
+        questions: [],
+        limitations: [],
+      },
+    };
+    await queue.complete(planLease, { kind: "report", id: planResult.resultId }, planResult);
+    assert.deepEqual(await resultRead.getForOwner("owner-a", planResult.taskId), planResult);
 
     const { rows: queueResults } = await pool.query(`
       SELECT q.state, q.attempt_count, q.lease_epoch, t.state AS task_state, r.state AS request_state,
@@ -1366,12 +1461,13 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
                   WHEN 'stop_controls' THEN 2
-                  WHEN 'requests' THEN 10
-                  WHEN 'tasks' THEN 7
-                  WHEN 'task_attempts' THEN 5
+                  WHEN 'requests' THEN 11
+                  WHEN 'tasks' THEN 8
+                  WHEN 'task_attempts' THEN 6
                   WHEN 'task_checkpoints' THEN 1
-                  WHEN 'queue_entries' THEN 6
-                  WHEN 'outbox' THEN 14
+                  WHEN 'task_results' THEN 2
+                  WHEN 'queue_entries' THEN 7
+                  WHEN 'outbox' THEN 17
                   ELSE 0
                 END;
                 IF row_count <> expected_count THEN
@@ -1433,7 +1529,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
   skip: process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION !== "1"
     ? "set JARVIS_RUN_STOP_RUNTIME_INTEGRATION=1 to run this on-demand integration scenario"
     : databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
-}, async (context) => {
+}, async () => {
   const [{ createQueueWorker, createSandboxQueueWorker, createPersistedStopReader, createRestoreActivationGate, createSandboxManagerHttpClient }, api, { QueueService: RuntimeQueueService }, { Pool: PgPool }] = await Promise.all([
     import("../../../apps/worker/dist/index.js"),
     import("../../../apps/api/dist/runtime-composition.js"),
@@ -1582,6 +1678,11 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       queue: runtimeQueue, workerId: "jv242-worker", leaseMs: 30_000,
       hydrate: async () => ({ taskId: fixture.taskId, projectId: fixture.projectId, capability: "fake-dispatch-capability" }),
       restoreGate,
+      trustedResultContext: async (lease) => ({
+        resultId: randomUUID(),
+        expected: { requestId: fixture.requestId, taskId: fixture.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "plan", sourceRevision: fixture.revision, snapshotDigest: "b".repeat(64), provider: "synthetic", model: "synthetic" },
+        snapshot: { repository: "owner-race/stop-race", revision: fixture.revision, snapshotDigest: "b".repeat(64), includedPaths: ["src/index.ts"] },
+      }),
       sandbox: {
         trustedSpec: async (lease) => {
           activeSandboxIdentity = { taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch };
@@ -1592,7 +1693,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       },
       dispatchSandbox: async ({ sandboxId, signal }) => {
         dispatchStarted.push(sandboxId);
-        return new Promise((resolve) => { signal.addEventListener("abort", () => resolve({ kind: "report", id: "unknown-result" }), { once: true }); });
+        return new Promise((resolve) => { signal.addEventListener("abort", () => resolve({ payload: { summary: "Synthetic cancelled plan", steps: [], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }), { once: true }); });
       },
       execution: {
         readStop: createPersistedStopReader(controls),
@@ -1666,9 +1767,9 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
     const sandboxCancelObservedAt = await Promise.race([
       sandboxCancelObserved,
       new Promise((_, reject) => {
-        cancelObservationTimeout = setTimeout(() => reject(new Error("synthetic HTTPS/mTLS manager did not receive cancellation within 10 seconds")), 10_000);
+        cancelObservationTimeout = globalThis.setTimeout(() => reject(new Error("synthetic HTTPS/mTLS manager did not receive cancellation within 10 seconds")), 10_000);
       }),
-    ]).finally(() => clearTimeout(cancelObservationTimeout));
+    ]).finally(() => globalThis.clearTimeout(cancelObservationTimeout));
     const cancelRequestElapsedMs = sandboxCancelObservedAt - stopStarted;
     assert.ok(cancelRequestElapsedMs <= 10_000, `active stop to synthetic manager cancellation request took ${cancelRequestElapsedMs.toFixed(2)}ms`);
     assert.equal(await running, "unknown", "a possible accepted effect is retained as unknown");
@@ -1683,7 +1784,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       `client must close the withheld response within the configured ${sandboxCancelTimeoutMs}ms timeout bound; observed ${withheldDurationMs.toFixed(2)}ms`);
     assert.ok(elapsedMs >= sandboxCancelTimeoutMs - 50, `manager cancellation must remain pending until the configured ${sandboxCancelTimeoutMs}ms timeout; observed ${elapsedMs.toFixed(2)}ms`);
     assert.ok(elapsedMs < sandboxCancelTimeoutMs + 1_000, `persisted stop/cancel must remain bounded by its ${sandboxCancelTimeoutMs}ms manager timeout; observed ${elapsedMs.toFixed(2)}ms`);
-    console.log(`# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt ${noDispatchElapsedMs.toFixed(2)}ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request ${cancelRequestElapsedMs.toFixed(2)}ms; manager accepted request but withheld response for ${withheldDurationMs.toFixed(2)}ms; configured client timeout ${sandboxCancelTimeoutMs}ms; active stop/cancel completion ${elapsedMs.toFixed(2)}ms. Local synthetic evidence only; no OS process restart or production latency qualification.`);
+    globalThis.console.log(`# single PostgreSQL-backed in-process sample: project stop to stopped worker claim attempt ${noDispatchElapsedMs.toFixed(2)}ms (no dispatch; task remains queued); active stop to synthetic HTTPS/mTLS manager cancellation request ${cancelRequestElapsedMs.toFixed(2)}ms; manager accepted request but withheld response for ${withheldDurationMs.toFixed(2)}ms; configured client timeout ${sandboxCancelTimeoutMs}ms; active stop/cancel completion ${elapsedMs.toFixed(2)}ms. Local synthetic evidence only; no OS process restart or production latency qualification.`);
     const persisted = await queueStore.get(task.id);
     assert.equal(persisted.status, "reconciliation_required");
     assert.deepEqual(sandboxStops, [{ sandboxId: "11111111-1111-4111-8111-111111111111", epoch: 1 }], "the API stop handler reaches exact durable mapping and sandbox cancellation");
@@ -1772,15 +1873,16 @@ test("PostgreSQL stop during persisted retry backoff preserves eligibility and i
     };
     const dispatched = [];
     let forceFirstRetry = true;
-    const makeWorker = (projectId, workerId, retryFirst = false) => {
+    const makeWorker = (fixture, workerId, retryFirst = false) => {
+      const projectId = fixture.projectId;
       const workerQueue = {
         claim: (...args) => queue.claim(...args),
-        complete: async (lease, result) => {
+        complete: async (lease, reference, canonical) => {
           if (retryFirst && forceFirstRetry) {
             forceFirstRetry = false;
             return queue.fail(lease, { kind: "transient", code: "synthetic-transient" });
           }
-          return queue.complete(lease, result);
+          return queue.complete(lease, reference, canonical);
         },
         fail: (...args) => queue.fail(...args),
         cancel: (...args) => queue.cancel(...args),
@@ -1788,20 +1890,25 @@ test("PostgreSQL stop during persisted retry backoff preserves eligibility and i
       return createQueueWorker({
         queue: workerQueue, workerId, leaseMs: 30_000, restoreGate,
         hydrate: async (lease) => ({ taskId: lease.task.taskId, projectId, capability: "synthetic-only" }),
+        trustedResultContext: async (lease) => ({
+          resultId: randomUUID(),
+          expected: { requestId: fixture.requestId, taskId: fixture.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "plan", sourceRevision: fixture.revision, snapshotDigest: "b".repeat(64), provider: "openai", model: "gpt-4.1" },
+          snapshot: { repository: "owner-race/stop-race", revision: fixture.revision, snapshotDigest: "b".repeat(64), includedPaths: ["src/index.ts"] },
+        }),
         execution: {
           readStop: async () => {
             const state = await controls.get({ projectId });
             return { stopped: state.global.stopped || state.project?.stopped === true, version: state.global.version };
           },
-          dispatch: async () => { dispatched.push({ workerId, projectId }); return { kind: "report", id: randomUUID() }; },
+          dispatch: async () => { dispatched.push({ workerId, projectId }); return { payload: { summary: "Synthetic plan", steps: [{ description: "Inspect source", sources: ["src/index.ts"] }], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }; },
           revokeCapability: async () => undefined,
           stopSandbox: async () => "stopped",
           recordAcceptedEffectUnknown: async () => undefined,
         },
       });
     };
-    const workerA = makeWorker(fixtureA.projectId, "jv286-worker-a", true);
-    const workerB = makeWorker(fixtureB.projectId, "jv286-worker-b");
+    const workerA = makeWorker(fixtureA, "jv286-worker-a", true);
+    const workerB = makeWorker(fixtureB, "jv286-worker-b");
     const composition = api.createRuntimeComposition({ store: controls, auth, worker: workerA, dashboard: async () => ({ status: 404 }) });
     await new Promise((resolve) => { apiServer = composition.server.listen(0, "127.0.0.1", resolve); });
     const origin = `http://127.0.0.1:${apiServer.address().port}`;
@@ -1867,7 +1974,7 @@ test("PostgreSQL stop during persisted retry backoff preserves eligibility and i
     const { rows: [savedQueue] } = await pool.query("SELECT state, attempt_count FROM jarvis.queue_entries WHERE id=$1", [taskA.id]);
     assert.deepEqual(savedQueue, { state: "succeeded", attempt_count: 2 });
     assert.equal(dispatched.filter((entry) => entry.projectId === fixtureA.projectId).length, 2);
-    console.log("# synthetic dispatch only; PostgreSQL-backed retry/backoff and project-stop isolation; no provider/GitHub calls or product qualification");
+    globalThis.console.log("# synthetic dispatch only; PostgreSQL-backed retry/backoff and project-stop isolation; no provider/GitHub calls or product qualification");
   } catch (error) {
     testFailure = error;
   }
@@ -1883,7 +1990,7 @@ test("persisted stop state survives an operating-system worker restart", {
   skip: process.env.JARVIS_RUN_STOP_RUNTIME_INTEGRATION !== "1"
     ? "set JARVIS_RUN_STOP_RUNTIME_INTEGRATION=1 to run this on-demand integration scenario"
     : databaseUrl === undefined ? "set JARVIS_TEST_DATABASE_URL to a disposable empty database" : false,
-}, async (context) => {
+}, async () => {
   const { spawn } = await import("node:child_process");
   const pool = new Pool({ connectionString: databaseUrl, max: 4, application_name: "jv263-process-restart-fixture" });
   const workerSource = `
@@ -1907,9 +2014,19 @@ test("persisted stop state survives an operating-system worker restart", {
         queue, workerId: process.env.JV263_APPLICATION_NAME, leaseMs: 30000,
         restoreGate: { waitUntilActivated: async () => undefined, activateAfterRestore: async () => undefined },
         hydrate: async (lease) => ({ taskId: lease.task.taskId, projectId: process.env.JV263_PROJECT_ID, capability: "synthetic" }),
+        trustedResultContext: async (lease) => {
+          const { rows: [task] } = await pool.query("SELECT r.id AS request_id, t.id AS task_id, t.revision, p.owner_id, p.repository_name FROM jarvis.tasks t JOIN jarvis.requests r ON r.id = t.request_id JOIN jarvis.projects p ON p.id = t.project_id WHERE t.id = $1", [lease.task.taskId]);
+          if (!task?.revision) throw new Error("Synthetic plan task lacks its trusted revision context");
+          const snapshotDigest = "b".repeat(64);
+          return {
+            resultId: crypto.randomUUID(),
+            expected: { requestId: task.request_id, taskId: task.task_id, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "plan", sourceRevision: task.revision, snapshotDigest, provider: "synthetic", model: "synthetic" },
+            snapshot: { repository: task.owner_id + "/" + task.repository_name, revision: task.revision, snapshotDigest, includedPaths: [] },
+          };
+        },
         execution: {
           readStop: createPersistedStopReader(controls),
-          dispatch: async () => { dispatchCount += 1; return { kind: "report", id: "11111111-1111-4111-8111-111111111111" }; },
+          dispatch: async () => { dispatchCount += 1; return { payload: { summary: "Synthetic plan", steps: [], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }; },
           revokeCapability: async () => undefined,
           stopSandbox: async () => "stopped",
           recordAcceptedEffectUnknown: async () => undefined,
@@ -1937,14 +2054,14 @@ test("persisted stop state survives an operating-system worker restart", {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    const timeout = globalThis.setTimeout(() => child.kill("SIGKILL"), 10_000);
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
     child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("error", (error) => { globalThis.clearTimeout(timeout); reject(error); });
     child.once("close", (code, signal) => {
-      clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
       if (code !== 0) reject(new Error(`worker ${phase}/${scope} exited code=${code} signal=${signal}: ${stderr}`));
       else {
         try { resolve(JSON.parse(stdout)); }

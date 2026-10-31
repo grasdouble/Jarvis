@@ -13,11 +13,12 @@ test('configured sandbox queue composition rejects missing recovery contract met
   const completePorts = () => ({
     workerId: 'worker', leaseMs: 1000, queue: { claim: async () => null, complete: async () => {}, fail: async () => {}, cancel: async () => {} },
     hydrate: async () => ({ taskId: 'task-a', projectId: 'project-a', capability: {} }),
-    execution: { readStop: async () => ({ stopped: false }), dispatch: async () => ({}), revokeCapability: async () => {}, stopSandbox: async () => 'stopped', recordAcceptedEffectUnknown: async () => {} },
+    trustedResultContext: async () => ({ resultId: 'result', expected: {} }),
+    execution: { readStop: async () => ({ stopped: false }), dispatch: async () => ({ payload: {} }), revokeCapability: async () => {}, stopSandbox: async () => 'stopped', recordAcceptedEffectUnknown: async () => {} },
     restoreGate: { waitUntilActivated: async () => {}, activateAfterRestore: async () => {} },
     sandbox: { trustedSpec: async () => spec, sandbox: { create: async () => ({ sandboxId: 'unused' }), cancel: async () => {}, findByIdempotencyKey: async () => null },
       mappings: { reserve: async () => {}, bind: async () => {}, get: async () => null, clear: async () => {}, getForReconciliation: async () => ({ sandboxId: null, idempotencyKey: 'task:a:1', spec }), clearAfterReconciliationCancellation: async () => {}, clearAfterReconciliationNoSandbox: async () => {} } },
-    dispatchSandbox: async () => ({}),
+    dispatchSandbox: async () => ({ payload: {} }),
   });
   const missing = [
     (ports) => { delete ports.sandbox.mappings.reserve; },

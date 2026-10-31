@@ -281,6 +281,10 @@ interface PolicyEngine {
 
 The validator rejects unexpected fields, excessive lengths, non-finite numbers, absolute paths, `..` traversal, and patch paths absent from the task workspace or allowed scope. The plan/patch schema is mode-specific; plan output can never be interpreted as an edit or PR intent.
 
+The shared plan/dev result envelope is implemented in `@jarvis/contracts` as schema version 1 with closed mode-specific `PlanResult`/`PatchResult` payloads and bounded UTF-8 size, list, and path checks. Core attribution (request, task, attempt, lease epoch, mode, source revision, snapshot digest, provider, model, and result ID) is supplied separately from untrusted runtime payload. Plan validation requires the trusted snapshot digest/revision and only permits citations from its included-path manifest. Development output is retained as an inert report and artifact digest/reference; it grants no write, approval, path-scope, or publication authority.
+
+PostgreSQL stores the canonical envelope in `task_results`; the queue stores only the bounded result ID reference. The worker validates the envelope against the trusted lease/result context and persists it in the same transaction as fenced queue completion. `PostgresTaskResultReadModel` and the API owner-authenticated read boundary resolve the canonical record only through an active allowlisted project. D09's 90-day report retention applies to these result rows. Privileged purge and encrypted-backup enforcement are J05 work and are not implemented or qualified by JV-302; do not activate real result persistence until that gate exists. These are implementation contracts only: production provider dispatch remains disabled, and this work does not qualify the proposed provider egress or Colima/Lima profile.
+
 ### 8.2 Sandbox contract
 
 ```typescript
@@ -319,6 +323,7 @@ Before `create`, the worker durably reserves the exact task/attempt/lease-epoch,
 | POST /api/v1/requests | Submit an explicit plan/dev request | Idempotency-Key, owner session, project/mode validation; ambiguity creates clarification only |
 | POST /api/v1/requests/:id/clarification | Answer a pending clarification | Same owner/request, expected version, reauthorize before queueing |
 | GET /api/v1/tasks/:id | Request, plan/patch, status and linked PR | Scoped authorization; sanitized output and immutable revision links |
+| GET /api/v1/tasks/:id/result | Read the canonical plan/dev result envelope | Owner session; active allowlisted project scope; provenance and inert model payload; no-store |
 | GET /api/v1/projects/:id/skills | Inspect candidate skill revisions | Read-only discovery; content remains untrusted and non-executable |
 | PUT /api/v1/projects/:id/skills/:skillId/approval | Approve/revoke exact skill revision | Explicit owner action, digest/version, CSRF, audit; no command permission |
 | GET /api/v1/stop and GET /api/v1/stop/projects/:id | Read effective global/project stop state | Owner session; database errors fail closed |
