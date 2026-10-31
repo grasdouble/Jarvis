@@ -71,7 +71,7 @@ jobs:
       - name: Install frozen workspace dependencies
         run: pnpm install --frozen-lockfile
       - name: Create CLI private-package tags and GitHub Releases
-        uses: grasdouble/Lufa-CICD/actions/changesets-release@320fce890fbd7bcb347141648174d1c3f7b786ad # immutable Lufa action; wraps changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
+        uses: grasdouble/Lufa-CICD/actions/changesets-release@9e985a3bb7fd2892e1075bed1c87acd4c1f527d8 # immutable Lufa action; wraps changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
         with:
           release-token: ${{ steps.app.outputs.token }}
           create-github-releases: 'true'

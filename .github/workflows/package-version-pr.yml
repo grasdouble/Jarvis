@@ -105,7 +105,7 @@ jobs:
           PACKAGE_RELEASE_APP_SLUG: ${{ vars.PACKAGE_RELEASE_APP_SLUG }}
         run: python3 scripts/release/authorize_version_branch.py
       - name: Generate or update the reviewed version PR
-        uses: grasdouble/Lufa-CICD/actions/changesets-release@320fce890fbd7bcb347141648174d1c3f7b786ad # immutable Lufa action; wraps changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
+        uses: grasdouble/Lufa-CICD/actions/changesets-release@9e985a3bb7fd2892e1075bed1c87acd4c1f527d8 # immutable Lufa action; wraps changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
         with:
           release-token: ${{ steps.app.outputs.token }}
           version-command: python3 scripts/release/run_changeset_version.py
