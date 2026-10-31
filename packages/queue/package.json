@@ -10,6 +10,6 @@
       "import": "./dist/index.js"
     }
   },
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "test": "pnpm run build && node --test test/*.test.mjs" },
+  "scripts": { "build": "pnpm --filter @jarvis/contracts run build && tsc", "typecheck": "pnpm --filter @jarvis/contracts run build && tsc --noEmit", "test": "pnpm run build && node --test test/*.test.mjs" },
   "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*" }
 }

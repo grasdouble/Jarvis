@@ -1,4 +1,5 @@
-import { QueueError, type QueueFailure, type QueueLease, type QueueResult, type QueueStore, type QueueTask } from "@jarvis/queue";
+import { QueueError, type QueueFailure, type QueueLease, type QueueResult, type QueueStore, type QueueTask, type TaskResult } from "@jarvis/queue";
+import { digestTaskResult } from "./results.js";
 import type { SqlClient, SqlPool } from "./index.js";
 
 type QueuePayload = { taskId: string };
@@ -24,12 +25,13 @@ type QueueRow = {
 };
 
 const MAX_JSON_BYTES = 16 * 1024;
-const jsonValue = (value: unknown, field: string): string | null => {
+const MAX_CANONICAL_RESULT_BYTES = 32 * 1024;
+const jsonValue = (value: unknown, field: string, maxBytes = MAX_JSON_BYTES): string | null => {
   if (value === undefined) return null;
   let encoded: string | undefined;
   try { encoded = JSON.stringify(value); } catch { throw new QueueError("INVALID_QUEUE_VALUE", `${field} must be JSON serializable`); }
-  if (encoded === undefined || Buffer.byteLength(encoded, "utf8") > MAX_JSON_BYTES) {
-    throw new QueueError("INVALID_QUEUE_VALUE", `${field} must be at most ${MAX_JSON_BYTES} bytes`);
+  if (encoded === undefined || Buffer.byteLength(encoded, "utf8") > maxBytes) {
+    throw new QueueError("INVALID_QUEUE_VALUE", `${field} must be at most ${maxBytes} bytes`);
   }
   return encoded;
 };
@@ -333,9 +335,10 @@ export class PostgresQueueStore implements QueueStore<QueuePayload> {
     }
   }
 
-  async update(task: QueueTask<QueuePayload>, lease?: QueueLease<QueuePayload>): Promise<QueueTask<QueuePayload>> {
+  async update(task: QueueTask<QueuePayload>, lease?: QueueLease<QueuePayload>, canonicalResult?: TaskResult): Promise<QueueTask<QueuePayload>> {
     const resultJson = jsonValue(task.result, "result");
     const errorJson = jsonValue(task.error, "error");
+    const canonicalJson = canonicalResult === undefined ? null : jsonValue(canonicalResult, "canonical result", MAX_CANONICAL_RESULT_BYTES);
     const client = await this.pool.connect();
     let committed = false;
     try {
@@ -344,18 +347,61 @@ export class PostgresQueueStore implements QueueStore<QueuePayload> {
         ? `q.state = 'reconciliation_required' AND q.lease_epoch = $2`
         : `q.state = 'leased' AND q.lease_epoch = $2 AND q.worker_id = $3 AND q.lease_until > clock_timestamp()`;
       const values = lease === undefined
-        ? [task.id, task.epoch, task.status, new Date(task.availableAt), resultJson, errorJson]
-        : [task.id, lease.epoch, lease.worker, task.status, new Date(task.availableAt), resultJson, errorJson];
+        ? [task.id, task.epoch, task.status, new Date(task.availableAt), resultJson, errorJson, canonicalResult?.resultId ?? null]
+        : [task.id, lease.epoch, lease.worker, task.status, new Date(task.availableAt), resultJson, errorJson, canonicalResult?.resultId ?? null];
       const statusIndex = lease === undefined ? "$3" : "$4";
       const availableIndex = lease === undefined ? "$4" : "$5";
       const resultIndex = lease === undefined ? "$5" : "$6";
       const errorIndex = lease === undefined ? "$6" : "$7";
+      const resultIdIndex = lease === undefined ? "$7" : "$8";
+      if (canonicalResult !== undefined) {
+        if (lease === undefined || task.status !== "succeeded" || task.result?.id !== canonicalResult.resultId) {
+          throw new QueueError("INVALID_RESULT", "Canonical result requires a matching successful leased completion");
+        }
+        const activeLease = await client.query(`
+          SELECT q.id
+          FROM jarvis.queue_entries q
+          JOIN jarvis.task_attempts a
+            ON a.id = q.attempt_id AND a.task_id = q.task_id
+           AND a.lease_epoch = q.lease_epoch AND a.state = 'active'
+          WHERE q.id = $1 AND q.task_id = $2 AND q.attempt_id = $5
+            AND q.state = 'leased' AND q.lease_epoch = $3 AND q.worker_id = $4
+            AND q.lease_until > clock_timestamp()
+          FOR UPDATE OF q
+        `, [task.id, task.taskId, lease.epoch, lease.worker, lease.attemptId]);
+        if (activeLease.rowCount !== 1) {
+          throw new QueueError("STALE_LEASE", "Queue state changed or the lease expired before result persistence");
+        }
+        const inserted = await client.query(`
+          INSERT INTO jarvis.task_results
+            (id, task_id, request_id, project_id, repository_id, attempt_id, lease_epoch,
+             mode, source_revision, provider, model, schema_version, payload_json, digest)
+          SELECT $1, t.id, r.id, t.project_id, t.repository_id, a.id, a.lease_epoch,
+                 $6, $7, $8, $9, 1, $10::jsonb, $11
+          FROM jarvis.tasks t
+          JOIN jarvis.requests r ON r.id = t.request_id AND r.project_id = t.project_id AND r.repository_id = t.repository_id
+          JOIN jarvis.task_attempts a ON a.task_id = t.id AND a.id = $3 AND a.lease_epoch = $4 AND a.state = 'active'
+          WHERE t.id = $2 AND r.id = $5 AND t.mode = $6 AND COALESCE(t.revision, '') = $7
+          ON CONFLICT DO NOTHING
+          RETURNING id
+        `, [canonicalResult.resultId, task.taskId, lease.attemptId, lease.epoch, canonicalResult.requestId,
+          canonicalResult.mode, canonicalResult.sourceRevision, canonicalResult.provider, canonicalResult.model,
+          canonicalJson, digestTaskResult(canonicalResult)]);
+        if (inserted.rowCount !== 1) {
+          throw new QueueError("RESULT_CONFLICT", "Canonical result identity is already stored or its trusted attribution does not match");
+        }
+      }
+      if (task.status === "succeeded" && task.result !== undefined && canonicalResult === undefined) {
+        const { rows: taskRows } = await client.query<{ mode: string }>("SELECT mode FROM jarvis.tasks WHERE id = $1", [task.taskId]);
+        if (taskRows[0]?.mode === "plan" || taskRows[0]?.mode === "dev") {
+          throw new QueueError("MISSING_CANONICAL_RESULT", "Successful plan/dev completion requires a canonical stored result");
+        }
+      }
       const { rows } = await client.query<QueueRow>(`
         UPDATE jarvis.queue_entries q
         SET state = ${statusIndex}, available_at = ${availableIndex},
-            lease_until = NULL, worker_id = NULL,
-            result_json = ${resultIndex}::jsonb, error_json = ${errorIndex}::jsonb,
-            updated_at = clock_timestamp()
+            lease_until = NULL, worker_id = NULL, result_id = ${resultIdIndex}::uuid,
+            result_json = ${resultIndex}::jsonb, error_json = ${errorIndex}::jsonb
         WHERE q.id = $1 AND ${leaseGuard}
         RETURNING q.id, q.task_id, q.event_id, q.state, q.created_at, q.available_at, q.deadline,
                   q.max_attempts, q.attempt_count, q.lease_epoch, q.lease_until, q.worker_id,
