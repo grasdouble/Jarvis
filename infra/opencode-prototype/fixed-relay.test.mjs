@@ -10,7 +10,9 @@ const sessionID = "session_1";
 test("maps all closed relay operations to authenticated fixed loopback routes", async () => {
   const cases = [
     [{ operation: "health" }, "GET", "/api/info", undefined, { version: "2.0.32" }],
-    [{ operation: "session.create", title: "synthetic" }, "POST", "/api/session", { title: "synthetic" }, { data: { id: sessionID } }],
+    [{ operation: "session.create", title: "synthetic", mode: "plan", profileId: "copilot", modelId: "synthetic-copilot" }, "POST", "/api/session", {
+      title: "synthetic", agent: "plan", model: { providerID: "jarvis-gateway", id: "synthetic-copilot" },
+    }, { data: { id: sessionID } }],
     [{ operation: "prompt", sessionID, text: "hello" }, "POST", `/api/session/${sessionID}/prompt`, { text: "hello", resume: true }, { data: { id: "message_1" } }],
     [{ operation: "messages", sessionID }, "GET", `/api/session/${sessionID}/message?order=desc&limit=50`, undefined, { data: [] }],
     [{ operation: "status", sessionID }, "GET", "/api/session/status", undefined, { [sessionID]: { type: "busy" } }],
@@ -22,7 +24,7 @@ test("maps all closed relay operations to authenticated fixed loopback routes", 
       captured = { url: String(url), init };
       return new globalThis.Response(JSON.stringify(result), { status: 200, headers: { "content-type": "application/json" } });
     };
-    const response = await dispatchFixedOpenCode(request, { fetcher, password });
+    const response = await dispatchFixedOpenCode(request, { fetcher, password, profileId: "copilot", modelId: "synthetic-copilot" });
     assert.equal(captured.url, `http://127.0.0.1:4096${path}`);
     assert.equal(captured.init.method, method);
     assert.equal(captured.init.redirect, "error");
@@ -39,4 +41,32 @@ test("rejects unknown operations, extra fields, and malformed session identity b
   await assert.rejects(dispatchFixedOpenCode({ operation: "health", url: "http://elsewhere.invalid" }, { fetcher, password }));
   await assert.rejects(dispatchFixedOpenCode({ operation: "messages", sessionID: "../other" }, { fetcher, password }));
   assert.equal(calls, 0);
+  await assert.rejects(dispatchFixedOpenCode({
+    operation: "session.create", title: "synthetic", mode: "dev", profileId: "openai", modelId: "untrusted-model",
+  }, { fetcher, password, profileId: "copilot", modelId: "synthetic-copilot" }));
+  assert.equal(calls, 0);
+});
+
+test("maps trusted dev mode to the fixed build agent and preserves selected OpenAI model", async () => {
+  let body;
+  await dispatchFixedOpenCode({
+    operation: "session.create",
+    title: "synthetic dev",
+    mode: "dev",
+    profileId: "openai",
+    modelId: "synthetic-openai",
+  }, {
+    password,
+    profileId: "openai",
+    modelId: "synthetic-openai",
+    fetcher: async (_url, init) => {
+      body = JSON.parse(init.body);
+      return globalThis.Response.json({ data: { id: sessionID } });
+    },
+  });
+  assert.deepEqual(body, {
+    title: "synthetic dev",
+    agent: "build",
+    model: { providerID: "jarvis-gateway", id: "synthetic-openai" },
+  });
 });

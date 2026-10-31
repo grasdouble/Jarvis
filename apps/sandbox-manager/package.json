@@ -8,5 +8,5 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs"
   },
-  "dependencies": { "@jarvis/contracts": "workspace:*" }
+  "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/llm": "workspace:*" }
 }

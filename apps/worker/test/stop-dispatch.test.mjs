@@ -1,30 +1,140 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { performance } from "node:perf_hooks";
-import { setImmediate as yieldTurn } from "node:timers/promises";
+import { computeSnapshotDigest } from "@jarvis/runtime";
 import * as worker from "../dist/index.js";
 const readyRestoreGate = { activateAfterRestore: async () => undefined, waitUntilActivated: async () => undefined };
+const yieldTurn = () => new Promise((resolve) => globalThis.setImmediate(resolve));
+const providerCapabilities = ["chat-completions", "streaming", "cancellation", "context-budget"];
+const trustedProfile = {
+  id: "copilot", providerId: "github-copilot", modelId: "synthetic-copilot",
+  contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: providerCapabilities,
+};
+const trustedCatalog = {
+  activeProfileId: "copilot",
+  profiles: {
+    copilot: { modelId: trustedProfile.modelId, contextWindowTokens: trustedProfile.contextWindowTokens, maxOutputTokens: trustedProfile.maxOutputTokens, capabilities: providerCapabilities },
+    openai: { modelId: "synthetic-openai", contextWindowTokens: 16384, maxOutputTokens: 2048, capabilities: providerCapabilities },
+  },
+};
 
+const runSession = (input) => {
+  const providerCatalog = input.providerCatalog ?? trustedCatalog;
+  const ports = worker.createStopAwareOpenCodePorts({
+    readStop: async () => ({ stopped: false, version: 0 }),
+    manager: input.manager,
+    providerCatalog,
+    revokeCapability: async () => undefined,
+    stopSandbox: async () => "stopped",
+    recordAcceptedEffectUnknown: async () => undefined,
+    session: {
+      ...(input.pollIntervalMs === undefined ? {} : { pollIntervalMs: input.pollIntervalMs }),
+      ...(input.maxPolls === undefined ? {} : { maxPolls: input.maxPolls }),
+      ...(input.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: input.requestTimeoutMs }),
+    },
+  });
+  const capability = {
+    sandboxId: input.sandboxId, taskId: input.taskId, attemptId: input.attemptId, leaseEpoch: input.leaseEpoch,
+    title: input.title, prompt: input.prompt, mode: input.mode,
+    ...(input.snapshot === undefined ? {} : { snapshot: input.snapshot }),
+    ...(input.onText === undefined ? {} : { onText: input.onText }),
+  };
+  return ports.dispatch({ ...capability, modelProfileId: providerCatalog.activeProfileId }, input.signal);
+};
 test("OpenCode session flow uses only manager relay operations and bounded polling", async () => {
   const calls = [];
+  let sessionRequest;
   const manager = { request: async (sandboxId, taskId, attemptId, leaseEpoch, request) => {
     calls.push([sandboxId, taskId, attemptId, leaseEpoch, request.operation]);
-    if (request.operation === "session.create") return { id: "session_1" };
-    if (request.operation === "messages") return { messages: [{ type: "assistant", content: [{ type: "text", text: "synthetic result" }] }] };
+    if (request.operation === "session.create") {
+      sessionRequest = request;
+      return { id: "session_1" };
+    }
+    if (request.operation === "messages") return { messages: [{ type: "assistant", tokens: { input: 12, output: 7 }, content: [{ type: "text", text: '{"summary":"synthetic result"}' }] }] };
+    if (request.operation === "status") return { status: "idle" };
     return {};
   } };
-  const result = await worker.runOpenCodeSession({
+  const chunks = [];
+  const result = await runSession({
     manager, sandboxId: "00000000-0000-4000-8000-000000000001", taskId: "task-1", attemptId: "attempt-1", leaseEpoch: 4,
-    title: "test",
-    prompt: "synthetic prompt", signal: new globalThis.AbortController().signal, pollIntervalMs: 10, maxPolls: 2,
+    title: "test", mode: "dev", prompt: "synthetic prompt",
+    signal: new globalThis.AbortController().signal, pollIntervalMs: 10, maxPolls: 2,
+    onText: (delta) => chunks.push(delta),
   });
-  assert.equal(result.messages[0].content[0].text, "synthetic result");
+  assert.deepEqual(sessionRequest, { operation: "session.create", title: "test", mode: "dev", profileId: "copilot", modelId: "synthetic-copilot" });
+  assert.equal(result.resultText, '{"summary":"synthetic result"}');
+  assert.deepEqual(result.payload, { summary: "synthetic result" });
+  assert.deepEqual(result.usage.inputTokens, 12);
+  assert.deepEqual(result.usage.outputTokens, 7);
+  assert.equal(result.usage.provenance, "opencode-response");
+  assert.ok(Number.isFinite(Date.parse(result.usage.observedAt)));
+  assert.deepEqual(chunks, ['{"summary":"synthetic result"}']);
   assert.deepEqual(calls, [
     ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "session.create"],
     ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "prompt"],
     ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "messages"],
     ["00000000-0000-4000-8000-000000000001", "task-1", "attempt-1", 4, "status"],
   ]);
+});
+
+test("plan output is relayed as an untrusted payload for shared contract validation", async () => {
+  const binding = { repository: "grasdouble/jarvis", revision: "a".repeat(40) };
+  const files = [{ path: "src/index.ts", sha256: "b".repeat(64) }];
+  const excludedPaths = [];
+  const diffSha256 = "c".repeat(64);
+  const diffBytes = 0;
+  const snapshot = {
+    ...binding, files, excludedPaths, diffSha256, diffBytes,
+    snapshotDigest: computeSnapshotDigest(binding.repository, binding.revision, files, excludedPaths, diffSha256, diffBytes),
+  };
+  const plan = {
+    summary: "Plan for the trusted request",
+    steps: [{ description: "Inspect the trusted request", sources: ["src/index.ts"] }],
+    affectedAreas: ["src/index.ts"], assumptions: [], risks: [], questions: [], limitations: [],
+  };
+  const manager = { request: async (_sandboxId, _taskId, _attemptId, _leaseEpoch, request) => {
+    if (request.operation === "session.create") return { id: "session_plan" };
+    if (request.operation === "messages") return { messages: [{ type: "assistant", content: [{ type: "text", text: JSON.stringify(plan) }] }] };
+    if (request.operation === "status") return { status: "idle" };
+    return {};
+  } };
+  const result = await runSession({
+    manager, sandboxId: "00000000-0000-4000-8000-000000000005", taskId: "task-plan", attemptId: "attempt-plan", leaseEpoch: 1,
+    title: "plan", prompt: "synthetic plan prompt", mode: "plan", snapshot,
+    signal: new globalThis.AbortController().signal,
+  });
+  assert.deepEqual(result.payload, plan);
+  assert.equal(result.resultText, JSON.stringify(plan));
+});
+
+test("trusted OpenAI selection binds dev session, model, streaming, and shared result envelope", async () => {
+  const providerCatalog = { ...trustedCatalog, activeProfileId: "openai" };
+  let sessionRequest;
+  const manager = { request: async (_sandboxId, _taskId, _attemptId, _leaseEpoch, request) => {
+    if (request.operation === "session.create") { sessionRequest = request; return { id: "session_openai" }; }
+    if (request.operation === "messages") {
+      return { messages: [{ type: "assistant", content: [{ type: "text", text: '{"summary":"synthetic OpenAI dev report"}' }] }] };
+    }
+    if (request.operation === "status") return { status: "idle" };
+    return {};
+  } };
+  const chunks = [];
+  const result = await runSession({
+    manager, providerCatalog,
+    sandboxId: "00000000-0000-4000-8000-000000000006", taskId: "task-openai", attemptId: "attempt-openai", leaseEpoch: 1,
+    title: "dev", prompt: "synthetic dev prompt", mode: "dev",
+    signal: new globalThis.AbortController().signal, onText: (delta) => chunks.push(delta),
+  });
+  assert.deepEqual(sessionRequest, {
+    operation: "session.create", title: "dev", mode: "dev", profileId: "openai", modelId: "synthetic-openai",
+  });
+  assert.equal(result.mode, "dev");
+  assert.equal(result.profileId, "openai");
+  assert.equal(result.providerId, "openai");
+  assert.equal(result.modelId, "synthetic-openai");
+  assert.equal(result.resultText, '{"summary":"synthetic OpenAI dev report"}');
+  assert.deepEqual(result.payload, { summary: "synthetic OpenAI dev report" });
+  assert.deepEqual(chunks, ['{"summary":"synthetic OpenAI dev report"}']);
 });
 
 test("fixed relay manager port emits only the lease- and run-bound runtime API route", async () => {
@@ -48,10 +158,10 @@ test("OpenCode session failure requests cancellation through the manager relay",
     if (request.operation === "messages") return { messages: [] };
     return {};
   } };
-  await assert.rejects(() => worker.runOpenCodeSession({
+  await assert.rejects(() => runSession({
     manager, sandboxId: "00000000-0000-4000-8000-000000000002", taskId: "task-2", attemptId: "attempt-2", leaseEpoch: 1,
-    title: "test",
-    prompt: "synthetic prompt", signal: new globalThis.AbortController().signal, pollIntervalMs: 10, maxPolls: 1,
+    title: "test", mode: "dev", prompt: "synthetic prompt",
+    signal: new globalThis.AbortController().signal, pollIntervalMs: 10, maxPolls: 1,
   }), /without an assistant response/);
   assert.deepEqual(operations, ["session.create", "prompt", "messages", "status", "cancel"]);
 });
@@ -64,9 +174,9 @@ test("unresponsive manager relay is bounded and triggers best-effort session can
     if (request.operation === "prompt") return new Promise(() => {});
     return {};
   } };
-  await assert.rejects(() => worker.runOpenCodeSession({
+  await assert.rejects(() => runSession({
     manager, sandboxId: "00000000-0000-4000-8000-000000000003", taskId: "task-3", attemptId: "attempt-3", leaseEpoch: 2,
-    title: "test", prompt: "synthetic prompt",
+    title: "test", prompt: "synthetic prompt", mode: "dev",
     signal: new globalThis.AbortController().signal, requestTimeoutMs: 10,
   }), /timed out/);
   assert.deepEqual(operations, ["session.create", "prompt", "cancel"]);
@@ -88,9 +198,9 @@ test("aborted in-flight prompt uses a fresh signal for fixed-relay cleanup cance
     if (request.operation === "cancel") { cancelSignal = signal; return {}; }
     return {};
   } };
-  const running = worker.runOpenCodeSession({
+  const running = runSession({
     manager, sandboxId: "00000000-0000-4000-8000-000000000004", taskId: "task-4", attemptId: "attempt-4", leaseEpoch: 2,
-    title: "test", prompt: "synthetic prompt", signal: controller.signal, requestTimeoutMs: 100,
+    title: "test", prompt: "synthetic prompt", signal: controller.signal, requestTimeoutMs: 100, mode: "dev",
   });
   await started;
   controller.abort();
@@ -213,14 +323,14 @@ test("stop-aware OpenCode integration sends fixed manager cancel and records unc
     revokeCapability: async (taskId) => effects.push(["revoke", taskId]),
     stopSandbox: async (taskId) => { effects.push(["stop", taskId]); return "stopped"; },
     recordAcceptedEffectUnknown: async (taskId) => effects.push(["unknown", taskId]),
-    session: { requestTimeoutMs: 1000, pollIntervalMs: 10, maxPolls: 2 },
+    providerCatalog: trustedCatalog,
   });
   const executor = worker.createStopAwareExecutor(ports, { pollIntervalMs: 10, shutdownTimeoutMs: 1000 });
   const execution = executor.execute({
     taskId: "task-integrated", projectId: "project-integrated",
     capability: {
       sandboxId: "00000000-0000-4000-8000-000000000251", taskId: "task-integrated", attemptId: "attempt-integrated",
-      leaseEpoch: 1, title: "synthetic", prompt: "synthetic prompt",
+      leaseEpoch: 1, title: "synthetic", prompt: "synthetic prompt", mode: "dev", modelProfileId: "copilot",
     },
   });
   await started;
@@ -243,14 +353,14 @@ test("composed stop gate denies the final manager/gateway relay dispatch after a
     manager,
     revokeCapability: async () => undefined,
     stopSandbox: async () => "stopped",
-    recordAcceptedEffectUnknown: async () => undefined,
+    providerCatalog: trustedCatalog,
   });
   const executor = worker.createStopAwareExecutor(ports);
   const outcome = await executor.execute({
     taskId: "task-final-gate", projectId: "project-final-gate",
     capability: {
       sandboxId: "00000000-0000-4000-8000-000000000251", taskId: "task-final-gate", attemptId: "attempt-final-gate",
-      leaseEpoch: 7, title: "synthetic", prompt: "must not dispatch",
+      leaseEpoch: 7, title: "synthetic", prompt: "must not dispatch", mode: "dev", modelProfileId: "copilot",
     },
   });
   assert.deepEqual(outcome, { kind: "stopped" });
@@ -319,10 +429,11 @@ test("after a durable project resume only a fresh execution is admitted", async 
 
 test("queue lifecycle claims, executes and completes through the lease service", async () => {
   const events = [];
+  const completions = [];
   const lease = { task: { id: "q1", taskId: "22222222-2222-4222-8222-222222222222" }, attemptId: "33333333-3333-4333-8333-333333333333", worker: "w", epoch: 1, expiresAt: Date.now() + 1000 };
   const queue = {
     claim: async () => { events.push("claim"); return lease; },
-    complete: async (_lease, reference, canonical) => { events.push(`complete:${reference.id}:${canonical.mode}`); },
+    complete: async (_lease, reference, canonical) => { completions.push({ reference, canonical }); events.push(`complete:${reference.id}:${canonical.mode}`); },
     fail: async () => { throw new Error("unexpected fail"); },
     cancel: async (id) => { events.push(`cancel:${id}`); },
   };
@@ -342,6 +453,65 @@ test("queue lifecycle claims, executes and completes through the lease service",
   });
   assert.equal(await runtime.runOnce(), "completed");
   assert.deepEqual(events, ["claim", "dispatch", "complete:44444444-4444-4444-8444-444444444444:dev"]);
+  assert.deepEqual(completions, [{
+    reference: { kind: "report", id: "44444444-4444-4444-8444-444444444444" },
+    canonical: {
+      schemaVersion: 1,
+      requestId: "11111111-1111-4111-8111-111111111111",
+      taskId: "22222222-2222-4222-8222-222222222222",
+      attemptId: "33333333-3333-4333-8333-333333333333",
+      leaseEpoch: 1,
+      mode: "dev",
+      sourceRevision: "a".repeat(40),
+      snapshotDigest: "b".repeat(64),
+      provider: "openai",
+      model: "gpt-4.1",
+      resultId: "44444444-4444-4444-8444-444444444444",
+      payload: { summary: "Patch report", artifactId: "55555555-5555-4555-8555-555555555555", patchDigest: "c".repeat(64), changedPaths: ["src/index.ts"], limitations: [] },
+    },
+  }]);
+});
+
+test("plan queue completion validates shared contract and retains only the durable result reference", async () => {
+  const lease = { task: { id: "q-plan", taskId: "22222222-2222-4222-8222-222222222222" }, attemptId: "33333333-3333-4333-8333-333333333333", worker: "w", epoch: 2, expiresAt: Date.now() + 1000 };
+  const plan = {
+    summary: "Plan report",
+    steps: [{ description: "Inspect source", sources: ["src/index.ts"] }],
+    affectedAreas: ["src/index.ts"], assumptions: [], risks: [], questions: [], limitations: [],
+  };
+  let completion;
+  const runtime = worker.createQueueWorker({
+    queue: {
+      claim: async () => lease,
+      complete: async (_lease, reference, canonical) => { completion = { reference, canonical }; },
+      fail: async () => { throw new Error("unexpected fail"); },
+      cancel: async () => undefined,
+    },
+    workerId: "w", leaseMs: 1000, restoreGate: readyRestoreGate,
+    hydrate: async () => ({ taskId: lease.task.taskId, projectId: "p1", capability: "cap" }),
+    trustedResultContext: async () => ({
+      resultId: "44444444-4444-4444-8444-444444444444",
+      expected: { requestId: "11111111-1111-4111-8111-111111111111", taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "plan", sourceRevision: "a".repeat(40), snapshotDigest: "b".repeat(64), provider: "openai", model: "gpt-4.1" },
+      snapshot: { repository: "owner/repo", revision: "a".repeat(40), snapshotDigest: "b".repeat(64), includedPaths: ["src/index.ts"] },
+    }),
+    execution: {
+      readStop: async () => ({ stopped: false, version: 1 }),
+      dispatch: async () => ({ payload: plan }),
+      revokeCapability: async () => undefined, stopSandbox: async () => "stopped",
+      recordAcceptedEffectUnknown: async () => undefined,
+    },
+  });
+  assert.equal(await runtime.runOnce(), "completed");
+  assert.deepEqual(completion, {
+    reference: { kind: "report", id: "44444444-4444-4444-8444-444444444444" },
+    canonical: {
+      schemaVersion: 1, requestId: "11111111-1111-4111-8111-111111111111",
+      taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch,
+      mode: "plan", sourceRevision: "a".repeat(40), snapshotDigest: "b".repeat(64),
+      provider: "openai", model: "gpt-4.1", resultId: "44444444-4444-4444-8444-444444444444",
+      payload: plan,
+    },
+  });
 });
 test("review worker completion uses only its trusted core result reference", async () => {
   const completions = [];

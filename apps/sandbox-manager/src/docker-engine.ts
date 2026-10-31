@@ -1,4 +1,5 @@
 import { request as httpRequest } from "node:http";
+import { createConnection } from "node:net";
 
 import type {
   ContainerInspection,
@@ -13,6 +14,7 @@ import type {
 } from "./index.js";
 import { SandboxManagerError } from "./index.js";
 
+const MAX_HEADER_BYTES = 8 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_ARCHIVE_BYTES = 64 * 1024;
@@ -166,12 +168,19 @@ export class DockerEngineClient implements SandboxEngine {
   }
 
   async createContainer(input: ContainerRequest): Promise<ContainerInspection> {
-    const allowedEnvironment = new Set([
-      "LLM_GATEWAY_SOCKET", "LLM_GATEWAY_PROVIDER_ID", "LLM_GATEWAY_MODEL",
-      "LLM_GATEWAY_MAX_INPUT_BYTES", "LLM_GATEWAY_MAX_OUTPUT_TOKENS", "LLM_GATEWAY_MAX_REQUESTS",
-    ]);
+    const allowedEnvironment: Readonly<Record<string, true>> = {
+      LLM_GATEWAY_SOCKET: true,
+      LLM_GATEWAY_PROVIDER_ID: true,
+      LLM_GATEWAY_MODEL: true,
+      LLM_GATEWAY_PROFILE_ID: true,
+      LLM_GATEWAY_CONTEXT_WINDOW_TOKENS: true,
+      LLM_GATEWAY_MAX_OUTPUT_TOKENS: true,
+      LLM_GATEWAY_MAX_INPUT_BYTES: true,
+      LLM_GATEWAY_MAX_REQUESTS: true,
+      XDG_CONFIG_HOME: true,
+    };
     for (const [key, value] of Object.entries(input.environment ?? {})) {
-      if (!allowedEnvironment.has(key) || typeof value !== "string" || value.length > 256 || /[\0\r\n]/.test(value)) {
+      if (!Object.hasOwn(allowedEnvironment, key) || typeof value !== "string" || value.length > 256 || /[\0\r\n]/.test(value)) {
         throw new SandboxManagerError("Container environment contains an unapproved setting.", "INVALID_ARGUMENT");
       }
     }
@@ -259,60 +268,71 @@ export class DockerEngineClient implements SandboxEngine {
   }
 
   async relayOpenCode(containerId: string, request: OpenCodeRelayRequest): Promise<OpenCodeRelayResponse> {
-    // Container identity comes only from the manager registry. Command and path are fixed;
-    // the operation is structured stdin, never interpolated into argv or a shell.
-    const created = await this.call<{ Id?: string }>("POST", `/containers/${encodeURIComponent(containerId)}/exec`, {
+    // The Engine hijack request is written as one bounded HTTP frame so Node cannot
+    // switch protocols before the fixed start options have reached the daemon.
+    const execResult = await this.call<{ Id?: string }>("POST", `/containers/${encodeURIComponent(containerId)}/exec`, {
       AttachStdin: true, AttachStdout: true, AttachStderr: false, Tty: true,
       Cmd: ["/usr/local/bin/jarvis-opencode-relay"],
     }, 201);
-    const execId = created?.Id;
+    const execId = execResult?.Id;
     if (typeof execId !== "string" || !/^[a-f0-9]{12,64}$/i.test(execId)) {
       throw new SandboxManagerError("Docker Engine did not return a valid fixed-relay execution identity.", "ENGINE_ERROR");
     }
+    const startBody = Buffer.from('{"Detach":false,"Tty":true}');
+    const startHeaders = Buffer.from([
+      `POST ${this.apiPrefix}/exec/${encodeURIComponent(execId)}/start HTTP/1.1`,
+      "Host: localhost",
+      "Connection: Upgrade",
+      "Upgrade: tcp",
+      "Content-Type: application/json",
+      `Content-Length: ${startBody.byteLength}`,
+      "",
+      "",
+    ].join("\r\n"));
     return new Promise((resolve, reject) => {
       let settled = false;
+      let upgraded = false;
+      let responseHead = Buffer.alloc(0);
       let output = Buffer.alloc(0);
+      const socket = createConnection({ path: this.socketPath });
       const finish = (error?: Error): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (error) { reject(new SandboxManagerError("Fixed OpenCode relay transport failed.", "ENGINE_ERROR")); return; }
+        socket.destroy();
+        if (error) {
+          reject(new SandboxManagerError("Fixed OpenCode relay transport failed.", "ENGINE_ERROR"));
+          return;
+        }
         try {
-          const text = output.toString("utf8").trim();
-          const value: unknown = JSON.parse(text);
+          const value: unknown = JSON.parse(output.toString("utf8").trim());
           if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid response");
           resolve(value as OpenCodeRelayResponse);
-        } catch { reject(new SandboxManagerError("Fixed OpenCode relay returned invalid framed JSON.", "ENGINE_ERROR")); }
+        } catch {
+          reject(new SandboxManagerError("Fixed OpenCode relay returned invalid framed JSON.", "ENGINE_ERROR"));
+        }
       };
-      const timer = setTimeout(() => { requestHandle.destroy(); finish(new Error("timeout")); }, REQUEST_TIMEOUT_MS);
-      const requestHandle = httpRequest({
-        socketPath: this.socketPath,
-        path: `${this.apiPrefix}/exec/${encodeURIComponent(execId)}/start`,
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength('{"Detach":false,"Tty":true}'),
-          connection: "Upgrade",
-          upgrade: "tcp",
-        },
-      });
-      requestHandle.on("upgrade", (_response, socket, head) => {
-        if (head.length) output = Buffer.concat([output, head]);
-        socket.on("data", (chunk: Buffer) => {
+      const timer = setTimeout(() => finish(new Error("timeout")), REQUEST_TIMEOUT_MS);
+      socket.on("connect", () => socket.write(Buffer.concat([startHeaders, startBody])));
+      socket.on("data", (chunk: Buffer) => {
+        if (!upgraded) {
+          responseHead = Buffer.concat([responseHead, chunk]);
+          if (responseHead.byteLength > MAX_HEADER_BYTES) { finish(new Error("response headers too large")); return; }
+          const delimiter = responseHead.indexOf("\r\n\r\n");
+          if (delimiter < 0) return;
+          const statusLine = responseHead.subarray(0, delimiter).toString("ascii").split("\r\n", 1)[0] ?? "";
+          if (!/^HTTP\/1\.[01] (?:101|200)(?:\s|$)/.test(statusLine)) { finish(new Error("unexpected response")); return; }
+          upgraded = true;
+          output = Buffer.from(responseHead.subarray(delimiter + 4));
+          responseHead = Buffer.alloc(0);
+          socket.end(Buffer.from(`${JSON.stringify(request)}\n`));
+        } else {
           output = Buffer.concat([output, chunk]);
-          if (output.byteLength > MAX_RESPONSE_BYTES) { socket.destroy(); finish(new Error("response too large")); }
-        });
-        socket.on("end", () => finish());
-        socket.on("error", finish);
-        socket.write(Buffer.from(`${JSON.stringify(request)}\n`));
-        socket.end();
+        }
+        if (output.byteLength > MAX_RESPONSE_BYTES) finish(new Error("response too large"));
       });
-      requestHandle.on("response", (response) => {
-        response.resume();
-        finish(new Error(`unexpected HTTP ${response.statusCode}`));
-      });
-      requestHandle.on("error", finish);
-      requestHandle.end('{"Detach":false,"Tty":true}');
+      socket.on("end", () => finish());
+      socket.on("error", finish);
     });
   }
 
