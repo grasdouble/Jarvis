@@ -47,7 +47,8 @@ test("invokes only the fixed relay executable with framed operation input throug
     assert.equal(request.headers["content-type"], "application/json");
     startContentLength = Number(request.headers["content-length"]);
     socket.write("HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
-    let incoming = Buffer.from(head);
+    assert.deepEqual(JSON.parse(head.toString("utf8")), { Detach: false, Tty: true });
+    let incoming = Buffer.alloc(0);
     socket.on("data", (chunk) => {
       incoming = Buffer.concat([incoming, chunk]);
       const newline = incoming.indexOf(0x0a);

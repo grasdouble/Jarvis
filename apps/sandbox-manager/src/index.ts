@@ -160,7 +160,7 @@ export function createAttemptConfigArchive(
 }
 export function createOpenCodeProfileArchive(profileInput: ProviderProfile): Uint8Array {
   const profile = resolveProviderSelection(profileInput);
-  const permissions = [
+  const planPermissions = [
     { action: "*", resource: "*", effect: "deny" },
     { action: "read", resource: "*", effect: "allow" },
     { action: "glob", resource: "*", effect: "allow" },
@@ -168,12 +168,23 @@ export function createOpenCodeProfileArchive(profileInput: ProviderProfile): Uin
     { action: "edit", resource: "*", effect: "deny" },
     { action: "shell", resource: "*", effect: "deny" },
   ];
+  const buildPermissions = [
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "read", resource: "*", effect: "allow" },
+    { action: "glob", resource: "*", effect: "allow" },
+    { action: "grep", resource: "*", effect: "allow" },
+    { action: "edit", resource: "*", effect: "allow" },
+    { action: "shell", resource: "*", effect: "deny" },
+  ];
   const content = new TextEncoder().encode(JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     default_agent: "plan",
     update: "disable",
     model: `jarvis-gateway/${profile.modelId}`,
-    agents: { plan: { mode: "primary", permissions } },
+    agents: {
+      plan: { mode: "primary", permissions: planPermissions },
+      build: { mode: "primary", permissions: buildPermissions },
+    },
     plugin: [],
     mcp: {},
     providers: {

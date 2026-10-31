@@ -73,7 +73,7 @@ test("trusted OpenAI selection binds its model through sandbox environment and g
   assert.equal(gateway.profile.modelId, "synthetic-openai");
 });
 
-test("builds deterministic per-attempt filter and gateway config archives, both disabled by default", () => {
+test("builds deterministic gateway archives and OpenCode profiles deny commands while restricting build editing", () => {
   assert.equal(typeof sandboxManager.createAttemptConfigArchive, "function");
   const capability = "a".repeat(64);
   const archive = sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile);
@@ -94,10 +94,32 @@ test("builds deterministic per-attempt filter and gateway config archives, both 
     filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", filterPort: 8080,
   });
   assert.deepEqual(sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile), archive);
-  const openCodeConfig = Buffer.from(sandboxManager.createOpenCodeProfileArchive(trustedGatewayProfile.activeProfile)).toString();
-  assert.match(openCodeConfig, /"default_agent":"plan"/);
-  assert.match(openCodeConfig, /jarvis-gateway\/synthetic-copilot/);
-  assert.doesNotMatch(openCodeConfig, /filterCapability/);
+  const openCodeArchive = Buffer.from(sandboxManager.createOpenCodeProfileArchive(trustedGatewayProfile.activeProfile));
+  const openCodeSize = Number.parseInt(openCodeArchive.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
+  const openCodeConfig = JSON.parse(openCodeArchive.subarray(512, 512 + openCodeSize).toString());
+  assert.equal(openCodeConfig.default_agent, "plan");
+  assert.equal(openCodeConfig.model, "jarvis-gateway/synthetic-copilot");
+  assert.deepEqual(openCodeConfig.agents.plan.permissions, [
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "read", resource: "*", effect: "allow" },
+    { action: "glob", resource: "*", effect: "allow" },
+    { action: "grep", resource: "*", effect: "allow" },
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "shell", resource: "*", effect: "deny" },
+  ]);
+  assert.deepEqual(openCodeConfig.agents.build, {
+    mode: "primary",
+    permissions: [
+      { action: "*", resource: "*", effect: "deny" },
+      { action: "read", resource: "*", effect: "allow" },
+      { action: "glob", resource: "*", effect: "allow" },
+      { action: "grep", resource: "*", effect: "allow" },
+      { action: "edit", resource: "*", effect: "allow" },
+      { action: "shell", resource: "*", effect: "deny" },
+    ],
+  });
+  assert.equal(openCodeConfig.providers["jarvis-gateway"].models["synthetic-copilot"].limit.context, 8192);
+  assert.doesNotMatch(JSON.stringify(openCodeConfig), /filterCapability/);
   const socketArchive = sandboxManager.createGatewaySocketArchive();
   const socketHeader = Buffer.from(socketArchive.subarray(0, 512));
   assert.equal(socketHeader.toString("utf8", 0, 100).replace(/\0.*$/s, ""), "jarvis/");
