@@ -319,25 +319,29 @@ test("after a durable project resume only a fresh execution is admitted", async 
 
 test("queue lifecycle claims, executes and completes through the lease service", async () => {
   const events = [];
-  const lease = { task: { id: "q1", taskId: "t1" }, worker: "w", epoch: 1, expiresAt: Date.now() + 1000 };
+  const lease = { task: { id: "q1", taskId: "22222222-2222-4222-8222-222222222222" }, attemptId: "33333333-3333-4333-8333-333333333333", worker: "w", epoch: 1, expiresAt: Date.now() + 1000 };
   const queue = {
     claim: async () => { events.push("claim"); return lease; },
-    complete: async (_lease, result) => { events.push(`complete:${result.id}`); },
+    complete: async (_lease, reference, canonical) => { events.push(`complete:${reference.id}:${canonical.mode}`); },
     fail: async () => { throw new Error("unexpected fail"); },
     cancel: async (id) => { events.push(`cancel:${id}`); },
   };
   const runtime = worker.createQueueWorker({
     queue, workerId: "w", leaseMs: 1000, restoreGate: readyRestoreGate,
-    hydrate: async () => ({ taskId: "t1", projectId: "p1", capability: "cap" }),
+    hydrate: async () => ({ taskId: "22222222-2222-4222-8222-222222222222", projectId: "p1", capability: "cap" }),
+    trustedResultContext: async () => ({
+      resultId: "44444444-4444-4444-8444-444444444444",
+      expected: { requestId: "11111111-1111-4111-8111-111111111111", taskId: "22222222-2222-4222-8222-222222222222", attemptId: "33333333-3333-4333-8333-333333333333", leaseEpoch: 1, mode: "dev", sourceRevision: "a".repeat(40), snapshotDigest: "b".repeat(64), provider: "openai", model: "gpt-4.1" },
+    }),
     execution: {
       readStop: async () => ({ stopped: false, version: 1 }),
-      dispatch: async () => { events.push("dispatch"); return { kind: "report", id: "00000000-0000-4000-8000-000000000001" }; },
+      dispatch: async () => { events.push("dispatch"); return { payload: { summary: "Patch report", artifactId: "55555555-5555-4555-8555-555555555555", patchDigest: "c".repeat(64), changedPaths: ["src/index.ts"], limitations: [] } }; },
       revokeCapability: async () => undefined, stopSandbox: async () => "stopped",
       recordAcceptedEffectUnknown: async () => undefined,
     },
   });
   assert.equal(await runtime.runOnce(), "completed");
-  assert.deepEqual(events, ["claim", "dispatch", "complete:00000000-0000-4000-8000-000000000001"]);
+  assert.deepEqual(events, ["claim", "dispatch", "complete:44444444-4444-4444-8444-444444444444:dev"]);
 });
 
 test("stop racing a claimed active dispatch fails the lease as unknown, never cancels a possible effect", async () => {

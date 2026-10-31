@@ -512,3 +512,4 @@ export { PostgresOwnerAuthStore } from "./auth.js";
 export { PostgresStopControlStore } from "./stop-controls.js";
 export type { RestoreStopActivation, StopControlRecord, StopControlSnapshot } from "./stop-controls.js";
 export { PostgresOperationalDashboardReadModel } from "./dashboard.js";
+export { digestTaskResult, PostgresTaskResultReadModel } from "./results.js";

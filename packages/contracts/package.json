@@ -3,6 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit" },
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "test": "pnpm run build && node --test test/*.test.mjs" },
   "dependencies": { "@jarvis/domain": "workspace:*" }
 }

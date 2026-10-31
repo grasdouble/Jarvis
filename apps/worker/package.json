@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "test": "pnpm run build && node --test test/*.test.mjs" },
+  "scripts": { "build": "pnpm --filter @jarvis/contracts run build && tsc", "typecheck": "pnpm --filter @jarvis/contracts run build && tsc --noEmit", "test": "pnpm run build && node --test test/*.test.mjs" },
   "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/domain": "workspace:*", "@jarvis/queue": "workspace:*" },
   "devDependencies": { "@types/node": "26.6.5" }
 }

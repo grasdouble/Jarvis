@@ -2,7 +2,9 @@ export const serviceName = "worker";
 export * from "./sandbox-runtime.js";
 export * from "./sandbox-manager-client.js";
 import { createSandboxRuntime, type SandboxRuntimePorts } from "./sandbox-runtime.js";
-import type { QueueLease, QueueResult, QueueService } from "@jarvis/queue";
+import { validateTaskResult, type TrustedResultAttribution, type TrustedSnapshotBinding } from "@jarvis/contracts";
+import type { QueueLease, QueueService } from "@jarvis/queue";
+export type UntrustedTaskResultOutput = { readonly payload: unknown };
 
 export type FixedOpenCodeRequest =
   | { readonly operation: "health" }
@@ -259,10 +261,16 @@ export interface QueueWorkerPorts<T, C> {
   readonly leaseMs: number;
   /** Loads trusted project context/capability for the already-claimed durable task. */
   readonly hydrate: (lease: QueueLease<T>) => Promise<StopAwareTask<C>>;
-  readonly execution: StopAwareExecutionPorts<C, QueueResult>;
+  readonly execution: StopAwareExecutionPorts<C, UntrustedTaskResultOutput>;
+  /** Trusted core attribution and snapshot binding for the result being finalized. */
+  readonly trustedResultContext: (lease: QueueLease<T>, task: StopAwareTask<C>) => Promise<{
+    readonly expected: TrustedResultAttribution;
+    readonly resultId: string;
+    readonly snapshot?: TrustedSnapshotBinding;
+  }>;
   /** Required production composition: trusted policy supplies SandboxSpec; this code supplies only the lease identity. */
-  readonly sandbox?: Omit<SandboxRuntimePorts<T, QueueResult>, "dispatch">;
-  readonly dispatchSandbox?: (input: { readonly capability: C; readonly lease: QueueLease<T>; readonly sandboxId: string; readonly signal: AbortSignal }) => Promise<QueueResult>;
+  readonly sandbox?: Omit<SandboxRuntimePorts<T, UntrustedTaskResultOutput>, "dispatch">;
+  readonly dispatchSandbox?: (input: { readonly capability: C; readonly lease: QueueLease<T>; readonly sandboxId: string; readonly signal: AbortSignal }) => Promise<UntrustedTaskResultOutput>;
   /** Must resolve only after the explicit post-restore suspension transaction commits. */
   readonly restoreGate: RestoreActivationGate;
 }
@@ -303,7 +311,7 @@ export interface QueueWorker {
 
 /** Configured composition for sandbox-backed execution; trustedSpec is mandatory and there is no legacy dispatch fallback. */
 export function createSandboxQueueWorker<T, C>(ports: QueueWorkerPorts<T, C> & {
-  readonly sandbox: Omit<SandboxRuntimePorts<T, QueueResult>, "dispatch">;
+  readonly sandbox: Omit<SandboxRuntimePorts<T, UntrustedTaskResultOutput>, "dispatch">;
   readonly dispatchSandbox: NonNullable<QueueWorkerPorts<T, C>["dispatchSandbox"]>;
 }): QueueWorker {
   if (typeof ports.sandbox?.trustedSpec !== "function" || typeof ports.sandbox?.sandbox?.create !== "function" ||
@@ -314,8 +322,8 @@ export function createSandboxQueueWorker<T, C>(ports: QueueWorkerPorts<T, C> & {
       typeof ports.sandbox?.mappings?.reserve !== "function" ||
       typeof ports.sandbox?.mappings?.clearAfterReconciliationNoSandbox !== "function" ||
       typeof ports.sandbox?.sandbox?.findByIdempotencyKey !== "function" ||
-      typeof ports.dispatchSandbox !== "function") {
-    throw new TypeError("Sandbox worker composition requires trustedSpec, sandbox manager, mapping store, and sandbox dispatch");
+      typeof ports.dispatchSandbox !== "function" || typeof ports.trustedResultContext !== "function") {
+    throw new TypeError("Sandbox worker composition requires trustedSpec, sandbox manager, mapping store, sandbox dispatch, and trusted result context");
   }
   return createQueueWorker(ports);
 }
@@ -332,7 +340,7 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
   }
   let activeLease: QueueLease<T> | undefined;
   let activeCapability: C | undefined;
-  const sandboxRuntime = ports.sandbox && ports.dispatchSandbox ? createSandboxRuntime<T, QueueResult>({
+  const sandboxRuntime = ports.sandbox && ports.dispatchSandbox ? createSandboxRuntime<T, UntrustedTaskResultOutput>({
     ...ports.sandbox,
     dispatch: ({ lease, sandboxId, signal }) => {
       if (activeCapability === undefined) throw new Error("No hydrated capability for sandbox dispatch");
@@ -377,7 +385,7 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
         const task = await ports.hydrate(lease);
         activeCapability = task.capability;
         runningProjectId = task.projectId;
-        let result: StopExecutionResult<QueueResult>;
+        let result: StopExecutionResult<UntrustedTaskResultOutput>;
         try { result = await executor.execute(task); }
         catch {
           // Dispatch exceptions can follow remote acceptance; never retry as though definitely unapplied.
@@ -385,8 +393,21 @@ export function createQueueWorker<T, C>(ports: QueueWorkerPorts<T, C>): QueueWor
           return "unknown";
         }
         if (result.kind === "dispatched") {
-          await ports.queue.complete(lease, result.result);
-          return "completed";
+          try {
+            const trusted = await ports.trustedResultContext(lease, task);
+            const canonical = validateTaskResult({
+              schemaVersion: 1,
+              ...trusted.expected,
+              resultId: trusted.resultId,
+              payload: result.result.payload,
+            }, { expected: trusted.expected, ...(trusted.snapshot === undefined ? {} : { snapshot: trusted.snapshot }) });
+            await ports.queue.complete(lease, { kind: "report", id: canonical.resultId }, canonical);
+            return "completed";
+          } catch {
+            // Completion can be uncertain after a durable commit; preserve that distinction and never retry it as absent.
+            await ports.queue.fail(lease, { kind: "unknown_external", effectId: task.taskId }).catch(() => undefined);
+            return "unknown";
+          }
         }
         if (result.kind === "stop_unknown") {
           await ports.queue.fail(lease, { kind: "unknown_external", effectId: task.taskId });
