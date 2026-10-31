@@ -1678,6 +1678,11 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       queue: runtimeQueue, workerId: "jv242-worker", leaseMs: 30_000,
       hydrate: async () => ({ taskId: fixture.taskId, projectId: fixture.projectId, capability: "fake-dispatch-capability" }),
       restoreGate,
+      trustedResultContext: async (lease) => ({
+        resultId: randomUUID(),
+        expected: { requestId: fixture.requestId, taskId: fixture.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "plan", sourceRevision: fixture.revision, snapshotDigest: "b".repeat(64), provider: "synthetic", model: "synthetic" },
+        snapshot: { repository: "owner-race/stop-race", revision: fixture.revision, snapshotDigest: "b".repeat(64), includedPaths: ["src/index.ts"] },
+      }),
       sandbox: {
         trustedSpec: async (lease) => {
           activeSandboxIdentity = { taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch };
@@ -1688,7 +1693,7 @@ test("real PostgreSQL stop controls gate and cancel the real queue worker compos
       },
       dispatchSandbox: async ({ sandboxId, signal }) => {
         dispatchStarted.push(sandboxId);
-        return new Promise((resolve) => { signal.addEventListener("abort", () => resolve({ kind: "report", id: "unknown-result" }), { once: true }); });
+        return new Promise((resolve) => { signal.addEventListener("abort", () => resolve({ payload: { summary: "Synthetic cancelled plan", steps: [], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }), { once: true }); });
       },
       execution: {
         readStop: createPersistedStopReader(controls),
