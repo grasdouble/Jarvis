@@ -1,6 +1,6 @@
 {
   "name": "@jarvis/worker",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "test": "pnpm run build && node --test test/*.test.mjs" },
