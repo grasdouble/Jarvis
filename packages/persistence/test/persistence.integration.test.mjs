@@ -112,9 +112,9 @@ test("JV-265 restored PostgreSQL state stays behind the real worker activation g
     assert.equal(restoredResume.count, 1, "restored database must contain the source's durable resume audit");
 
     const gate = createRestoreActivationGate(async () => controls.suspendAfterRestore());
-    const taskId = `jv265-${randomUUID()}`;
+    const taskId = randomUUID();
     const task = { id: taskId, taskId };
-    const leases = [1, 2].map((epoch) => ({ task, worker: "jv265-restore-worker", attemptId: `${taskId}-${epoch}`, epoch,
+    const leases = [1, 2].map((epoch) => ({ task, worker: "jv265-restore-worker", attemptId: randomUUID(), epoch,
       expiresAt: Date.now() + 60_000 }));
     let claims = 0;
     let dispatches = 0;
@@ -127,12 +127,16 @@ test("JV-265 restored PostgreSQL state stays behind the real worker activation g
       queue, workerId: "jv265-restore-worker", leaseMs: 30_000,
       hydrate: async () => ({ taskId, projectId: "synthetic-project", capability: "synthetic-only" }),
       restoreGate: gate,
+      trustedResultContext: async (lease) => ({
+        resultId: randomUUID(),
+        expected: { requestId: randomUUID(), taskId: lease.task.taskId, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "review", sourceRevision: "a".repeat(40), snapshotDigest: "b".repeat(64), provider: "synthetic", model: "synthetic" },
+      }),
       execution: {
         readStop: async () => {
           const state = await controls.get({});
           return { stopped: state.global.stopped || state.project?.stopped === true, version: state.global.version };
         },
-        dispatch: async () => { dispatches += 1; return { kind: "synthetic-complete" }; },
+        dispatch: async () => { dispatches += 1; return { payload: { summary: "Synthetic restored task", steps: [], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }; },
         revokeCapability: async () => {}, stopSandbox: async () => "stopped", recordAcceptedEffectUnknown: async () => {},
       },
     });
@@ -2004,9 +2008,19 @@ test("persisted stop state survives an operating-system worker restart", {
         queue, workerId: process.env.JV263_APPLICATION_NAME, leaseMs: 30000,
         restoreGate: { waitUntilActivated: async () => undefined, activateAfterRestore: async () => undefined },
         hydrate: async (lease) => ({ taskId: lease.task.taskId, projectId: process.env.JV263_PROJECT_ID, capability: "synthetic" }),
+        trustedResultContext: async (lease) => {
+          const { rows: [task] } = await pool.query("SELECT r.id AS request_id, t.id AS task_id, t.revision, p.owner_id, p.repository_name FROM jarvis.tasks t JOIN jarvis.requests r ON r.id = t.request_id JOIN jarvis.projects p ON p.id = t.project_id WHERE t.id = $1", [lease.task.taskId]);
+          if (!task?.revision) throw new Error("Synthetic plan task lacks its trusted revision context");
+          const snapshotDigest = "b".repeat(64);
+          return {
+            resultId: crypto.randomUUID(),
+            expected: { requestId: task.request_id, taskId: task.task_id, attemptId: lease.attemptId, leaseEpoch: lease.epoch, mode: "plan", sourceRevision: task.revision, snapshotDigest, provider: "synthetic", model: "synthetic" },
+            snapshot: { repository: task.owner_id + "/" + task.repository_name, revision: task.revision, snapshotDigest, includedPaths: [] },
+          };
+        },
         execution: {
           readStop: createPersistedStopReader(controls),
-          dispatch: async () => { dispatchCount += 1; return { kind: "report", id: "11111111-1111-4111-8111-111111111111" }; },
+          dispatch: async () => { dispatchCount += 1; return { payload: { summary: "Synthetic plan", steps: [], affectedAreas: [], assumptions: [], risks: [], questions: [], limitations: [] } }; },
           revokeCapability: async () => undefined,
           stopSandbox: async () => "stopped",
           recordAcceptedEffectUnknown: async () => undefined,
