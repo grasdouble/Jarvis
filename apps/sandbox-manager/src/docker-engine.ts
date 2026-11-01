@@ -170,6 +170,7 @@ export class DockerEngineClient implements SandboxEngine {
   async createContainer(input: ContainerRequest): Promise<ContainerInspection> {
     const allowedEnvironment: Readonly<Record<string, true>> = {
       LLM_GATEWAY_SOCKET: true,
+      LLM_GATEWAY_ATTEMPT_CAPABILITY: true,
       LLM_GATEWAY_PROVIDER_ID: true,
       LLM_GATEWAY_MODEL: true,
       LLM_GATEWAY_PROFILE_ID: true,
@@ -177,6 +178,7 @@ export class DockerEngineClient implements SandboxEngine {
       LLM_GATEWAY_MAX_OUTPUT_TOKENS: true,
       LLM_GATEWAY_MAX_INPUT_BYTES: true,
       LLM_GATEWAY_MAX_REQUESTS: true,
+      LLM_GATEWAY_ACCOUNTING_SOCKET: true,
       XDG_CONFIG_HOME: true,
     };
     for (const [key, value] of Object.entries(input.environment ?? {})) {
@@ -195,6 +197,7 @@ export class DockerEngineClient implements SandboxEngine {
         ReadonlyRootfs: input.readOnlyRootfs,
         Privileged: input.privileged,
         CapDrop: input.capDrop,
+        ...(input.capAdd ? { CapAdd: input.capAdd } : {}),
         SecurityOpt: input.securityOptions,
         Memory: input.memoryBytes,
         NanoCpus: input.nanoCpus,

@@ -63,7 +63,7 @@ services:
     platform: linux/arm64
     command: ["serve"]
     restart: unless-stopped
-    user: "0:0"
+    user: "0:10001"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -77,6 +77,7 @@ services:
       DATABASE_NAME: jarvis
       RUNTIME_PASSWORD_FILE: /run/secrets/jarvis_runtime_password
       ONBOARDING_SECRET_FILE: /run/secrets/owner_onboarding_secret
+      USAGE_ACCOUNTING_SOCKET: /run/jarvis-accounting/accounting.sock
       PUBLIC_ORIGIN: http://127.0.0.1:3000
       LISTEN_HOST: 0.0.0.0
       LISTEN_PORT: "3000"
@@ -99,6 +100,14 @@ services:
       timeout: 3s
       retries: 12
       start_period: 10s
+    volumes:
+      - type: volume
+        source: accounting_socket
+        target: /run/jarvis-accounting
+
+volumes:
+  accounting_socket:
+    name: jarvis-accounting-socket
 
 secrets:
   jarvis_migrator_password:

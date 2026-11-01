@@ -102,9 +102,14 @@ for (const profileId of ["copilot", "openai"]) {
     const directory = await mkdtemp(join(tmpdir(), "jarvis-provider-outage-"));
     const socketPath = join(directory, "gateway.sock");
     const dispatches = [];
+    const outcomes = [];
     const gateway = createBoundedGateway({
       socketPath, capability: "fixture-attempt-capability", profile: selected,
       maxInputBytes: 4096, maxOutputTokens: selected.maxOutputTokens, maxRequests: 1,
+      accounting: {
+        async recordIntent() {}, async markDispatched() {},
+        async recordOutcome(_identity, usage, lifecycle, quota) { outcomes.push({ usage, lifecycle, quota }); },
+      },
       dispatchToFilter: { async dispatch(request) { dispatches.push(request.providerId); throw new Error("synthetic outage"); } },
     });
     try {
@@ -116,6 +121,8 @@ for (const profileId of ["copilot", "openai"]) {
       });
       assert.equal(response.status, 502);
       assert.deepEqual(dispatches, [selected.providerId]);
+      assert.equal(outcomes[0].lifecycle, "unknown");
+      assert.equal(outcomes[0].quota, undefined, "no provider response means no quota observation is persisted");
     } finally {
       await new Promise((resolve, reject) => gateway.close((error) => error ? reject(error) : resolve()));
       await rm(directory, { recursive: true, force: true });

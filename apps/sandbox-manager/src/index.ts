@@ -66,18 +66,19 @@ export type ContainerRequest = {
   image: string;
   platform: "linux/arm64";
   entrypoint: string[];
-  user: "10001:10001";
+  user: "0:0" | "10001:10001";
   labels: ManagedLabels;
-  environment?: Readonly<Partial<Record<"LLM_GATEWAY_SOCKET" | "LLM_GATEWAY_PROVIDER_ID" | "LLM_GATEWAY_MODEL" | "LLM_GATEWAY_PROFILE_ID" | "LLM_GATEWAY_CONTEXT_WINDOW_TOKENS" | "LLM_GATEWAY_MAX_OUTPUT_TOKENS" | "LLM_GATEWAY_MAX_INPUT_BYTES" | "LLM_GATEWAY_MAX_REQUESTS" | "XDG_CONFIG_HOME", string>>>;
+  environment?: Readonly<Partial<Record<"LLM_GATEWAY_SOCKET" | "LLM_GATEWAY_ATTEMPT_CAPABILITY" | "LLM_GATEWAY_PROVIDER_ID" | "LLM_GATEWAY_MODEL" | "LLM_GATEWAY_PROFILE_ID" | "LLM_GATEWAY_CONTEXT_WINDOW_TOKENS" | "LLM_GATEWAY_MAX_OUTPUT_TOKENS" | "LLM_GATEWAY_MAX_INPUT_BYTES" | "LLM_GATEWAY_MAX_REQUESTS" | "LLM_GATEWAY_ACCOUNTING_SOCKET" | "XDG_CONFIG_HOME", string>>>;
   networkMode: "none";
   readOnlyRootfs: true;
   privileged: false;
   capDrop: ["ALL"];
+  capAdd?: readonly ("SETUID" | "SETGID" | "KILL")[];
   securityOptions: ["no-new-privileges:true"];
   memoryBytes: number;
   nanoCpus: number;
   pidsLimit: number;
-  mounts: readonly { type: "volume"; source: string; target: "/workspace" | "/state" | "/etc/jarvis" | "/run" | "/config/opencode"; readOnly: boolean }[];
+  mounts: readonly { type: "volume"; source: string; target: "/workspace" | "/state" | "/etc/jarvis" | "/run" | "/run/jarvis-accounting" | "/config/opencode"; readOnly: boolean }[];
 };
 
 export type ContainerInspection = {
@@ -117,18 +118,26 @@ export type OpenCodeRelayResponse = Readonly<Record<string, unknown>>;
 export function createAttemptConfigArchive(
   filterCapability: string,
   profile: ProviderProfile,
-  filterHost = "jarvis-egress-filter-00000000-0000-4000-8000-000000000000",
-  filterPort = 8080,
+  filterHost: string,
+  filterPort: number,
+  attribution: { readonly taskId: string; readonly attemptId: string; readonly leaseEpoch: number },
 ): Uint8Array {
   if (typeof filterCapability !== "string" || !/^[a-f0-9]{64}$/i.test(filterCapability) ||
-      !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$/.test(filterHost) || filterPort !== 8080) {
-    invalid("Attempt filter capability must be a generated 256-bit hexadecimal value.");
+      !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$/.test(filterHost) || filterPort !== 8080 ||
+      typeof attribution !== "object" || attribution === null ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(attribution.taskId) ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(attribution.attemptId) ||
+      !Number.isSafeInteger(attribution.leaseEpoch) || attribution.leaseEpoch < 1) {
+    invalid("Attempt capability, selected profile, and accounting lease identity are required.");
   }
   const selected = resolveProviderSelection(profile);
   const encode = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
   const entries = [
     { name: "egress.json", content: encode({ providers: [], dispatch_enabled: false, filterCapability }) },
-    { name: "gateway.json", content: encode({ dispatch_enabled: false, profile: selected, filterHost, filterPort }) },
+    { name: "gateway.json", content: encode({
+      dispatch_enabled: false, profile: selected, filterHost, filterPort,
+      accounting: attribution,
+    }) },
   ];
   const blocks: Uint8Array[] = [];
   for (const entry of entries) {
@@ -185,7 +194,7 @@ export function createOpenCodeProfileArchive(profileInput: ProviderProfile): Uin
       plan: { mode: "primary", permissions: planPermissions },
       build: { mode: "primary", permissions: buildPermissions },
     },
-    plugin: [],
+    plugin: ["/opt/jarvis/opencode-usage-plugin"],
     mcp: {},
     providers: {
       "jarvis-gateway": {
@@ -692,6 +701,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
       const sidecars: Array<{ id: string; labels: ManagedLabels }> = [];
       const networks: Array<{ id: string; labels: ManagedLabels }> = [];
       let internalNetworkId: string | undefined;
+      let attemptCapability: string | undefined;
       let egressNetworkId: string | undefined;
       try {
         const workspace = await options.engine.createVolume({ name: workspaceVolume, labels: workspaceLabels });
@@ -730,8 +740,10 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
           sidecars.push({ id: writer.id, labels: writerLabels });
           assertOwned(writer.labels, writerLabels);
           await options.engine.startContainer(writer.id);
+          attemptCapability = createCapability();
           await options.engine.putContainerArchive(writer.id, "/etc/jarvis", createAttemptConfigArchive(
-            createCapability(), gatewayFilter.activeProfile, `jarvis-egress-filter-${sandboxId}`,
+            attemptCapability, gatewayFilter.activeProfile, `jarvis-egress-filter-${sandboxId}`, 8080,
+            { taskId: spec.taskId, attemptId: spec.attemptId, leaseEpoch: spec.leaseEpoch },
           ));
           await options.engine.stopContainer(writer.id, 5);
           await options.engine.removeContainer(writer.id, writerLabels);
@@ -775,10 +787,14 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
             entrypoint: [], user: "10001:10001", labels: gatewayLabels, networkMode: "none", readOnlyRootfs: true,
             privileged: false, capDrop: ["ALL"], securityOptions: ["no-new-privileges:true"],
             memoryBytes: 256 * 1024 ** 2, nanoCpus: 500_000_000, pidsLimit: 64,
-            environment: { LLM_GATEWAY_SOCKET: "/run/jarvis/llm.sock" },
+            environment: {
+              LLM_GATEWAY_SOCKET: "/run/jarvis/llm.sock",
+              LLM_GATEWAY_ACCOUNTING_SOCKET: "/run/jarvis-accounting/accounting.sock",
+            },
             mounts: [
               { type: "volume", source: configVolume, target: "/etc/jarvis", readOnly: true },
               { type: "volume", source: socketVolume, target: "/run", readOnly: false },
+              { type: "volume", source: "jarvis-accounting-socket", target: "/run/jarvis-accounting", readOnly: false },
             ],
           });
           sidecars.push({ id: gateway.id, labels: gatewayLabels });
@@ -787,24 +803,28 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
           await options.engine.connectNetwork(internalNetworkId, gateway.id, gatewayLabels);
           sidecarCreateAttempted = false;
         }
+        if (gatewayFilter && !attemptCapability) invalid("The trusted gateway attempt capability was not generated.");
         containerCreateAttempted = true;
         container = await options.engine.createContainer({
           name: `jarvis-sandbox-${sandboxId}`,
           image: profile.image,
           platform: profile.platform,
           entrypoint: [ENTRYPOINT],
-          user: "10001:10001",
+          user: gatewayFilter ? "0:0" : "10001:10001",
           labels,
           networkMode: "none",
           readOnlyRootfs: true,
           privileged: false,
           capDrop: ["ALL"],
+          ...(gatewayFilter ? { capAdd: ["SETUID", "SETGID", "KILL"] as const } : {}),
           securityOptions: ["no-new-privileges:true"],
           memoryBytes: profile.memoryBytes,
           nanoCpus: profile.nanoCpus,
           pidsLimit: profile.pidsLimit,
           ...(gatewayFilter ? {
             environment: {
+              LLM_GATEWAY_SOCKET: "/run/jarvis/llm.sock",
+              LLM_GATEWAY_ATTEMPT_CAPABILITY: attemptCapability!,
               LLM_GATEWAY_PROFILE_ID: gatewayFilter.activeProfile.id,
               LLM_GATEWAY_MODEL: gatewayFilter.activeProfile.modelId,
               LLM_GATEWAY_CONTEXT_WINDOW_TOKENS: String(gatewayFilter.activeProfile.contextWindowTokens),
@@ -816,7 +836,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
             { type: "volume", source: workspaceVolume, target: WORKSPACE_TARGET, readOnly: profile.readOnlyWorkspace },
             { type: "volume", source: stateVolume, target: STATE_TARGET, readOnly: false },
             ...(socketVolume ? [
-              { type: "volume" as const, source: socketVolume, target: "/run" as const, readOnly: false },
+              { type: "volume" as const, source: socketVolume, target: "/run" as const, readOnly: true },
               { type: "volume" as const, source: socketVolume, target: "/config/opencode" as const, readOnly: true },
             ] : []),
           ],

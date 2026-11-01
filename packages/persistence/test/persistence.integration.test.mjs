@@ -650,7 +650,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations", "009_task_results"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations", "009_task_results", "010_usage_accounting"]);
     const { rows: [initialStop] } = await pool.query("SELECT stopped FROM jarvis.stop_controls WHERE scope='global' AND project_id IS NULL");
     assert.equal(initialStop.stopped, true, "fresh database migration must start fail-closed");
     const restoreControls = new PostgresStopControlStore(pool);
@@ -800,6 +800,164 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     client.release();
     client = undefined;
     fixtureCommitted = true;
+    const { PostgresUsageAccountingStore } = await import("../dist/index.js");
+    const accounting = new PostgresUsageAccountingStore(pool);
+    const dispatchedAt = "2026-01-01T00:00:00.000Z";
+    const periodEnd = "2026-02-01T00:00:00.000Z";
+    const boundaryRequestId = randomUUID();
+    const boundaryOperationId = randomUUID();
+    await pool.query(`INSERT INTO jarvis.model_requests
+      (id,request_id,task_id,attempt_id,purpose,provider,model,profile_version,dispatched_at,state,
+       operation_id,dispatch_attempt,purpose_version,requested_model,lifecycle,mapping_version)
+      VALUES ($1,'00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000005',
+        '00000000-0000-4000-8000-000000000006','task_execution','openai','boundary-model',1,$2,'dispatched',
+        $3,1,'jarvis-usage-v1','boundary-model','dispatched','openai-chat-completions-v1')`,
+    [boundaryRequestId, dispatchedAt, boundaryOperationId]);
+    const periodEndRequestId = randomUUID();
+    const periodEndOperationId = randomUUID();
+    await pool.query(`INSERT INTO jarvis.model_requests
+      (id,request_id,task_id,attempt_id,purpose,provider,model,profile_version,dispatched_at,state,
+       operation_id,dispatch_attempt,purpose_version,requested_model,lifecycle,mapping_version)
+      VALUES ($1,'00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000005',
+        '00000000-0000-4000-8000-000000000006','task_execution','openai','boundary-model',1,$2,'succeeded',
+        $3,1,'jarvis-usage-v1','boundary-model','succeeded','openai-chat-completions-v1')`,
+    [periodEndRequestId, periodEnd, periodEndOperationId]);
+    const cancelRequestId = randomUUID();
+    const cancelOperationId = randomUUID();
+    const retryRequestId = randomUUID();
+    const retryOperationId = randomUUID();
+    const recoveryPreparedRequestId = randomUUID();
+    const recoveryDispatchedRequestId = randomUUID();
+    const seedRequest = async ({ id, operationId, dispatchAttempt = 1, lifecycle, dispatchedAt }) => {
+      await pool.query(`INSERT INTO jarvis.model_requests
+        (id,request_id,task_id,attempt_id,purpose,provider,model,profile_version,dispatched_at,state,
+         operation_id,dispatch_attempt,purpose_version,requested_model,lifecycle,mapping_version)
+        VALUES ($1,'00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000005',
+          '00000000-0000-4000-8000-000000000006','task_execution','openai','boundary-model',1,$2,$3,
+          $4,$5,'jarvis-usage-v1','boundary-model',$3,'openai-chat-completions-v1')`,
+      [id, dispatchedAt, lifecycle, operationId, dispatchAttempt]);
+    };
+    await seedRequest({ id: cancelRequestId, operationId: cancelOperationId, lifecycle: "dispatched", dispatchedAt: "2026-01-01T00:01:00.000Z" });
+    await seedRequest({ id: retryRequestId, operationId: retryOperationId, lifecycle: "dispatched", dispatchedAt: "2026-01-01T00:00:06.000Z" });
+    const recoveryPreparedOperationId = randomUUID();
+    const recoveryDispatchedOperationId = randomUUID();
+    await seedRequest({ id: recoveryPreparedRequestId, operationId: recoveryPreparedOperationId, lifecycle: "prepared", dispatchedAt: "2026-01-01T00:02:00.000Z" });
+    await seedRequest({ id: recoveryDispatchedRequestId, operationId: recoveryDispatchedOperationId, lifecycle: "dispatched", dispatchedAt: "2026-01-01T00:03:00.000Z" });
+    const periodUsage = (inputTotal, outputTotal, cacheReadInput, cacheWriteInput, reasoningOutput) => ({
+      mappingVersion: "openai-chat-completions-v1",
+      counters: { inputTotal, outputTotal, cacheReadInput, cacheWriteInput, reasoningOutput },
+      coverage: { inputTotal: "reported", outputTotal: "reported", cacheReadInput: "reported", cacheWriteInput: "reported", reasoningOutput: "reported" },
+    });
+    const usage2000 = periodUsage(2000, 300, 1500, 200, 100);
+    const usage10 = periodUsage(10, 2, 4, 1, 1);
+    const usage4 = periodUsage(4, 1, 1, 0, 0);
+    const unknownUsage = {
+      mappingVersion: "openai-chat-completions-v1",
+      counters: { inputTotal: null, outputTotal: null, cacheReadInput: null, cacheWriteInput: null, reasoningOutput: null },
+      coverage: { inputTotal: "unknown", outputTotal: "unknown", cacheReadInput: "unknown", cacheWriteInput: "unknown", reasoningOutput: "unknown" },
+    };
+    const staleQuota = {
+      mappingVersion: "openai-rate-limit-headers-v1", source: "provider-response-header", provider: "openai",
+      observedAt: "2026-01-31T23:55:00.000Z", freshness: "stale",
+      counters: { requestLimit: 100, requestRemaining: 80, tokenLimit: 10000, tokenRemaining: 7000 },
+      coverage: { requestLimit: "reported", requestRemaining: "reported", tokenLimit: "reported", tokenRemaining: "reported" },
+    };
+    const unavailableQuota = {
+      mappingVersion: "openai-rate-limit-headers-v1", source: "provider-response-header", provider: "openai",
+      observedAt: "2026-01-01T00:01:00.000Z", freshness: "unknown",
+      counters: { requestLimit: null, requestRemaining: null, tokenLimit: null, tokenRemaining: null },
+      coverage: { requestLimit: "unknown", requestRemaining: "unknown", tokenLimit: "unknown", tokenRemaining: "unknown" },
+    };
+    const attribution = {
+      operationId: boundaryOperationId, taskId: "00000000-0000-4000-8000-000000000005",
+      attemptId: "00000000-0000-4000-8000-000000000006", leaseEpoch: 4, dispatchAttempt: 1,
+      provider: "openai", model: "boundary-model", purpose: "task_execution",
+    };
+    const runtimeUsage = {
+      mappingVersion: "opencode-runtime-usage-v1",
+      counters: { inputTotal: 9000, outputTotal: 800, cacheReadInput: null, cacheWriteInput: null, reasoningOutput: 700 },
+      coverage: { inputTotal: "reported", outputTotal: "reported", cacheReadInput: "unknown", cacheWriteInput: "unknown", reasoningOutput: "reported" },
+    };
+    for (let index = 0; index < 100; index += 1) await accounting.recordRuntimeObservation(boundaryOperationId, runtimeUsage);
+    for (let index = 0; index < 100; index += 1) await accounting.recordObservation(attribution, {
+      source: "gateway", observationId: boundaryOperationId, revision: 2,
+      observedAt: "2026-02-02T00:00:00.000Z", freshness: "stale", usage: usage2000, quota: staleQuota,
+    }, "succeeded");
+    await accounting.recordObservation(attribution, {
+      source: "gateway", observationId: boundaryOperationId, revision: 1,
+      observedAt: "2026-03-01T00:00:00.000Z", freshness: "current", usage: usage10,
+    }, "succeeded");
+    await accounting.recordObservation({
+      ...attribution, operationId: retryOperationId,
+    }, {
+      source: "gateway", observationId: retryOperationId, revision: 1,
+      observedAt: "2026-01-01T00:00:06.000Z", freshness: "current", usage: usage4,
+    }, "succeeded");
+    await accounting.recordObservation({
+      ...attribution, operationId: cancelOperationId,
+    }, {
+      source: "gateway", observationId: cancelOperationId, revision: 1,
+      observedAt: "2026-01-01T00:01:01.000Z", freshness: "unknown", usage: unknownUsage, quota: unavailableQuota,
+    }, "cancelled");
+    assert.equal(await accounting.reconcileInterrupted(), 2, "restart recovery marks prepared and dispatched operations unknown");
+    assert.equal(await accounting.reconcileInterrupted(), 0, "repeated recovery is idempotent");
+    const { rows: [periodResult] } = await pool.query(`SELECT count(*)::integer AS request_count,
+      sum((mr.dispatched_at >= $1::timestamptz AND mr.dispatched_at < $2::timestamptz)::integer)::integer AS in_period_count,
+      max(ul.canonical_revision)::integer AS canonical_revision,
+      max((ul.token_counts->>'inputTotal')::integer)::integer AS canonical_input,
+      max((ul.token_counts->>'cacheReadInput')::integer)::integer AS cache_read_input,
+      max((ul.token_counts->>'cacheWriteInput')::integer)::integer AS cache_write_input,
+      max((ul.token_counts->>'outputTotal')::integer)::integer AS output_total,
+      max((ul.token_counts->>'reasoningOutput')::integer)::integer AS reasoning_output
+      FROM jarvis.model_requests mr JOIN jarvis.usage_ledger ul ON ul.model_request_id=mr.id
+      WHERE mr.id=$3 AND mr.dispatched_at >= $1::timestamptz AND mr.dispatched_at < $2::timestamptz`,
+    [dispatchedAt, periodEnd, boundaryRequestId]);
+    assert.deepEqual(periodResult, {
+      request_count: 1, in_period_count: 1, canonical_revision: 2, canonical_input: 2000,
+      cache_read_input: 1500, cache_write_input: 200, output_total: 300, reasoning_output: 100,
+    }, "replays and later-arriving lower revisions preserve total counters without adding cache/reasoning subsets again");
+    const { rows: [runtimeResult] } = await pool.query(`SELECT mr.runtime_coverage,
+      count(uo.id)::integer AS runtime_observation_count
+      FROM jarvis.model_requests mr LEFT JOIN jarvis.usage_observations uo
+        ON uo.model_request_id=mr.id AND uo.source='runtime'
+      WHERE mr.id=$1 GROUP BY mr.id`, [boundaryRequestId]);
+    assert.deepEqual(runtimeResult, { runtime_coverage: "observed", runtime_observation_count: 1 },
+      "runtime evidence arriving before provider completion remains correlated but non-additive");
+    const { rows: [billedAttempts] } = await pool.query(`SELECT count(*)::integer AS request_count,
+      count(DISTINCT mr.operation_id)::integer AS distinct_operations,
+      count(DISTINCT mr.dispatch_attempt)::integer AS dispatch_attempts,
+      sum((ul.token_counts->>'inputTotal')::integer)::integer AS separately_billed_input
+      FROM jarvis.model_requests mr JOIN jarvis.usage_ledger ul ON ul.model_request_id=mr.id
+      WHERE mr.operation_id = ANY($1::uuid[]) AND mr.lifecycle='succeeded'`,
+    [[boundaryOperationId, retryOperationId]]);
+    assert.deepEqual(billedAttempts, { request_count: 2, distinct_operations: 2, dispatch_attempts: 1, separately_billed_input: 2004 },
+      "a retry has a distinct operation UUID and is separately billed");
+    const { rows: revisions } = await pool.query(`SELECT revision, freshness, numeric_usage, quota_signals
+      FROM jarvis.usage_observations WHERE model_request_id=$1 AND source='gateway' ORDER BY revision`,
+    [boundaryRequestId]);
+    assert.equal(revisions.length, 2, "100 replays for each observation revision create only one SQL row per revision");
+    assert.equal(revisions[1].freshness, "stale");
+    assert.equal(revisions[1].quota_signals.freshness, "stale");
+    assert.deepEqual(Object.keys(revisions[1].numeric_usage).sort(),
+      ["cacheReadInput", "cacheWriteInput", "inputTotal", "outputTotal", "reasoningOutput"],
+      "durable token observations contain only the bounded counter schema, not prompt or response text");
+    const { rows: [cancelledResult] } = await pool.query(`SELECT mr.lifecycle, uo.freshness, uo.quota_signals
+      FROM jarvis.model_requests mr JOIN jarvis.usage_observations uo ON uo.model_request_id=mr.id
+      WHERE mr.id=$1 AND uo.source='gateway'`, [cancelRequestId]);
+    assert.equal(cancelledResult.lifecycle, "cancelled");
+    assert.equal(cancelledResult.freshness, "unknown");
+    assert.deepEqual(cancelledResult.quota_signals.coverage,
+      { requestLimit: "unknown", requestRemaining: "unknown", tokenLimit: "unknown", tokenRemaining: "unknown" });
+    const { rows: recoveryRows } = await pool.query(`SELECT lifecycle FROM jarvis.model_requests
+      WHERE id = ANY($1::uuid[]) ORDER BY lifecycle`,
+    [[recoveryPreparedRequestId, recoveryDispatchedRequestId]]);
+    assert.deepEqual(recoveryRows, [{ lifecycle: "unknown" }, { lifecycle: "unknown" }],
+      "restart recovery persists unfinished prepared/dispatched attempts as unknown");
+    const { rows: [endBoundary] } = await pool.query(`SELECT count(*)::integer AS request_count
+      FROM jarvis.model_requests WHERE id IN ($1,$2)
+        AND dispatched_at >= $3::timestamptz AND dispatched_at < $4::timestamptz`,
+    [boundaryRequestId, periodEndRequestId, dispatchedAt, periodEnd]);
+    assert.equal(endBoundary.request_count, 1, "the exact upper bound belongs to the next half-open period");
 
     const transactionPersistence = new PostgresPersistence(pool);
     const input = {
@@ -1467,6 +1625,9 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'task_checkpoints' THEN 1
                   WHEN 'task_results' THEN 2
                   WHEN 'queue_entries' THEN 7
+                  WHEN 'model_requests' THEN 6
+                  WHEN 'usage_observations' THEN 5
+                  WHEN 'usage_ledger' THEN 3
                   WHEN 'outbox' THEN 17
                   ELSE 0
                 END;

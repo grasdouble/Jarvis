@@ -74,7 +74,7 @@ CONFIG_JSON='{
     { "action": "edit", "resource": "*", "effect": "deny" },
     { "action": "shell", "resource": "*", "effect": "deny" }
   ],
-  "plugin": [],
+  "plugin": ["/opt/jarvis/opencode-usage-plugin"],
   "mcp": {},
   "providers": {
     "jarvis-fixture": {
@@ -104,16 +104,26 @@ docker --context "$CONTEXT" run --rm --network none --platform linux/arm64 --use
     fs.mkdirSync("/state/home", { recursive: true });
     for (const path of ["data", "cache", "state"]) fs.mkdirSync(`/state/${path}`, { recursive: true });
     fs.mkdirSync("/config/opencode", { recursive: true });
+    fs.writeFileSync("/config/opencode/opencode.json", process.env.CONFIG_JSON, { mode: 0o444 });
     fs.mkdirSync("/transport", { recursive: true });
     fs.writeFileSync("/workspace/fixture.txt", "synthetic fixed snapshot: review-only fixture\n", { mode: 0o444 });
-    fs.writeFileSync("/config/opencode/opencode.json", process.env.CONFIG_JSON, { mode: 0o444 });
+    fs.symlinkSync("/proc/1/environ", "/workspace/broker-environ");
+    fs.mkdirSync("/workspace/.opencode/plugins", { recursive: true });
+    fs.writeFileSync("/workspace/.opencode/plugins/candidate-project-plugin.mjs",
+      "import { writeFileSync } from 'node:fs'; writeFileSync('/state/state/project-plugin-loaded', 'loaded'); export default async () => ({});");
+    fs.mkdirSync("/workspace/.opencode/plugins/candidate-project-package", { recursive: true });
+    fs.writeFileSync("/workspace/.opencode/plugins/candidate-project-package/package.json",
+      JSON.stringify({ name: "candidate-project-plugin", type: "module", exports: "./index.mjs" }));
+    fs.writeFileSync("/workspace/.opencode/plugins/candidate-project-package/index.mjs",
+      "import { writeFileSync } from 'node:fs'; writeFileSync('/state/state/project-plugin-loaded', 'loaded'); export default async () => ({});");
+    fs.writeFileSync("/workspace/.opencode/opencode.json", JSON.stringify({ plugin: ["./plugins/candidate-project-package"] }));
     fs.chownSync("/workspace", 0, 0);
     fs.chownSync("/workspace/fixture.txt", 0, 0);
     fs.chownSync("/config", 0, 0);
     fs.chownSync("/config/opencode", 0, 0);
     fs.chownSync("/config/opencode/opencode.json", 0, 0);
     fs.chownSync("/transport", 10001, 10001);
-    fs.chmodSync("/transport", 0o700);
+    fs.chmodSync("/transport", 0o770);
     for (const path of ["/state", "/state/home", "/state/data", "/state/cache", "/state/state"]) {
       fs.chownSync(path, 10001, 10001);
     }
@@ -132,7 +142,7 @@ docker --context "$CONTEXT" create --name "$GATEWAY" --platform linux/arm64 --ne
   "$GATEWAY_IMAGE" >/dev/null
 
 docker --context "$CONTEXT" create --name "$SANDBOX" --platform linux/arm64 --network none \
-  --read-only --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true \
+  --read-only --user 0:0 --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add KILL --security-opt no-new-privileges:true \
   --pids-limit 128 --memory 2g --cpus 1 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001 \
   --mount "type=volume,source=$WORK_VOLUME,target=/workspace,readonly" \
@@ -140,16 +150,39 @@ docker --context "$CONTEXT" create --name "$SANDBOX" --platform linux/arm64 --ne
   --mount "type=volume,source=$CONFIG_VOLUME,target=/config,readonly" \
   --mount "type=volume,source=$TRANSPORT_VOLUME,target=/run/jarvis-llm,readonly" \
   --env "OPENCODE_SERVER_PASSWORD=$SERVER_PASSWORD" \
+  --env "OPENCODE_CONFIG_PROJECT_DISABLE=true" \
   --env "LLM_GATEWAY_SOCKET=/run/jarvis-llm/gateway.sock" \
   --env "LLM_GATEWAY_ATTEMPT_CAPABILITY=$ATTEMPT_CAPABILITY" \
   --env "LLM_GATEWAY_BRIDGE_PORT=4010" \
+  --env "JARVIS_GATEWAY_BRIDGE_DIAGNOSTICS=1" \
   "$OPENCODE_IMAGE" >/dev/null
 
 docker --context "$CONTEXT" start "$GATEWAY" >/dev/null
 docker --context "$CONTEXT" start "$SANDBOX" >/dev/null
+socket_ready=false
+for _ in $(seq 1 20); do
+  if docker --context "$CONTEXT" exec "$GATEWAY" node -e '
+    const fs = require("node:fs");
+    if (!fs.statSync("/run/jarvis-llm/gateway.sock").isSocket()) process.exit(1);
+  ' >/dev/null 2>&1; then
+    socket_ready=true
+    break
+  fi
+  sleep 0.1
+done
+[[ "$socket_ready" == true ]] || { echo "Synthetic gateway Unix socket did not become ready" >&2; exit 1; }
+docker --context "$CONTEXT" exec --user 10001:10001 "$SANDBOX" node -e '
+  const http = require("node:http");
+  const request = http.request({ socketPath: "/run/jarvis-llm/gateway.sock", path: "/qualification-probe", method: "POST" }, (response) => {
+    response.resume();
+    response.on("end", () => process.exit(response.statusCode === 404 ? 0 : 2));
+  });
+  request.on("error", () => process.exit(3));
+  request.end();
+' >/dev/null || { echo "OpenCode UID cannot reach only the attempt gateway UDS" >&2; exit 1; }
 
-inspect="$(docker --context "$CONTEXT" inspect "$SANDBOX" --format '{{.HostConfig.NetworkMode}} {{.Config.User}} {{json .HostConfig.CapDrop}} {{json .HostConfig.PortBindings}} {{json .Mounts}}')"
-[[ "$inspect" == *'none 10001:10001 ["ALL"] {}'* ]] || {
+inspect="$(docker --context "$CONTEXT" inspect "$SANDBOX" --format '{{.HostConfig.NetworkMode}} {{.Config.User}} {{json .HostConfig.CapDrop}} {{json .HostConfig.CapAdd}} {{json .HostConfig.PortBindings}} {{json .Mounts}}')"
+[[ "$inspect" == *'none 0:0 ["ALL"]'* && "$inspect" == *'["CAP_KILL","CAP_SETGID","CAP_SETUID"]'* && "$inspect" == *' {} '* ]] || {
   echo "Sandbox inspection did not match expected isolation: $inspect" >&2
   exit 1
 }
@@ -167,6 +200,46 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 [[ "$ready" == true ]] || { echo "OpenCode loopback server did not become healthy" >&2; exit 1; }
+docker --context "$CONTEXT" exec --user 10001:10001 "$SANDBOX" node --input-type=module -e '
+  import { request } from "node:http";
+  const body = JSON.stringify({ model: "fixture-model", max_tokens: 16, messages: [{ role: "user", content: "synthetic socket probe" }] });
+  const response = await new Promise((resolve, reject) => {
+    const req = request({
+      socketPath: "/run/jarvis-llm/gateway.sock",
+      path: "/v1/chat/completions",
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${process.env.LLM_GATEWAY_ATTEMPT_CAPABILITY}`,
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+  if (response.status !== 200) {
+    console.error(JSON.stringify(response));
+    process.exit(1);
+  }
+' || { echo "Synthetic gateway UDS dispatch failed" >&2; exit 1; }
+docker --context "$CONTEXT" exec --user 10001:10001 "$SANDBOX" env -u LLM_GATEWAY_ATTEMPT_CAPABILITY node -e '
+  const fs = require("node:fs");
+  if (process.getuid() !== 10001 || process.env.LLM_GATEWAY_ATTEMPT_CAPABILITY !== undefined) process.exit(2);
+  for (const path of ["/proc/1/environ", "/workspace/broker-environ"]) {
+    try {
+      fs.readFileSync(path);
+      process.exit(3);
+    } catch (error) {
+      if (error.code !== "EACCES" && error.code !== "EPERM") throw error;
+    }
+  }
+' >/dev/null || { echo "OpenCode can read the broker capability environment" >&2; exit 1; }
+docker --context "$CONTEXT" exec "$SANDBOX" node -e 'require("node:fs").access("/state/state/project-plugin-loaded", (error) => process.exit(error?.code === "ENOENT" ? 0 : 1))' \
+  || { echo "Project-controlled OpenCode plugin was loaded despite project discovery being disabled" >&2; exit 1; }
 
 docker --context "$CONTEXT" exec "$SANDBOX" node -e '
   const fs = require("node:fs");
@@ -189,4 +262,10 @@ gateway_logs="$(docker --context "$CONTEXT" logs "$GATEWAY" 2>&1)"
 grep -Fx 'JV006_FIXTURE_PROVIDER_REQUEST_STARTED' <<<"$gateway_logs" >/dev/null
 grep -Fx 'JV006_FIXTURE_PROVIDER_REQUEST_ABORTED' <<<"$gateway_logs" >/dev/null
 grep -Fx 'JV006_FIXTURE_PERMISSION_PROBE' <<<"$gateway_logs" >/dev/null
+docker --context "$CONTEXT" stop --time 10 "$SANDBOX" >/dev/null
+shutdown_state="$(docker --context "$CONTEXT" inspect "$SANDBOX" --format '{{.State.Status}} {{.State.ExitCode}}')"
+[[ "$shutdown_state" == "exited 0" ]] || {
+  echo "Trusted entrypoint did not forward shutdown cleanly to OpenCode: $shutdown_state" >&2
+  exit 1
+}
 printf 'Colima ARM64 prototype passed with OpenCode v2.0.32, network_mode=none, read-only synthetic snapshot, and no provider/GitHub secret.\n'

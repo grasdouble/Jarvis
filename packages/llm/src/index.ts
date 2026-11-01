@@ -14,3 +14,6 @@ export type {
   ProviderProfileId,
   TrustedProviderCatalogConfiguration,
 } from "./profiles.js";
+export { normalizeOpenAIChatUsage } from "./usage.js";
+export type { NormalizedUsage, UsageCoverage, UsageField } from "./usage.js";
+export type { QuotaCoverage, QuotaField, QuotaSignals } from "./quota.js";

@@ -1,8 +1,17 @@
-import { createBoundedGateway } from "./gateway.js";
+import { resolveProviderCatalog } from "@jarvis/llm";
+import { createBoundedGateway, listenGatewaySocket } from "./gateway.js";
 
 const socketPath = process.env.LLM_GATEWAY_SOCKET ?? "/run/jarvis-llm/gateway.sock";
 const capability = process.env.LLM_GATEWAY_ATTEMPT_CAPABILITY;
 if (!capability) throw new Error("Synthetic per-attempt gateway capability is required.");
+const capabilities = ["chat-completions", "streaming", "cancellation", "context-budget"];
+const profile = resolveProviderCatalog({
+  activeProfileId: "openai",
+  profiles: {
+    copilot: { modelId: "fixture-copilot", contextWindowTokens: 8192, maxOutputTokens: 256, capabilities },
+    openai: { modelId: "fixture-model", contextWindowTokens: 8192, maxOutputTokens: 256, capabilities },
+  },
+}).active;
 
 const report = JSON.stringify({
   schemaVersion: 1,
@@ -17,8 +26,7 @@ const report = JSON.stringify({
 const gateway = createBoundedGateway({
   socketPath,
   capability,
-  providerId: "jarvis-fixture",
-  model: "fixture-model",
+  profile,
   maxInputBytes: 64 * 1024,
   maxOutputTokens: 256,
   maxRequests: 10,
@@ -78,4 +86,4 @@ const gateway = createBoundedGateway({
     },
 });
 
-gateway.listen(socketPath);
+listenGatewaySocket(gateway, socketPath);

@@ -73,10 +73,45 @@ test("trusted OpenAI selection binds its model through sandbox environment and g
   assert.equal(gateway.profile.modelId, "synthetic-openai");
 });
 
+test("managed OpenCode receives the gateway socket and same attempt capability without API socket authority", async () => {
+  const engine = engineFake();
+  let capabilityCalls = 0;
+  const capability = "e".repeat(64);
+  const configured = sandboxManager.createSandboxManagerFromConfiguration({
+    engine, profiles: [profile], now: () => new Date("2026-10-19T00:00:00.000Z"),
+    gatewayFilterConfig: { ...trustedGatewayConfig, providerCatalog: { ...providerCatalog, activeProfileId: "openai" } },
+    createCapability: () => { capabilityCalls += 1; return capability; },
+  });
+  await configured.create({ ...spec, modelProfileId: "openai" }, "idempotency-runtime-env");
+  const sandbox = engine.calls.find(([kind, input]) => kind === "createContainer" && input.labels.resource_kind === "container")[1];
+  const gateway = engine.calls.find(([kind, input]) => kind === "createContainer" && input.labels.resource_kind === "gateway")[1];
+  assert.equal(sandbox.environment.LLM_GATEWAY_SOCKET, "/run/jarvis/llm.sock");
+  assert.equal(sandbox.environment.LLM_GATEWAY_ATTEMPT_CAPABILITY, capability);
+  assert.equal(sandbox.environment.LLM_GATEWAY_PROFILE_ID, "openai");
+  assert.equal(Object.hasOwn(sandbox.environment, "LLM_GATEWAY_ACCOUNTING_SOCKET"), false);
+  assert.equal(sandbox.user, "0:0", "trusted entrypoint retains the capability in a root-owned process environment");
+  assert.deepEqual(sandbox.capDrop, ["ALL"]);
+  assert.deepEqual(sandbox.capAdd, ["SETUID", "SETGID", "KILL"]);
+  assert.equal(gateway.environment.LLM_GATEWAY_SOCKET, "/run/jarvis/llm.sock");
+  assert.equal(gateway.environment.LLM_GATEWAY_ACCOUNTING_SOCKET, "/run/jarvis-accounting/accounting.sock");
+  assert.equal(sandbox.mounts.some((mount) => mount.source === "jarvis-accounting-socket"), false);
+  assert.deepEqual(sandbox.mounts.filter((mount) => mount.target === "/run"), [
+    { type: "volume", source: gateway.mounts.find((mount) => mount.target === "/run").source, target: "/run", readOnly: true },
+  ]);
+  assert.equal(gateway.mounts.find((mount) => mount.target === "/run").readOnly, false,
+    "gateway sidecar retains write access to create and remove its UDS");
+  const egressArchive = engine.calls.find((call) => call[0] === "putContainerArchive" &&
+    Buffer.from(call[3]).includes(Buffer.from("egress.json")))[3];
+  assert.equal(Buffer.from(egressArchive).includes(Buffer.from(capability)), true);
+  assert.equal(capabilityCalls, 1, "one generated capability is reused for the trusted filter and managed OpenCode broker");
+});
+
 test("builds deterministic gateway archives and OpenCode profiles deny commands while restricting build editing", () => {
   assert.equal(typeof sandboxManager.createAttemptConfigArchive, "function");
   const capability = "a".repeat(64);
-  const archive = sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile);
+  const attribution = { taskId: "00000000-0000-4000-8000-000000000001", attemptId: "00000000-0000-4000-8000-000000000002", leaseEpoch: 1 };
+  const archive = sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile,
+    "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", 8080, attribution);
   const header = Buffer.from(archive.subarray(0, 512));
   assert.equal(header.toString("utf8", 0, 100).replace(/\0.*$/s, ""), "egress.json");
   const size = Number.parseInt(header.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
@@ -91,14 +126,21 @@ test("builds deterministic gateway archives and OpenCode profiles deny commands 
   const gatewaySize = Number.parseInt(gatewayHeader.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
   assert.deepEqual(JSON.parse(Buffer.from(archive.subarray(1536, 1536 + gatewaySize)).toString()), {
     dispatch_enabled: false, profile: trustedGatewayProfile.activeProfile,
-    filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", filterPort: 8080,
+    filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", filterPort: 8080, accounting: attribution,
   });
-  assert.deepEqual(sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile), archive);
+  assert.deepEqual(sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile,
+    "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", 8080, attribution), archive);
+  assert.throws(() => sandboxManager.createAttemptConfigArchive("invalid", trustedGatewayProfile.activeProfile,
+    "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", 8080, attribution), /Attempt capability/);
+  assert.throws(() => sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile,
+    "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", 8080, { ...attribution, leaseEpoch: 0 }),
+  /accounting lease identity/);
   const openCodeArchive = Buffer.from(sandboxManager.createOpenCodeProfileArchive(trustedGatewayProfile.activeProfile));
   const openCodeSize = Number.parseInt(openCodeArchive.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
   const openCodeConfig = JSON.parse(openCodeArchive.subarray(512, 512 + openCodeSize).toString());
   assert.equal(openCodeConfig.default_agent, "plan");
   assert.equal(openCodeConfig.model, "jarvis-gateway/synthetic-copilot");
+  assert.deepEqual(openCodeConfig.plugin, ["/opt/jarvis/opencode-usage-plugin"]);
   assert.deepEqual(openCodeConfig.agents.plan.permissions, [
     { action: "*", resource: "*", effect: "deny" },
     { action: "read", resource: "*", effect: "allow" },
@@ -248,13 +290,17 @@ test("creates the per-attempt config and gateway/filter graph in fail-closed ord
   assert.equal(writer.mounts[0].readOnly, false);
   assert.equal(filter.mounts[0].readOnly, true);
   assert.equal(gateway.mounts[0].readOnly, true);
+  assert.deepEqual(gateway.mounts.find(({ target }) => target === "/run/jarvis-accounting"),
+    { type: "volume", source: "jarvis-accounting-socket", target: "/run/jarvis-accounting", readOnly: false });
+  assert.equal(gateway.environment.LLM_GATEWAY_ACCOUNTING_SOCKET, "/run/jarvis-accounting/accounting.sock");
+  assert.equal(sandbox.mounts.some(({ source }) => source === "jarvis-accounting-socket"), false);
   assert.equal(sandbox.networkMode, "none");
   assert.equal(writer.environment, undefined);
   assert.equal(gateway.environment.LLM_GATEWAY_ATTEMPT_CAPABILITY, undefined);
   assert.equal(sandbox.environment.LLM_GATEWAY_PROFILE_ID, "copilot");
   assert.equal(sandbox.environment.LLM_GATEWAY_MODEL, "synthetic-copilot");
   assert.equal(sandbox.environment.XDG_CONFIG_HOME, "/config");
-  assert.equal(sandbox.environment.LLM_GATEWAY_ATTEMPT_CAPABILITY, undefined);
+  assert.equal(sandbox.environment.LLM_GATEWAY_ATTEMPT_CAPABILITY, "c".repeat(64));
   assert.equal(sandbox.mounts.find(({ target }) => target === "/config/opencode").readOnly, true);
   assert.deepEqual(connections.map(([, , containerId]) => containerId), [
     "engine-filter", "engine-filter", "engine-gateway",

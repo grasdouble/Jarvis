@@ -35,6 +35,8 @@
 !apps/llm-gateway/dist/
 !apps/llm-gateway/dist/**
 !packages/runtime/dist/
+!packages/llm/dist/
+!packages/llm/dist/**
 !packages/runtime/dist/**
 !infra/
 !infra/opencode-prototype/

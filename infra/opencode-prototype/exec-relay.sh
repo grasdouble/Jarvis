@@ -27,7 +27,7 @@ case "$operation" in
     '
     ;;
   probe)
-    docker --context "$CONTEXT" exec "$container" node /opt/jarvis/api-probe.mjs
+    docker --context "$CONTEXT" exec --user 10001:10001 "$container" env -u LLM_GATEWAY_ATTEMPT_CAPABILITY node /opt/jarvis/api-probe.mjs
     ;;
   *)
     echo "Unsupported fixed relay operation" >&2

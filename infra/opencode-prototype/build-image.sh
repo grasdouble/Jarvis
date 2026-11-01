@@ -13,6 +13,7 @@ engine="$(docker --context colima-jarvis info --format '{{.OSType}}/{{.Architect
   exit 1
 }
 
+pnpm --dir "$REPO_ROOT" --filter @jarvis/llm build
 pnpm --dir "$REPO_ROOT" --filter @jarvis/llm-gateway build
 pnpm --dir "$REPO_ROOT" --filter @jarvis/runtime build
 
