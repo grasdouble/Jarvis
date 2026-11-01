@@ -79,15 +79,10 @@ export class PostgresOperationalDashboardReadModel {
               JOIN jarvis.requests r ON r.id=mr.request_id AND r.project_id=p.id AND r.owner_id=p.owner_id),
             'modelRequests', COALESCE((
               SELECT jsonb_agg(jsonb_build_object(
-                'id', mr.id,
-                'requestId', mr.request_id,
-                'taskId', mr.task_id,
-                'attemptId', mr.attempt_id,
-                'provider', mr.provider,
-                'model', mr.model,
-                'purpose', mr.purpose,
-                'state', mr.state,
-                'dispatchedAt', mr.dispatched_at,
+                'id', mr.id, 'operationId', mr.operation_id, 'requestId', mr.request_id,
+                'taskId', mr.task_id, 'attemptId', mr.attempt_id,
+                'provider', mr.provider, 'model', mr.model, 'purpose', mr.purpose,
+                'state', mr.state, 'dispatchedAt', mr.dispatched_at,
                 'runtimeCoverage', mr.runtime_coverage,
                 'observationsCount', (SELECT count(*)::integer FROM jarvis.usage_observations count_uo WHERE count_uo.model_request_id=mr.id),
                 'ledger', CASE WHEN ul.model_request_id IS NULL THEN NULL ELSE jsonb_build_object(
@@ -104,7 +99,7 @@ export class PostgresOperationalDashboardReadModel {
                   SELECT jsonb_agg(jsonb_build_object(
                     'source', uo.source, 'revision', uo.revision, 'numericUsage', uo.numeric_usage,
                     'mappingVersion', uo.mapping_version, 'coverage', uo.coverage, 'observedAt', uo.observed_at,
-                    'quotaSignals', uo.quota_signals
+                    'freshness', uo.freshness, 'quotaSignals', uo.quota_signals
                   ) ORDER BY uo.observed_at DESC, uo.revision DESC)
                   FROM jarvis.usage_observations uo
                   WHERE uo.model_request_id=mr.id AND uo.id IN (
@@ -202,15 +197,19 @@ function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
         coverage: Object.fromEntries(quotaFields.map((field) => [field, ["reported", "unknown", "not_supported"].includes(String(quotaCoverage[field])) ? quotaCoverage[field] : "unknown"])),
       };
       return [{
-        source: safeLabel(observation.source), revision: typeof observation.revision === "number" ? observation.revision : null,
+        source: observation.source === "gateway" || observation.source === "runtime" ? observation.source : null,
+        revision: Number.isSafeInteger(observation.revision) && (observation.revision as number) > 0 ? observation.revision : null,
         numericUsage: safeMap(observation.numericUsage, true), mappingVersion: safeLabel(observation.mappingVersion),
-        coverage: safeLabel(observation.coverage), observedAt: safeTimestamp(observation.observedAt), quotaSignals,
+        coverage: ["complete", "partial", "unknown"].includes(String(observation.coverage)) ? observation.coverage : "unknown",
+        freshness: ["current", "stale", "unknown"].includes(String(observation.freshness)) ? observation.freshness : "unknown",
+        observedAt: safeTimestamp(observation.observedAt), quotaSignals,
       }];
     });
     const observationsCount = Number.isSafeInteger(row.observationsCount) && (row.observationsCount as number) >= sourceObservations.length
       ? row.observationsCount as number : sourceObservations.length;
     return {
-      id: safeUuid(row.id), requestId: safeUuid(row.requestId), taskId: safeUuid(row.taskId), attemptId: safeUuid(row.attemptId),
+      id: safeUuid(row.id), operationId: safeUuid(row.operationId), requestId: safeUuid(row.requestId),
+      taskId: safeUuid(row.taskId), attemptId: safeUuid(row.attemptId),
       provider: safeAttribution(row.provider), model: safeAttribution(row.model), purpose: safeAttribution(row.purpose),
       state: safeLabel(row.state),
       runtimeCoverage: ["observed", "unknown", "not_supported"].includes(String(row.runtimeCoverage)) ? row.runtimeCoverage : "unknown",

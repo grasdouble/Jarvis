@@ -45,6 +45,31 @@ test("dashboard exposes only project-attributed persisted usage and preserves pe
   assert.equal(project.usage.modelRequests[0].runtimeCoverage, "unknown");
   assert.deepEqual(project.usage.modelRequests[0].observations[0].quotaSignals.counters, { requestLimit: null, requestRemaining: 90, tokenLimit: null, tokenRemaining: null });
 });
+
+test("dashboard projection retains operation identity and observation freshness", async () => {
+  const pool = { connect: async () => ({
+    query: async () => ({ rows: [{
+      project_id: "p1", repository: "safe/repo", state: "active", installation_state: "active",
+      revoked_at: null, config_version: 1, requests: [], pull_requests: [], latest_observed_at: null,
+      usage: { modelRequestCount: 1, modelRequests: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        operationId: "33333333-3333-4333-8333-333333333333",
+        requestId: "22222222-2222-4222-8222-222222222222",
+        taskId: "44444444-4444-4444-8444-444444444444",
+        attemptId: "55555555-5555-4555-8555-555555555555",
+        state: "succeeded", dispatchedAt: "2026-10-23T00:00:00.000Z",
+        observationsCount: 1, ledger: null, observations: [{
+          source: "gateway", revision: 1, numericUsage: { inputTotal: 4 }, mappingVersion: "openai-chat-completions-v1",
+          coverage: "partial", freshness: "current", observedAt: "2026-10-23T00:00:00.000Z", quotaSignals: null,
+        }],
+      }] },
+    }], rowCount: 1 }), release() {},
+  }) };
+  const [project] = await new persistence.PostgresOperationalDashboardReadModel(pool).list("owner");
+  const request = project.usage.modelRequests[0];
+  assert.equal(request.operationId, "33333333-3333-4333-8333-333333333333");
+  assert.equal(request.observations[0].freshness, "current");
+});
 test("dashboard preserves exact token quota counters while filtering credential-like keys", async () => {
   const pool = { connect: async () => ({
     query: async () => ({ rows: [{

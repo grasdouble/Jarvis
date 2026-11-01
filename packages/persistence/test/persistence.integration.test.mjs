@@ -58,8 +58,8 @@ function validateIntegrationDatabaseUrl(value, { expectedDatabaseName } = {}) {
   if (expectedDatabaseName !== undefined) {
     assert.equal(databaseName, expectedDatabaseName, "database URL must match the expected workflow database");
   } else {
-    assert.match(databaseName, /^jarvis_issue8_[a-f0-9]{32}$/,
-      "local integration requires a uniquely named jarvis_issue8_ disposable database");
+    assert.match(databaseName, /^jarvis_issue(?:8|307)_[a-f0-9]{32}$/,
+      "local integration requires a uniquely named jarvis_issue8_ or jarvis_issue307_ disposable database");
   }
   return databaseName;
 }
@@ -294,6 +294,8 @@ describe("PostgreSQL persistence integration", { concurrency: false }, () => {
 test("integration URL guard rejects unsafe targets before a pool can be created", () => {
   const valid = "postgresql://test:secret@127.0.0.1:54321/jarvis_issue8_0123456789abcdef0123456789abcdef";
   assert.equal(validateIntegrationDatabaseUrl(valid), "jarvis_issue8_0123456789abcdef0123456789abcdef");
+  const issue307 = "jarvis_issue307_abcdef0123456789abcdef0123456789";
+  assert.equal(validateIntegrationDatabaseUrl(`postgresql://test:secret@127.0.0.1:54321/${issue307}`), issue307);
   const runDatabase = "jarvis_integration_auto_123456789_2";
   assert.throws(() => validateIntegrationDatabaseUrl(`postgresql://test:secret@127.0.0.1:5432/${runDatabase}`),
     "local mode must retain its dedicated reviewer database-name contract");
@@ -642,8 +644,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       assert.equal(database.name, expectedDatabaseName,
         `integration run requires database ${expectedDatabaseName}, got ${database.name}`);
     } else {
-      assert.match(database.name, /^jarvis_issue8_[a-f0-9]{32}$/,
-        "local reviewer integration requires a uniquely named jarvis_issue8_ disposable database");
+      assert.match(database.name, /^jarvis_issue(?:8|307)_[a-f0-9]{32}$/,
+        "local integration requires a uniquely named jarvis_issue8_ or jarvis_issue307_ disposable database");
     }
 
     const persistence = new PostgresPersistence(pool);
