@@ -40,6 +40,8 @@ async function readBounded(response) {
 /** Fixed loopback mapping with a closed request union; fetch injection is only a local test seam. */
 export async function dispatchFixedOpenCode(request, options = {}) {
   const password = options.password ?? process.env.OPENCODE_SERVER_PASSWORD;
+  const profileId = options.profileId ?? process.env.LLM_GATEWAY_PROFILE_ID;
+  const modelId = options.modelId ?? process.env.LLM_GATEWAY_MODEL;
   const fetcher = options.fetcher ?? globalThis.fetch;
   if (typeof password !== "string" || password.length === 0 || typeof fetcher !== "function") invalid();
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
@@ -67,9 +69,16 @@ export async function dispatchFixedOpenCode(request, options = {}) {
       if (typeof result.version !== "string") invalid();
       return { healthy: true, version: result.version };
     case "session.create":
-      exact(request, ["operation", "title"]);
-      if (typeof request.title !== "string" || request.title.length < 1 || request.title.length > 200) invalid();
-      result = await call("/api/session", "POST", { title: request.title });
+      exact(request, ["operation", "title", "mode", "profileId", "modelId"]);
+      if (typeof request.title !== "string" || request.title.length < 1 || request.title.length > 200 ||
+          (request.mode !== "plan" && request.mode !== "dev") ||
+          typeof profileId !== "string" || request.profileId !== profileId ||
+          typeof modelId !== "string" || request.modelId !== modelId) invalid();
+      result = await call("/api/session", "POST", {
+        title: request.title,
+        agent: request.mode === "plan" ? "plan" : "build",
+        model: { providerID: "jarvis-gateway", id: modelId },
+      });
       if (!SESSION_ID.test(result.data?.id ?? "")) invalid();
       return result.data;
     case "prompt":

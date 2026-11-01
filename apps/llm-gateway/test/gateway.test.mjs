@@ -5,7 +5,16 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { createServer } from "node:http";
 
+import { resolveProviderCatalog } from "@jarvis/llm";
 import { createBoundedGateway, createConfiguredGateway, createUnixSocketFetch } from "../dist/gateway.js";
+
+const profile = resolveProviderCatalog({
+  activeProfileId: "copilot",
+  profiles: {
+    copilot: { modelId: "test-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+    openai: { modelId: "other-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+  },
+}).active;
 
 let directory;
 let socketPath;
@@ -19,8 +28,7 @@ before(async () => {
   gateway = createBoundedGateway({
     socketPath,
     capability: "attempt-capability-test",
-    providerId: "synthetic-provider",
-    model: "test-model",
+    profile,
     maxInputBytes: 2048,
     maxOutputTokens: 64,
     maxRequests: 6,
@@ -54,7 +62,7 @@ test("gateway exports a Unix-socket fetch transport for loopback HTTP bridge tes
   assert.equal(response.status, 200);
   assert.equal(await response.text(), 'data: {"choices":[{"delta":{"content":"bounded reply"}}]}\n\n');
   assert.equal(upstreamCalls.length, 1);
-  assert.equal(upstreamCalls[0].providerId, "synthetic-provider");
+  assert.equal(upstreamCalls[0].providerId, "github-copilot");
   assert.equal(upstreamCalls[0].route, "/v1/chat/completions");
   assert.equal(Object.hasOwn(upstreamCalls[0], "url"), false);
   assert.equal(Object.hasOwn(upstreamCalls[0], "authorization"), false);
@@ -69,8 +77,7 @@ test("gateway dispatch is inactive without an explicitly wired trusted filter", 
   const inactive = createBoundedGateway({
     socketPath: inactiveSocket,
     capability: "inactive-capability",
-    providerId: "synthetic-provider",
-    model: "test-model",
+    profile,
     maxInputBytes: 1024,
     maxOutputTokens: 16,
     maxRequests: 2,
@@ -96,7 +103,7 @@ test("configured gateway reaches the fixed internal filter port and forwards its
     socketPath: configuredSocket,
     egressConfig: { providers: [], dispatch_enabled: false, filterCapability: "e".repeat(64) },
     gatewayConfig: {
-      dispatch_enabled: true, providerId: "synthetic-provider", model: "test-model",
+      dispatch_enabled: true, profile,
       filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000251", filterPort: 8080,
     },
     maxInputBytes: 2048,
@@ -114,7 +121,7 @@ test("configured gateway reaches the fixed internal filter port and forwards its
     const response = await createUnixSocketFetch(configuredSocket)("http://127.0.0.1/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${"e".repeat(64)}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "test-model", max_tokens: 1 }),
+      body: JSON.stringify({ model: "test-model", max_tokens: 1, messages: [{ role: "user", content: "synthetic" }] }),
     });
     assert.equal(response.status, 503);
     assert.equal(calls.length, 1);
@@ -133,7 +140,7 @@ test("production-style disabled gateway configuration returns 503 without invoki
     socketPath: disabledSocket,
     egressConfig: { providers: [], dispatch_enabled: false, filterCapability: "f".repeat(64) },
     gatewayConfig: {
-      dispatch_enabled: false, providerId: "inactive", model: "inactive",
+      dispatch_enabled: false, profile,
       filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000251", filterPort: 8080,
     },
     maxInputBytes: 1024, maxOutputTokens: 8, maxRequests: 1,
@@ -143,7 +150,7 @@ test("production-style disabled gateway configuration returns 503 without invoki
   try {
     const response = await createUnixSocketFetch(disabledSocket)("http://127.0.0.1/v1/chat/completions", {
       method: "POST", headers: { authorization: `Bearer ${"f".repeat(64)}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "inactive", max_tokens: 1 }),
+      body: JSON.stringify({ model: "test-model", max_tokens: 1, messages: [{ role: "user", content: "synthetic" }] }),
     });
     assert.equal(response.status, 503);
     assert.equal(calls, 0);
@@ -158,7 +165,7 @@ test("production gateway composition rejects enabled dispatch before creating a 
     socketPath: join(directory, "must-not-start.sock"),
     egressConfig: { providers: [], dispatch_enabled: false, filterCapability: "a".repeat(64) },
     gatewayConfig: {
-      dispatch_enabled: true, providerId: "synthetic-provider", model: "test-model",
+      dispatch_enabled: true, profile,
       filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000251", filterPort: 8080,
     },
     maxInputBytes: 1024, maxOutputTokens: 8, maxRequests: 1,
@@ -199,7 +206,10 @@ test("gateway refuses missing attempt capability, unknown routes and model or ou
   const send = (body, token = "attempt-capability-test") => fetchOverSocket("http://127.0.0.1/v1/chat/completions", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      messages: [{ role: "user", content: "synthetic" }],
+      ...body,
+    }),
   });
   assert.equal((await send({ model: "test-model", max_tokens: 1 }, "wrong")).status, 403);
   await assert.rejects(() => fetchOverSocket("http://127.0.0.1/v1/models", { method: "POST" }), /fixed chat-completion route/);
@@ -217,8 +227,7 @@ test("gateway rejects redirects and enforces the per-attempt request count", asy
   const limited = createBoundedGateway({
     socketPath: secondSocket,
     capability: "redirect-capability",
-    providerId: "synthetic-provider",
-    model: "test-model",
+    profile,
     maxInputBytes: 2048,
     maxOutputTokens: 64,
     maxRequests: 1,
@@ -230,7 +239,7 @@ test("gateway rejects redirects and enforces the per-attempt request count", asy
   const request = () => fetchOverSocket("http://127.0.0.1/v1/chat/completions", {
     method: "POST",
     headers: { authorization: "Bearer redirect-capability", "content-type": "application/json" },
-    body: JSON.stringify({ model: "test-model", max_tokens: 1 }),
+    body: JSON.stringify({ model: "test-model", max_tokens: 1, messages: [{ role: "user", content: "synthetic" }] }),
   });
   try {
     assert.equal((await request()).status, 502);
@@ -246,8 +255,7 @@ test("loopback HTTP bridge forwards only the fixed route over the Unix socket", 
   const provider = createBoundedGateway({
     socketPath: bridgeSocket,
     capability: "bridge-attempt-capability",
-    providerId: "synthetic-provider",
-    model: "test-model",
+    profile,
     maxInputBytes: 1024,
     maxOutputTokens: 16,
     maxRequests: 1,
@@ -271,7 +279,7 @@ test("loopback HTTP bridge forwards only the fixed route over the Unix socket", 
     const response = await globalThis.fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: "Bearer ignored-client-value" },
-      body: JSON.stringify({ model: "test-model", max_tokens: 4 }),
+      body: JSON.stringify({ model: "test-model", max_tokens: 4, messages: [{ role: "user", content: "synthetic" }] }),
     });
     assert.equal(response.status, 200);
     assert.equal(await response.text(), "fixture-response");
@@ -292,8 +300,7 @@ test("loopback cancellation aborts the in-flight provider request", async () => 
   const provider = createBoundedGateway({
     socketPath: cancelSocket,
     capability: "cancel-attempt-capability",
-    providerId: "synthetic-provider",
-    model: "test-model",
+    profile,
     maxInputBytes: 1024,
     maxOutputTokens: 16,
     maxRequests: 1,
@@ -324,7 +331,9 @@ test("loopback cancellation aborts the in-flight provider request", async () => 
       method: "POST",
       signal: controller.signal,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "test-model", max_tokens: 1 }),
+      body: JSON.stringify({
+        model: "test-model", max_tokens: 1, messages: [{ role: "user", content: "synthetic cancellation" }],
+      }),
     });
     await started;
     controller.abort();

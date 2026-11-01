@@ -1,3 +1,6 @@
+import { resolveProviderSelection, resolveProviderCatalog, validateAgentRuntimeRequest } from "@jarvis/llm";
+import type { AgentMode, AgentRuntimeResult, ProviderProfile, TrustedProviderCatalogConfiguration } from "@jarvis/llm";
+import type { AdvisorySnapshotBinding } from "@jarvis/runtime";
 export const serviceName = "worker";
 export * from "./sandbox-runtime.js";
 export * from "./sandbox-manager-client.js";
@@ -14,7 +17,7 @@ export type TrustedQueueResultContext = {
 
 export type FixedOpenCodeRequest =
   | { readonly operation: "health" }
-  | { readonly operation: "session.create"; readonly title: string }
+  | { readonly operation: "session.create"; readonly title: string; readonly mode: AgentMode; readonly profileId: string; readonly modelId: string }
   | { readonly operation: "prompt"; readonly sessionID: string; readonly text: string }
   | { readonly operation: "messages"; readonly sessionID: string }
   | { readonly operation: "status"; readonly sessionID: string }
@@ -37,8 +40,8 @@ export function createFixedOpenCodeManagerPort(post: SandboxManagerPost): FixedO
   };
 }
 
-/** Bounded message/polling session flow; the only runtime route is the manager's closed relay API. */
-export async function runOpenCodeSession(input: {
+/** Bounded OpenCode relay adapter; provider identity and model are fixed from trusted configuration. */
+async function runOpenCodeSession(input: {
   readonly manager: FixedOpenCodeManagerPort;
   readonly sandboxId: string;
   readonly taskId: string;
@@ -46,55 +49,104 @@ export async function runOpenCodeSession(input: {
   readonly leaseEpoch: number;
   readonly title: string;
   readonly prompt: string;
+  readonly mode: AgentMode;
+  readonly profile: ProviderProfile;
+  readonly snapshot?: AdvisorySnapshotBinding;
   readonly signal: AbortSignal;
+  readonly onText?: (delta: string) => void | Promise<void>;
   readonly pollIntervalMs?: number;
   readonly maxPolls?: number;
   readonly requestTimeoutMs?: number;
-}): Promise<Record<string, unknown>> {
+}): Promise<AgentRuntimeResult & { readonly payload: unknown }> {
+  const profile = resolveProviderSelection(input.profile);
+  if (input.mode === "plan" && input.snapshot === undefined) throw new Error("Plan mode requires an exact validated snapshot binding");
+  validateAgentRuntimeRequest({
+    mode: input.mode,
+    messages: [{ role: "user", content: input.prompt }],
+    maxOutputTokens: profile.maxOutputTokens,
+  }, profile);
   const interval = input.pollIntervalMs ?? 250;
   const maxPolls = input.maxPolls ?? 40;
   const requestTimeoutMs = input.requestTimeoutMs ?? 10_000;
   if (!Number.isSafeInteger(interval) || interval < 10 || interval > 2_000 ||
       !Number.isSafeInteger(maxPolls) || maxPolls < 1 || maxPolls > 240 ||
       !Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 10 || requestTimeoutMs > 12_000) throw new TypeError("OpenCode polling bounds are invalid");
-  const call = (request: FixedOpenCodeRequest, mode: "task" | "cleanup" = "task"): Promise<Record<string, unknown>> =>
-    {
-      const controller = new AbortController();
-      const signal = mode === "task" ? input.signal : undefined;
-      const operationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(new Error("Sandbox-manager relay request timed out")); }, requestTimeoutMs);
-      });
-      return Promise.race([
-        input.manager.request(input.sandboxId, input.taskId, input.attemptId, input.leaseEpoch, request, operationSignal),
-        deadline,
-      ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
-    };
-  const session = await call({ operation: "session.create", title: input.title });
+  const call = (request: FixedOpenCodeRequest, kind: "task" | "cleanup" = "task"): Promise<Record<string, unknown>> => {
+    const controller = new AbortController();
+    const signal = kind === "task" ? input.signal : undefined;
+    const operationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const { promise: deadline, reject } = Promise.withResolvers<never>();
+    const timer = setTimeout(() => { controller.abort(); reject(new Error("Sandbox-manager relay request timed out")); }, requestTimeoutMs);
+    return Promise.race([
+      input.manager.request(input.sandboxId, input.taskId, input.attemptId, input.leaseEpoch, request, operationSignal),
+      deadline,
+    ]).finally(() => clearTimeout(timer));
+  };
+  const session = await call({
+    operation: "session.create",
+    title: input.title,
+    mode: input.mode,
+    profileId: profile.id,
+    modelId: profile.modelId,
+  });
   if (typeof session.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(session.id)) throw new Error("Manager returned an invalid OpenCode session identity");
   const sessionID = session.id;
   try {
     await call({ operation: "prompt", sessionID, text: input.prompt });
+    let previousText = "";
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
       if (input.signal.aborted) throw new Error("OpenCode session cancelled");
       const [messages, status] = await Promise.all([
         call({ operation: "messages", sessionID }),
         call({ operation: "status", sessionID }),
       ]);
-      if (Array.isArray(messages.messages) && messages.messages.some((item) => {
-        if (typeof item !== "object" || item === null || (item as Record<string, unknown>).type !== "assistant") return false;
-        const content = (item as Record<string, unknown>).content;
-        return Array.isArray(content) && content.some((part) => typeof part === "object" && part !== null &&
-          (part as Record<string, unknown>).type === "text" && typeof (part as Record<string, unknown>).text === "string" &&
-          ((part as Record<string, unknown>).text as string).length > 0);
-      })) return messages;
-      if (status.status === "idle" || status.status === "error") throw new Error("OpenCode session ended without an assistant response");
-      await new Promise<void>((resolve, reject) => {
-        const onAbort = (): void => { clearTimeout(timer); reject(new Error("OpenCode session cancelled")); };
-        const timer = setTimeout(() => { input.signal.removeEventListener("abort", onAbort); resolve(); }, interval);
-        input.signal.addEventListener("abort", onAbort, { once: true });
-      });
+      const rows = Array.isArray(messages.messages) ? messages.messages : [];
+      const assistant = rows.find((item) => typeof item === "object" && item !== null && (item as Record<string, unknown>).type === "assistant");
+      const content = typeof assistant === "object" && assistant !== null ? (assistant as Record<string, unknown>).content : undefined;
+      const text = Array.isArray(content)
+        ? content.filter((part) => typeof part === "object" && part !== null && (part as Record<string, unknown>).type === "text" && typeof (part as Record<string, unknown>).text === "string")
+          .map((part) => (part as Record<string, unknown>).text as string).join("")
+        : "";
+      if (text && text !== previousText) {
+        if (!text.startsWith(previousText)) throw new Error("OpenCode assistant stream changed previously observed result text");
+        const delta = text.slice(previousText.length);
+        previousText = text;
+        if (delta) await input.onText?.(delta);
+      }
+      if (status.status === "error") throw new Error("OpenCode session ended with an error");
+      if (status.status === "idle") {
+        if (!previousText) throw new Error("OpenCode session ended without an assistant response");
+        const rawUsage = typeof assistant === "object" && assistant !== null ? (assistant as Record<string, unknown>).tokens : undefined;
+        const observedUsage = typeof rawUsage === "object" && rawUsage !== null
+          ? {
+              ...(Number.isSafeInteger((rawUsage as Record<string, unknown>).input) ? { inputTokens: (rawUsage as Record<string, number>).input } : {}),
+              ...(Number.isSafeInteger((rawUsage as Record<string, unknown>).output) ? { outputTokens: (rawUsage as Record<string, number>).output } : {}),
+            }
+          : {};
+        const result: AgentRuntimeResult = Object.freeze({
+          mode: input.mode,
+          profileId: profile.id,
+          providerId: profile.providerId,
+          modelId: profile.modelId,
+          resultText: previousText,
+          ...(Object.keys(observedUsage).length === 0 ? {} : {
+            usage: Object.freeze({
+              ...observedUsage,
+              provenance: "opencode-response" as const,
+              observedAt: new Date().toISOString(),
+            }),
+          }),
+        });
+        let payload: unknown;
+        try { payload = JSON.parse(previousText) as unknown; }
+        catch { throw new Error("OpenCode task result is not valid JSON"); }
+        return Object.freeze({ ...result, payload });
+      }
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const onAbort = (): void => { clearTimeout(timer); reject(new Error("OpenCode session cancelled")); };
+      const timer = setTimeout(() => { input.signal.removeEventListener("abort", onAbort); resolve(); }, interval);
+      input.signal.addEventListener("abort", onAbort, { once: true });
+      await promise;
     }
     throw new Error("OpenCode session polling deadline exceeded");
   } catch (error) {
@@ -126,25 +178,35 @@ export type OpenCodeDispatchCapability = {
   readonly leaseEpoch: number;
   readonly title: string;
   readonly prompt: string;
+  readonly mode: AgentMode;
+  readonly modelProfileId: string;
+  readonly snapshot?: AdvisorySnapshotBinding;
+  readonly onText?: (delta: string) => void | Promise<void>;
 };
 
-/** Compose the stop-aware final dispatch gate with the fixed #250 manager relay. */
+/** Compose one owner-selected profile with the stop-aware fixed manager relay. */
 export function createStopAwareOpenCodePorts(options: {
   readonly readStop: (projectId: string) => Promise<StopSnapshot>;
   readonly manager: FixedOpenCodeManagerPort;
+  readonly providerCatalog: TrustedProviderCatalogConfiguration;
   readonly revokeCapability: (taskId: string) => Promise<void>;
   readonly stopSandbox: (taskId: string, timeoutMs: number) => Promise<"stopped" | "unknown">;
   readonly recordAcceptedEffectUnknown: (taskId: string) => Promise<void>;
   readonly session?: { readonly pollIntervalMs?: number; readonly maxPolls?: number; readonly requestTimeoutMs?: number };
-}): StopAwareExecutionPorts<OpenCodeDispatchCapability, Record<string, unknown>> {
+}): StopAwareExecutionPorts<OpenCodeDispatchCapability, AgentRuntimeResult & { readonly payload: unknown }> {
+  const profile = resolveProviderCatalog(options.providerCatalog).active;
   return {
     readStop: options.readStop,
-    dispatch: (capability, signal) => runOpenCodeSession({
-      manager: options.manager,
-      ...capability,
-      signal,
-      ...options.session,
-    }),
+    dispatch: (capability, signal): Promise<AgentRuntimeResult & { readonly payload: unknown }> => {
+      if (capability.modelProfileId !== profile.id) throw new Error("Task model profile does not match the trusted active profile");
+      return runOpenCodeSession({
+        manager: options.manager,
+        ...capability,
+        profile,
+        signal,
+        ...options.session,
+      });
+    },
     revokeCapability: options.revokeCapability,
     stopSandbox: options.stopSandbox,
     recordAcceptedEffectUnknown: options.recordAcceptedEffectUnknown,

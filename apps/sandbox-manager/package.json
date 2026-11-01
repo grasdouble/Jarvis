@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/contracts run build && pnpm --filter @jarvis/llm run build && tsc",
+    "typecheck": "pnpm --filter @jarvis/domain run build && pnpm --filter @jarvis/contracts run build && pnpm --filter @jarvis/llm run build && tsc --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs"
   },
-  "dependencies": { "@jarvis/contracts": "workspace:*" }
+  "dependencies": { "@jarvis/contracts": "workspace:*", "@jarvis/llm": "workspace:*" }
 }

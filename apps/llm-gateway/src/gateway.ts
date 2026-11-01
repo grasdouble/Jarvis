@@ -1,3 +1,4 @@
+import { estimatePreparedContextTokens, resolveProviderSelection, type ProviderProfile } from "@jarvis/llm";
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { request as socketRequest } from "node:http";
@@ -10,8 +11,7 @@ const MAX_REQUEST_TIMEOUT_MS = 120_000;
 export type BoundedGatewayOptions = {
   socketPath: string;
   capability: string;
-  providerId: string;
-  model: string;
+  profile: ProviderProfile;
   maxInputBytes: number;
   maxOutputTokens: number;
   maxRequests: number;
@@ -92,15 +92,16 @@ export function createConfiguredGateway(options: {
     return value as Record<string, unknown>;
   };
   const egress = record(options.egressConfig, ["providers", "dispatch_enabled", "filterCapability"], "Egress");
-  const gateway = record(options.gatewayConfig, ["dispatch_enabled", "providerId", "model", "filterHost", "filterPort"], "Gateway");
+  const gateway = record(options.gatewayConfig, ["dispatch_enabled", "profile", "filterHost", "filterPort"], "Gateway");
   if (!Array.isArray(egress.providers) || egress.providers.length !== 0 || egress.dispatch_enabled !== false ||
       typeof egress.filterCapability !== "string" || !/^[a-f0-9]{64}$/i.test(egress.filterCapability) ||
-      typeof gateway.dispatch_enabled !== "boolean" || typeof gateway.providerId !== "string" ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(gateway.providerId) || typeof gateway.model !== "string" ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(gateway.model) || typeof gateway.filterHost !== "string" ||
+      typeof gateway.dispatch_enabled !== "boolean" || typeof gateway.filterHost !== "string" ||
       !/^jarvis-egress-filter-[0-9a-f-]{36}$/.test(gateway.filterHost) || gateway.filterPort !== 8080) {
     throw new Error("Per-attempt gateway/filter configuration is invalid or not fail-closed.");
   }
+  let profile: ProviderProfile;
+  try { profile = resolveProviderSelection(gateway.profile); }
+  catch { throw new Error("Gateway selected profile is invalid."); }
   const dispatchToFilter = createTrustedFilterClient({
     host: gateway.filterHost,
     port: gateway.filterPort,
@@ -110,8 +111,7 @@ export function createConfiguredGateway(options: {
   return createBoundedGateway({
     socketPath: options.socketPath,
     capability: egress.filterCapability,
-    providerId: gateway.providerId,
-    model: gateway.model,
+    profile,
     maxInputBytes: options.maxInputBytes,
     maxOutputTokens: options.maxOutputTokens,
     maxRequests: options.maxRequests,
@@ -132,8 +132,8 @@ export function createProductionGateway(options: Parameters<typeof createConfigu
 }
 
 function validOptions(options: BoundedGatewayOptions): void {
-  if (!options.socketPath || !options.capability || !options.providerId || !options.model) {
-    throw new Error("Gateway socket, per-attempt capability, fixed provider identity and model are required.");
+  if (!options.socketPath || !options.capability) {
+    throw new Error("Gateway socket and per-attempt capability are required.");
   }
   for (const [name, value, minimum, maximum] of [
     ["maxInputBytes", options.maxInputBytes, 1, 1024 * 1024],
@@ -181,6 +181,7 @@ function sendError(response: ServerResponse, status: number, code: string): void
 
 export function createBoundedGateway(options: BoundedGatewayOptions): Server {
   validOptions(options);
+  const profile = resolveProviderSelection(options.profile);
   const filter = options.dispatchToFilter;
   const dispatchEnabled = options.dispatchEnabled ?? Boolean(filter);
   const timeoutMs = options.requestTimeoutMs ?? 30_000;
@@ -214,6 +215,7 @@ export function createBoundedGateway(options: BoundedGatewayOptions): Server {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref();
     response.on("close", () => controller.abort());
+    request.socket.once("close", () => controller.abort());
     try {
       const rawBody = await readBody(request, options.maxInputBytes);
       let value: unknown;
@@ -230,15 +232,23 @@ export function createBoundedGateway(options: BoundedGatewayOptions): Server {
       const body = value as Record<string, unknown>;
       const hasMaxTokens = Object.hasOwn(body, "max_tokens");
       const hasMaxCompletionTokens = Object.hasOwn(body, "max_completion_tokens");
-      const tokenLimit = hasMaxTokens ? body.max_tokens : body.max_completion_tokens;
-      if (hasMaxTokens === hasMaxCompletionTokens || body.model !== options.model || !Number.isSafeInteger(tokenLimit) ||
-          (tokenLimit as number) < 1 || (tokenLimit as number) > options.maxOutputTokens) {
-        sendError(response, 400, "model_or_output_limit_rejected");
+      const outputLimit = hasMaxTokens ? body.max_tokens : body.max_completion_tokens;
+      let contextEstimate: number;
+      try { contextEstimate = estimatePreparedContextTokens(body.messages); }
+      catch {
+        sendError(response, 400, "prepared_messages_invalid");
+        return;
+      }
+      if (hasMaxTokens === hasMaxCompletionTokens || body.model !== profile.modelId || !Number.isSafeInteger(outputLimit) ||
+          (outputLimit as number) < 1 || (outputLimit as number) > options.maxOutputTokens ||
+          (outputLimit as number) > profile.maxOutputTokens ||
+          contextEstimate + (outputLimit as number) > profile.contextWindowTokens) {
+        sendError(response, 400, "profile_or_context_budget_rejected");
         return;
       }
 
       const upstreamResponse = await filter.dispatch({
-        providerId: options.providerId,
+        providerId: profile.providerId,
         route: ROUTE,
         signal: controller.signal,
         body: new Uint8Array(rawBody),
@@ -368,7 +378,14 @@ export function createLoopbackGatewayBridge(options: {
     try {
       const body = await readBody(request, requestLimit);
       const controller = new AbortController();
-      response.on("close", () => controller.abort());
+      const abort = (): void => controller.abort();
+      request.once("aborted", abort);
+      request.socket.once("close", abort);
+      response.on("close", () => {
+        request.removeListener("aborted", abort);
+        request.socket.removeListener("close", abort);
+        if (!response.writableEnded) abort();
+      });
       const upstream = await fetchOverSocket(`http://127.0.0.1${ROUTE}`, {
         method: "POST",
         headers: {

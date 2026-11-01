@@ -84,7 +84,7 @@ Assign the accepted allowance a distinct budget ID. Its own first actual indepen
 
 A budget is time permission only. It is not a review verdict, human/CODEOWNERS approval, passing CI/security/secret scan, publication or merge permission, or protection bypass. Independent review must remain non-authoring. All current requested human review, native approval, CI/security, sensitivity/CODEOWNERS, branch-protection, publication and merge gates remain unchanged. Also hand off when the same substantive findings recur without meaningful progress, disagreement blocks resolution, a reviewer is unavailable, or evidence is limited. This is a session-driven contributor procedure; it does not technically enforce timing or alter product-runtime policy.
 
-No numeric currency cap is invented: use an existing owner-configured spend limit when measurable; record unavailable usage/cost instead of claiming a hard financial limit. Provider choice and data-processing authorization remain those of the current session. The future product must enforce its configured token/currency budget in the core before attempts.
+Provider billing and consumption visibility follow the canonical current policy in [PRD §2.2](prd-and-roadmap.md#22-proposed-assumptions-for-sizing-the-mvp); this contributor workflow creates no financial cap or extra provider access. Provider choice and data-processing authorization remain those of the current session.
 
 ## Outcomes and retained state
 

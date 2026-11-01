@@ -41,13 +41,13 @@ The values below are design targets to confirm at milestone J00; they are not me
 | Plan profile | Read-only project context and approved skill instructions; no repository writes |
 | Development profile | Isolated writable task workspace; PR publication through the trusted core; no merge |
 | Daily digest | 08:00, Europe/Paris time zone, available in the interface |
-| Consumption visibility | Per-request/provider/model usage and cost reporting with period summaries; hard spending ceilings and thresholds remain an owner decision |
+| Consumption visibility | Report only request usage/quota returned by normal provider/runtime traffic, with provider/model, provenance, freshness and unknown coverage |
 
-Consumption reporting must distinguish measured usage, estimates, unknown coverage, and any configured limits. The owner has not selected a hard-ceiling policy, thresholds, or currency for any spending limit; no billable request is enabled by this planning assumption. The Mac's total memory is unknown, so quotas remain subject to measurement on the actual machine.
+Provider subscriptions and credits remain provider-managed. JARVIS does not impose monetary reservations/ceilings, access billing/admin APIs, poll provider quotas, or infer balances or invoices. Context, token, request, time and infrastructure quotas remain separate safety limits. Provider dispatch remains disabled until its isolated route is qualified.
 
 ## 3 User and problems to solve
 
-The owner maintains several repositories and wants to delegate project work without giving an agent general access to the Mac or GitHub. They must be able to understand what JARVIS planned or changed, what it published, and what remains uncertain. They must also be able to stop actions and control costs.
+The owner maintains several repositories and wants to delegate project work without giving an agent general access to the Mac or GitHub. They must be able to understand what JARVIS planned or changed, what it published, what remains uncertain, and what usage was actually observed. They must also be able to stop actions.
 
 The priority problem is the effort required to turn a request about a project into an actionable plan or a reviewed code change. JARVIS should use project-specific context without granting an agent general access to the Mac, other repositories, or GitHub credentials. The owner must be able to see what JARVIS did, what it changed, which skills and evidence it used, and what remains uncertain.
 
@@ -58,13 +58,13 @@ The priority problem is the effort required to turn a request about a project in
 3. JARVIS resolves the selected project's current revision and applicable approved context, then creates a bounded task attempt in the matching isolated profile.
 4. In plan mode, it returns a sourced plan, affected areas, risks and uncertainties without changing the project. In development mode, it edits an isolated task branch/workspace and returns its proposed diff and checks/evidence.
 5. The trusted core validates scope and revision, then may publish one PR for the development request. JARVIS records the confirmed or unknown remote result; it does not merge the PR.
-6. The owner inspects the plan or PR and decides what to do next; the task history records sources, skills, changes, limitations and cost.
+6. The owner inspects the plan or PR and decides what to do next; task history records sources, skills, changes, limitations and observed usage.
 
 ## 4 Scope and exclusions
 
 ### 4.1 Included capabilities
 
-Version 0.1 handles explicitly submitted requests for repositories listed in JARVIS's internal project configuration. The owner selects plan-only analysis or development that edits code and opens a PR. Requests are scoped to one configured project; ambiguity requires clarification. The product provides authenticated task history, bounded project context, per-project skill configuration, cost visibility and an emergency stop. PR publication is a trusted-core effect bound to the task, repository, base/head and policy; merge is not an MVP capability.
+Version 0.1 handles explicitly submitted requests for repositories listed in JARVIS's internal project configuration. The owner selects plan-only analysis or development that edits code and opens a PR. Requests are scoped to one configured project; ambiguity requires clarification. The product provides authenticated task history, bounded project context, per-project skill configuration, safely observed provider usage, and an emergency stop. PR publication is a trusted-core effect bound to the task, repository, base/head and policy; merge is not an MVP capability.
 
 Plan mode inspects project material and proposes work without writing. Requests may cover repository changes, pull-request analysis, dependency updates, or other scoped project tasks, subject to project authorization and the selected mode.
 
@@ -140,9 +140,9 @@ An explicitly requested PR review can reuse the bounded, isolated read-only anal
 
 **User story.** I want to understand within a few minutes what happened and which decisions need my attention.
 
-**Requirements.** One digest per local date and scope groups user requests, plans, development tasks, opened PRs, blocks, failures, incidents, tasks exceeding budget, and known or estimated spending. Each item links to its details. Totals come from PostgreSQL; LLM-written prose is optional.
+**Requirements.** One digest per local date and scope groups user requests, plans, development tasks, opened PRs, blocks, failures, incidents, task limits and observed provider usage. Each item links to its details. Totals come from PostgreSQL; LLM-written prose is optional.
 
-Include token totals/breakdowns and estimated/unknown coverage from the same F09 ledger, including retries, failures and optional digest-generation usage. Late usage revises the original period with a visible watermark/correction, without a duplicate digest.
+Include supported token totals/breakdowns and observed/unknown coverage only when returned on the normal provider/runtime request path. Late observations may revise the original period with a visible watermark/correction, without a duplicate digest. Monetary values, balances, invoices and quota not returned by that path are not included.
 
 **Acceptance.** A fixture containing 12 requests, 4 opened PRs, and 2 failures reproduces exactly those totals. A daylight saving time change does not create two digests. If the Mac is asleep at 08:00, a catch-up digest is available within 5 minutes of recovery and identifies the period. Several missed days are grouped without losing events.
 
@@ -150,21 +150,21 @@ Include token totals/breakdowns and estimated/unknown coverage from the same F09
 
 **User story.** I want to see project tasks and be able to stop JARVIS activity quickly.
 
-**Requirements.** A dashboard shows authorized projects, requests, plans, development runs, opened PRs, health, budgets, and unconfirmed remote operations. Global stop and per-project suspension are available. A redacted text or JSON report can be downloaded.
+**Requirements.** A dashboard shows authorized projects, requests, plans, development runs, opened PRs, health, configured request/runtime limits, observed provider usage and unconfirmed remote operations. Global stop and per-project suspension are available. A redacted text or JSON report can be downloaded.
 
 **Acceptance.** The durable stop takes effect for new calls in less than 2 seconds; process shutdown is requested within 10 seconds if components are responsive. Restarting preserves the suspended state. The interface distinguishes waiting for capacity, an unavailable dependency, permanent failure, and an unknown remote result.
 
-### F09 Switch providers and control costs
+### F09 Select providers and observe usage
 
-**User story.** I want to choose a provider and know how much project-request activity costs.
+**User story.** I want to select the authorized model provider and observe supported request usage without treating it as an invoice or monetary limit.
 
-**Requirements.** The model and provider are selected per profile. Required capabilities, limits, and confidentiality rules are verified. No fallback to an unauthorized provider is allowed. Every request's consumption is durably attributed and monitorable, including retries and digests. If the owner selects hard spending ceilings under D05, the core reserves the maximum estimated cost before starting and enforces those limits; the presence and values of such ceilings are not yet decided.
+**Requirements.** The owner selects one of two permitted provider configurations, GitHub Copilot or OpenAI, through trusted configuration; changing providers requires an explicit trusted configuration change. Plan and dev use the same mission/report, streaming, cancellation and context-budget contracts. Required capabilities and confidentiality rules are checked before dispatch; an incompatible profile or outage fails explicitly and never falls back. Private code may be sent only to the configured provider. Record provider/model usage and quota only when returned by ordinary request/runtime traffic, with provenance, freshness and explicit unknown/unsupported states. Provider subscriptions and credits remain provider-managed: JARVIS does not reserve or cap money, read billing/admin APIs, or poll quotas. Token/request/runtime bounds remain distinct from monetary controls. Detailed request accounting, API/UI/digest acceptance and reconciliation remain separately unimplemented work in #301 / JV-072; this decision does not claim those features.
 
-Track each dispatched model request durably with provider/model, purpose, task/attempt and authorized repository/PR attribution. Preserve input/output totals, cache read/write and reasoning breakdowns where supported, without adding overlapping categories. Missing values are unknown/unsupported rather than zero; reported counts, estimates, reservations and monetary valuations remain distinct. Count failures, cancellations, retries and future agent/parent overhead once per actual request. Authenticated consumption views and exports support daily/monthly summaries and drilldown; no prompt or code content is needed for tracking. The [accounting contract](token-consumption.md) defines provenance, reconciliation, privacy and reuse by later capabilities.
+F09 usage records are a separate future accounting deliverable. They may retain only safe provider/model attribution and usage/quota observations actually returned through ordinary runtime traffic, with field-level provenance, freshness and unknown/unsupported coverage; no request content or billing/admin API data is needed or authorized. No provider-side subscription allowance or monetary value may be inferred from token counts.
 
-**Acceptance.** Two authorized providers pass the same plan/dev mission-result contract tests without changing the business domain. An incompatible provider blocks the task cleanly. Consumption is visible by request and provider/model with known versus unknown usage/cost coverage. If hard ceilings are accepted under D05, once a configured limit is reached no new billable request is sent; a request already in flight may exceed its estimate and remains displayed as such.
+**Acceptance.** Synthetic fixtures exercise both trusted provider profiles through the same versioned plan/dev result contract, bounded durable queue reference, streaming, cancellation and trusted context-budget behavior. Incompatible capability, malformed result and unavailable selected-provider cases fail explicitly without dispatching to another provider. Only trusted configuration can select a provider; request content, repository contents and agent output cannot override it or grant authority. Production dispatch remains disabled until the per-attempt egress implementation and pinned Colima/Lima qualification pass.
 
-Provider usage mappings and missing-value cases pass the accounting fixtures. Replaying a final observation 100 times or combining SDK/gateway observations never duplicates consumption; a separately billed retry does. A fixture of 1,000/100 plus 2,000/300 input/output tokens remains exactly 3,000/400 despite cache/reasoning subsets. Unknown in-flight exposure remains accounted for. SQL, API, UI and digest totals agree with explicit period/currency/coverage; known persisted usage is visible within 60 seconds under normal operation. If hard ceilings are later accepted under D05, the two concurrent 6-unit reservations against 10 available scenario admits at most one, including restart/recovery cases. These are implementation targets, not current results; provider pricing and any ceiling policy remain open under D05.
+Accounting details remain separately owned future work: usage normalization, durable per-request ledger, projections, corrections and UI/digest behavior are not implemented by this issue. When implemented, synthetic fixtures must preserve source/freshness/unknown status, avoid duplicate observations and expose only usage actually observed on the normal provider/runtime request path. Provider subscriptions, balances, quotas not returned by that path, invoices and charges are outside JARVIS; no monetary reservation, ceiling, billing credential/API, or quota polling is authorized. No result here constitutes live provider qualification.
 
 ### F10 Retain and reuse controlled memory
 
@@ -234,7 +234,7 @@ Colima provides the Linux VM hosting Docker Engine; the selected Docker runtime 
 
 The home screen prioritizes active requests, clarifications, failures, and operations awaiting confirmation. A task view distinguishes owner input, repository facts, model output, core decisions, and published PRs. Full revisions and source links are available.
 
-A consumption view shows input/output tokens, supported cache/reasoning breakdowns, provider/model, task purpose, known/estimated/unknown coverage and reserved versus estimated/provider-reported spending. Period and repository/PR/task filters support drilldown; future agent/campaign views reuse it when delivered. Parent totals and child details cannot be added twice. Currency, price version, freshness and retention gaps remain visible; token savings alone do not prove quality gains.
+A usage view may show input/output tokens, supported cache/reasoning breakdowns, provider/model, task purpose, source/freshness and reported/unknown/unsupported coverage. Period and repository/PR/task filters may support drilldown; future agent/campaign views reuse it when delivered. Parent totals and child details cannot be added twice. It does not show inferred currency valuation, balances, invoices, reservations or monetary ceilings; token savings alone do not prove quality gains.
 
 Configuration must explain which projects are authorized, where configuration is stored, current skill approvals and their revisions, and the permissions actually granted. Project suspension remains visible. Blocking messages suggest a useful next step, such as clarifying the requested mode, approving a specific skill revision, or resolving a changed base/head.
 
@@ -252,14 +252,14 @@ The interface remains locally accessible through a browser and uses an authentic
 | Publishing a change against stale or wrong scope | Critical | Project/task/revision binding, invalidation, patch-path validation and GitHub protections; J04 race tests |
 | Code disclosure to a provider | High | Providers authorized per repository, context limits, no implicit fallback; J00 confidentiality validation |
 | Sleep, Docker outage, or network loss | Medium | Reconciliation, expiring leases, catch-up, unknown-result states; J02/J05 recovery tests |
-| Excessive LLM spending or retries | Medium | Reservations, request/token limits, visible estimated cost; J03 budget-limit exercise |
+| Provider request exhaustion or unobserved retries | Medium | Keep request/token/context/time and infrastructure limits distinct; expose only actually returned usage and unknown coverage; no JARVIS monetary controls or assumed invoice ceiling |
 | Incorrect CI provenance | High | Bound check, issuer, workflow, and SHA; no self-approval; J04 pilot repository audit |
 | Networking and OpenCode transport complexity | High | Early isolated prototype; block the affected task profile if the safe transport cannot be validated |
 | Personal maintenance burden | Medium | Monolith, one worker, no distributed bus or general-purpose planner in v0.1 |
 
 ## 10 Success metrics
 
-Metrics are calculated per period and authorized project. Costs include failed attempts. MVP utility is measured on explicit user requests, not unattended PR or merge volume.
+Usage metrics are calculated per period and authorized project from observed request data; unknown coverage remains visible. MVP utility is measured on explicit user requests, not unattended PR or merge volume.
 
 | Metric | v0.1 release target |
 | --- | --- |
@@ -268,7 +268,7 @@ Metrics are calculated per period and authorized project. Costs include failed a
 | Useful plan or change | At least 18 of 20 owner-selected pilot requests judged useful; plan and dev outcomes reported separately |
 | Scope integrity | Zero accepted out-of-scope file changes or unapproved skill revisions in the acceptance corpus |
 | Human effort | Measure median request-to-usable-plan/PR time against a recorded manual baseline; target set after baseline |
-| Cost | Report per-request cost and coverage; numeric limits remain subject to D05 and every overrun is explained |
+| Provider usage | Report observed request-level usage/quota only where returned, with provenance and explicit unknown coverage; do not infer monetary values or invoice totals |
 
 These targets do not prove the absence of regressions. The corpus includes clear and ambiguous requests, hostile repository/skill content, scope violations, and uncertain remote outcomes; an LLM score alone does not measure safety.
 
@@ -278,10 +278,10 @@ No delivery date or duration estimate is committed. MVP qualification requires p
 
 | Milestone | Period | Deliverable | Exit gate |
 | --- | --- | --- | --- |
-| J00 Scoping | No date committed | Authorized initial project, provider/data handling, consumption monitoring and spending-control policy, execution and publication decisions | D01–D06 and applicable new decisions recorded; no unresolved gate is bypassed |
+| J00 Scoping | No date committed | Authorized initial project, provider/data handling, consumption observation, execution and publication decisions | D01–D06 and applicable new decisions recorded; no unresolved gate is bypassed |
 | J01 Isolation | No date committed | Controller, ARM64 task profiles, provider gateway, stop and cleanup | N01–N03 pass; no Mac or Docker socket access from agent profiles |
 | J02 Project and request foundation | No date committed | Internal project configuration, authenticated request intake, storage, queue, minimal UI | F01/F11, N14, duplicates, ambiguity and unauthorized-project cases validated |
-| J03 Planning and context | No date committed | Read-only plan profile, OpenCode adapter, bounded memory, provider/cost accounting | F03/F09/F10/F12, N15; isolation, hostile-input, memory and provider cases validated |
+| J03 Planning and context | No date committed | Read-only plan profile, OpenCode adapter, bounded memory and provider profiles | F03/F09/F10/F12, N15; isolation, hostile-input, memory and provider cases validated |
 | J04 Development and PR handoff | No date committed | Writable task workspace, deterministic scope validation, PR publisher | F13/F14, POL 08–13; revision/scope races and uncertain publication cases covered; no merge capability |
 | J05 — MVP qualification and operations | No date committed | Request dashboard/digest, skill consent UX, backup, recovery and operations guide | F07/F08/F11–F14, N14/N15, restore, pilot and all accepted critical gates met |
 
@@ -360,10 +360,10 @@ Maintain separate conversation and repository memory scopes with bounded context
 | ID | Decision | Proposal and owner | Deadline or fallback |
 | --- | --- | --- | --- |
 | D01 | Sandbox controller | Owner selected the dedicated containerized controller as the sole Engine-socket holder, with a closed API; recorded in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026 | J01; implement and qualify the restricted controller before project use; no Engine socket in API, worker, or agent |
-| D02 | Providers and code processing | Owner; one primary provider and one authorized secondary | J00; no private code sent without selection |
+| D02 | Providers and code processing | Owner selected GitHub Copilot and OpenAI as the only permitted provider configurations; trusted configuration selects exactly one, switching is explicit, private code is sent only to that selected provider, and automatic failover is forbidden. Owner decision: current delivery session and #15. | Selection is accepted; implementation and qualification of the isolated provider route remain required before any private content or billable dispatch |
 | D03 | Repositories, branch, and required CI | Owner selected `grasdouble/Jarvis-Test` as the only initial project target; the owner reports a local checkout with only `README.md`. `grasdouble/Jarvis` is the product source repository, not the initial JARVIS-operated project. | J00 plan work requires authorized project access and approved provider/data processing; no development task or PR publication until product access, target base branch, required CI, and provenance are verified |
 | D04 | Unsolicited event intake | None; tasks start from authenticated owner requests | No external event-intake endpoint is exposed |
-| D05 | Consumption monitoring and spending controls | Owner prioritizes monitoring consumption and is unsure whether fixed ceilings are wanted; prior EUR figures are not current approved defaults | J00; record request/provider usage, estimated/reported cost, and unknown coverage. Owner must decide whether hard ceilings are required, with any thresholds/currency and plan/dev allocation, before billable dispatch |
+| D05 | Consumption monitoring and spending controls | Owner selected provider-managed subscriptions/credits with no JARVIS monetary reservation/ceiling, billing/admin credential, billing API or quota polling. Usage/quota may be recorded only if returned by ordinary provider/runtime traffic, with provenance and freshness. Owner decision: current delivery session and #15. | Implement safe usage observation/accounting as separately scoped #301/JV-072 work; no inferred balance/invoice or JARVIS monetary enforcement |
 | D06 | Colima deployment baseline | Owner accepted 4 VM CPUs, 8 GiB RAM if host capacity permits, an 80 GiB VM disk, at least 40 GiB free host disk, and a 2-CPU/4-GiB per-sandbox target; contributor-selected exact version pins are recorded in the [technical architecture §6](technical-architecture.md#6-colima-deployment-and-mac-isolation). The owner decision is recorded in [JV-004](https://github.com/grasdouble/Jarvis/issues/4#issuecomment-6255994904). | J01; verify ARM64 host capacity, effective VM settings and isolation. Do not silently lower the accepted allocation. |
 | D07 | Product-side merge authority | None for v0.1 | JARVIS may open a validated PR; subsequent review and merge remain outside its authority |
 | D08 | PR publication mechanism and permissions | Owner-selected dev-mode PR handoff; exact branch creation/push strategy and minimum GitHub App permissions remain to be qualified | Before enabling PR publication; no merge/bypass permission |
@@ -381,19 +381,19 @@ Maintain separate conversation and repository memory scopes with bounded context
 
 The owner selected `grasdouble/Jarvis-Test` as the only initial project target for the revised project-request MVP; `grasdouble/Jarvis` is the source repository used by contributors to develop JARVIS, not a project JARVIS will operate on. `Jarvis-Demo` is not selected. The owner reports that a local `Jarvis-Test` checkout contains only `README.md`; this has not been independently verified and does not prove GitHub/product-App access, branch protection, or qualification. The current owner clarification is recorded in [issue #1](https://github.com/grasdouble/Jarvis/issues/1#issuecomment-6254649247), superseding the earlier initial-project selection.
 
-Provider selection remains open. The earlier Copilot/ChatGPT-Codex primary-group and OpenCode Zen/Claude secondary-group preferences are not an exact provider, account, model, data-processing authorization, or fallback choice. No private project content may be sent until D02's actual route and handling are selected and qualified.
+The owner selected GitHub Copilot and OpenAI as the two permitted providers. Trusted owner configuration selects one profile; switching requires an explicit configuration change, and private content may go only to that selection. There is no primary/secondary role or automatic failover. This resolves provider choice and data-processing selection for D02; it does not qualify a live route or authorize credentials/private content before the isolated transport gates pass.
 
-The owner prioritizes consumption monitoring and has not decided whether fixed hard spending ceilings are wanted. The previously recorded EUR amounts are not current approved defaults. F09 already specifies request-level provider/model attribution, usage breakdowns, estimated/reported costs, unknown coverage, and daily/monthly summaries; D05 still needs an owner decision on any hard-stop/approval policy, applicable thresholds/currency, and plan/dev allocation. Until the applicable billable-use policy is selected and enforced, no billable request is authorized.
+Provider subscriptions and credits remain provider-managed under D05. JARVIS does not reserve/cap monetary amounts, use billing/admin credentials or APIs, or poll provider quota. Only provider usage/quota signals actually returned on ordinary runtime traffic may be recorded, with provenance, freshness and unknown states; no balance or invoice may be inferred. Detailed accounting is separately owned by #301/JV-072 and remains unimplemented.
 
 `Jarvis-Test` is the only selected initial project for MVP requests. A `plan` request still requires verified authorized project access and an approved provider/data-processing route. The repository identity is selected, but product-App access, the `dev` base branch, required CI identities, and provenance must still be verified before a development task or PR publication. The README-only report is not evidence that those gates pass. D01's controller topology is selected; implementation and qualification of the restricted controller, plus D06's effective Colima configuration/isolation verification, remain J01 gates. Unsolicited events remain excluded under D04.
 
 | Decision | Current disposition | Remaining gate |
 | --- | --- | --- |
 | D01 | Owner selected a dedicated containerized controller as the sole Engine-socket holder with a closed API in [JV-005](https://github.com/grasdouble/Jarvis/issues/5#issuecomment-6264239969) on October 19, 2026. | Implement and qualify the restricted controller at J01; the agent receives no Engine socket. This design selection alone does not qualify or activate the controller. |
-| D02 | Provider-group preferences only; exact model/account/route and data handling remain unselected. | Owner selects the actual route and terms; qualify access, confidentiality, isolated transport, and usage reporting before private content or billable calls. |
+| D02 | Owner selected GitHub Copilot and OpenAI as the two allowed configurations; trusted configuration chooses one, with explicit changes and no automatic failover. Private code may be sent only to the selected provider. | Keep dispatch disabled until the isolated egress route is implemented and pinned Colima/Lima bypass resistance is qualified; no live provider qualification is claimed. |
 | D03 | `grasdouble/Jarvis-Test` is selected as the only initial project target; the owner reports its local checkout contains only `README.md`. `grasdouble/Jarvis` is the contributor source repository, not a JARVIS-operated project. | Verify product-App project access and configuration. Verify the target base branch, required CI identities, and provenance before any `dev` task or PR publication. |
 | D04 | Start work only from authenticated owner requests; no unsolicited event intake. | Keep external event ingress disabled. |
-| D05 | Consumption monitoring is wanted; fixed hard ceilings and previous numeric values are not accepted as current policy. | Decide whether hard stops/approvals are needed, then select thresholds/currency and plan/dev allocation. No billable request until the applicable policy is accepted and enforced. |
+| D05 | Provider-managed subscriptions/credits; no JARVIS monetary reservation/ceiling, billing/admin credential/API or quota polling. Actual usage/quota signals may be recorded only when returned by normal provider/runtime traffic, with provenance and freshness. | Detailed accounting remains #301/JV-072 work; no inferred balances, invoices, or charges. |
 | D06 | Owner-selected 4-CPU/8-GiB (if available)/80-GiB VM baseline, >=40 GiB free host disk, 2-CPU/4-GiB sandbox target; contributor-selected version pins in architecture §6. | Verify actual host capacity, effective VM configuration, and isolation at J01; sandbox quotas remain a target until enforced and measured. |
 
 This is a record of current owner direction and remaining J00 gates, not runtime implementation, provider qualification, budget enforcement, or permission to dispatch product tasks. Unresolved gates disable their dependent actions.

@@ -6,6 +6,22 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 
 import * as sandboxManager from "../dist/index.js";
+const providerCapabilities = ["chat-completions", "streaming", "cancellation", "context-budget"];
+const providerCatalog = {
+  activeProfileId: "copilot",
+  profiles: {
+    copilot: { modelId: "synthetic-copilot", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: providerCapabilities },
+    openai: { modelId: "synthetic-openai", contextWindowTokens: 16384, maxOutputTokens: 2048, capabilities: providerCapabilities },
+  },
+};
+const trustedGatewayConfig = {
+  gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
+  filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
+  providerCatalog,
+  platform: "linux/arm64",
+};
+const trustedGatewayProfile = sandboxManager.parseTrustedGatewayFilterConfig(trustedGatewayConfig);
+
 
 test("exports the restricted sandbox-manager factory", () => {
   assert.equal(typeof sandboxManager.createSandboxManager, "function");
@@ -17,11 +33,7 @@ test("manager configuration factory wires a closed trusted gateway/filter profil
     engine,
     profiles: [profile],
     now: () => new Date("2026-10-19T00:00:00.000Z"),
-    gatewayFilterConfig: {
-      gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-      filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-      providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-    },
+    gatewayFilterConfig: trustedGatewayConfig,
     createCapability: () => "d".repeat(64),
   });
   await configured.create(spec, "idempotency-main-config");
@@ -38,11 +50,33 @@ test("manager configuration factory wires a closed trusted gateway/filter profil
   }), /unknown|immutable|invalid/i);
 });
 
-test("builds deterministic per-attempt filter and gateway config archives, both disabled by default", () => {
+test("trusted OpenAI selection binds its model through sandbox environment and gateway archive", async () => {
+  const engine = engineFake();
+  const openAiGatewayConfig = {
+    ...trustedGatewayConfig,
+    providerCatalog: { ...providerCatalog, activeProfileId: "openai" },
+  };
+  const configured = sandboxManager.createSandboxManagerFromConfiguration({
+    engine, profiles: [profile], now: () => new Date("2026-10-19T00:00:00.000Z"),
+    gatewayFilterConfig: openAiGatewayConfig, createCapability: () => "e".repeat(64),
+  });
+  await configured.create({ ...spec, modelProfileId: "openai" }, "idempotency-openai-config");
+  const sandbox = engine.calls.find(([kind, input]) => kind === "createContainer" && input.labels.resource_kind === "container")[1];
+  assert.equal(sandbox.environment.LLM_GATEWAY_PROFILE_ID, "openai");
+  assert.equal(sandbox.environment.LLM_GATEWAY_MODEL, "synthetic-openai");
+  const archive = engine.calls.find(([kind]) => kind === "putContainerArchive")[3];
+  const header = Buffer.from(archive.subarray(1024, 1536));
+  const size = Number.parseInt(header.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
+  const gateway = JSON.parse(Buffer.from(archive.subarray(1536, 1536 + size)).toString("utf8"));
+  assert.equal(gateway.profile.id, "openai");
+  assert.equal(gateway.profile.providerId, "openai");
+  assert.equal(gateway.profile.modelId, "synthetic-openai");
+});
+
+test("builds deterministic gateway archives and OpenCode profiles deny commands while restricting build editing", () => {
   assert.equal(typeof sandboxManager.createAttemptConfigArchive, "function");
   const capability = "a".repeat(64);
-  const archive = sandboxManager.createAttemptConfigArchive(capability);
-  assert.ok(archive instanceof Uint8Array);
+  const archive = sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile);
   const header = Buffer.from(archive.subarray(0, 512));
   assert.equal(header.toString("utf8", 0, 100).replace(/\0.*$/s, ""), "egress.json");
   const size = Number.parseInt(header.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
@@ -56,10 +90,36 @@ test("builds deterministic per-attempt filter and gateway config archives, both 
   assert.equal(gatewayHeader.toString("utf8", 0, 100).replace(/\0.*$/s, ""), "gateway.json");
   const gatewaySize = Number.parseInt(gatewayHeader.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
   assert.deepEqual(JSON.parse(Buffer.from(archive.subarray(1536, 1536 + gatewaySize)).toString()), {
-    dispatch_enabled: false, providerId: "inactive", model: "inactive",
+    dispatch_enabled: false, profile: trustedGatewayProfile.activeProfile,
     filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000000", filterPort: 8080,
   });
-  assert.deepEqual(sandboxManager.createAttemptConfigArchive(capability), archive);
+  assert.deepEqual(sandboxManager.createAttemptConfigArchive(capability, trustedGatewayProfile.activeProfile), archive);
+  const openCodeArchive = Buffer.from(sandboxManager.createOpenCodeProfileArchive(trustedGatewayProfile.activeProfile));
+  const openCodeSize = Number.parseInt(openCodeArchive.toString("ascii", 124, 136).replace(/\0.*$/s, "").trim(), 8);
+  const openCodeConfig = JSON.parse(openCodeArchive.subarray(512, 512 + openCodeSize).toString());
+  assert.equal(openCodeConfig.default_agent, "plan");
+  assert.equal(openCodeConfig.model, "jarvis-gateway/synthetic-copilot");
+  assert.deepEqual(openCodeConfig.agents.plan.permissions, [
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "read", resource: "*", effect: "allow" },
+    { action: "glob", resource: "*", effect: "allow" },
+    { action: "grep", resource: "*", effect: "allow" },
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "shell", resource: "*", effect: "deny" },
+  ]);
+  assert.deepEqual(openCodeConfig.agents.build, {
+    mode: "primary",
+    permissions: [
+      { action: "*", resource: "*", effect: "deny" },
+      { action: "read", resource: "*", effect: "allow" },
+      { action: "glob", resource: "*", effect: "allow" },
+      { action: "grep", resource: "*", effect: "allow" },
+      { action: "edit", resource: "*", effect: "allow" },
+      { action: "shell", resource: "*", effect: "deny" },
+    ],
+  });
+  assert.equal(openCodeConfig.providers["jarvis-gateway"].models["synthetic-copilot"].limit.context, 8192);
+  assert.doesNotMatch(JSON.stringify(openCodeConfig), /filterCapability/);
   const socketArchive = sandboxManager.createGatewaySocketArchive();
   const socketHeader = Buffer.from(socketArchive.subarray(0, 512));
   assert.equal(socketHeader.toString("utf8", 0, 100).replace(/\0.*$/s, ""), "jarvis/");
@@ -125,7 +185,7 @@ const spec = {
   attemptId: "attempt-456",
   snapshotId: "a".repeat(40),
   profileId: "plan-readonly-v1",
-  modelProfileId: "model-profile-v1",
+  modelProfileId: "copilot",
   deadline: "2026-10-19T00:20:00.000Z",
   leaseEpoch: 1,
 };
@@ -172,11 +232,7 @@ test("creates the per-attempt config and gateway/filter graph in fail-closed ord
   const service = manager(engine, {
     createId: () => "00000000-0000-4000-8000-000000000251",
     createCapability: () => "c".repeat(64),
-    gatewayFilter: {
-      gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-      filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-      providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-    },
+    gatewayFilter: trustedGatewayConfig,
   });
   await service.create(spec, "idempotency-gateway-graph");
   const writer = engine.calls.find(([kind, input]) => kind === "createContainer" && input?.labels?.resource_kind === "config-writer")[1];
@@ -195,6 +251,11 @@ test("creates the per-attempt config and gateway/filter graph in fail-closed ord
   assert.equal(sandbox.networkMode, "none");
   assert.equal(writer.environment, undefined);
   assert.equal(gateway.environment.LLM_GATEWAY_ATTEMPT_CAPABILITY, undefined);
+  assert.equal(sandbox.environment.LLM_GATEWAY_PROFILE_ID, "copilot");
+  assert.equal(sandbox.environment.LLM_GATEWAY_MODEL, "synthetic-copilot");
+  assert.equal(sandbox.environment.XDG_CONFIG_HOME, "/config");
+  assert.equal(sandbox.environment.LLM_GATEWAY_ATTEMPT_CAPABILITY, undefined);
+  assert.equal(sandbox.mounts.find(({ target }) => target === "/config/opencode").readOnly, true);
   assert.deepEqual(connections.map(([, , containerId]) => containerId), [
     "engine-filter", "engine-filter", "engine-gateway",
   ]);
@@ -210,11 +271,7 @@ test("rolls back setup failures and preserves uncertain config volumes until rec
   const originalArchive = engine.putContainerArchive;
   engine.putContainerArchive = async (...args) => { await originalArchive(...args); throw new Error("lost archive response"); };
   const service = manager(engine, {
-    gatewayFilter: {
-      gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-      filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-      providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-    },
+    gatewayFilter: trustedGatewayConfig,
   });
   await assert.rejects(() => service.create(spec, "idempotency-setup-failure"), /creation failed/i);
   assert.equal(engine.calls.some(([kind]) => kind === "removeNetwork"), true);
@@ -226,11 +283,7 @@ test("rolls back setup failures and preserves uncertain config volumes until rec
 
 test("recovers gateway/filter resources from labels and destroys each attempt resource idempotently", async () => {
   const engine = engineFake();
-  const gatewayFilter = {
-    gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-    filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-    providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-  };
+  const gatewayFilter = trustedGatewayConfig;
   const first = manager(engine, { gatewayFilter });
   const created = await first.create(spec, "idempotency-before-gateway-restart");
   const restarted = manager(engine, { gatewayFilter });
@@ -255,11 +308,7 @@ test("retries cleanup after a network failure without deleting config volume bef
     return removeNetwork(...args);
   };
   const service = manager(engine, {
-    gatewayFilter: {
-      gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-      filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-      providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-    },
+    gatewayFilter: trustedGatewayConfig,
   });
   const created = await service.create(spec, "idempotency-cleanup-retry");
   await assert.rejects(() => service.destroy(created.sandboxId, 1), /cleanup|failure/i);
@@ -271,11 +320,7 @@ test("retries cleanup after a network failure without deleting config volume bef
 test("refuses sidecar cleanup after ownership labels diverge and succeeds after trusted reconciliation", async () => {
   const engine = engineFake();
   const service = manager(engine, {
-    gatewayFilter: {
-      gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-      filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-      providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-    },
+    gatewayFilter: trustedGatewayConfig,
   });
   const created = await service.create(spec, "idempotency-label-mismatch");
   const inspect = engine.inspectContainer.bind(engine);
@@ -295,11 +340,7 @@ test("cancels and expires gateway/filter sidecars with the attempt while preserv
   let current = new Date("2026-10-19T00:00:00.000Z");
   const service = manager(engine, {
     now: () => current,
-    gatewayFilter: {
-      gatewayImage: `registry.example.invalid/jarvis/gateway@sha256:${"b".repeat(64)}`,
-      filterImage: `registry.example.invalid/jarvis/filter@sha256:${"c".repeat(64)}`,
-      providerId: "inactive", model: "synthetic-model", platform: "linux/arm64",
-    },
+    gatewayFilter: trustedGatewayConfig,
   });
   const created = await service.create(spec, "idempotency-gateway-expire");
   const setupCallCount = engine.calls.length;
@@ -374,12 +415,12 @@ test("routes only fixed OpenCode relay operations through the matching sandbox l
     engine.calls.push(["relayOpenCode", containerId, request]);
     return { operation: request.operation };
   };
-  const service = manager(engine);
+  const service = manager(engine, { gatewayFilter: trustedGatewayConfig });
   const created = await service.create(spec, "idempotency-relay");
 
   const requests = [
     { operation: "health" },
-    { operation: "session.create", title: "synthetic" },
+    { operation: "session.create", title: "synthetic", mode: "plan", profileId: "copilot", modelId: "synthetic-copilot" },
     { operation: "prompt", sessionID: "session_1", text: "synthetic prompt" },
     { operation: "messages", sessionID: "session_1" },
     { operation: "status", sessionID: "session_1" },
@@ -390,6 +431,9 @@ test("routes only fixed OpenCode relay operations through the matching sandbox l
   await assert.rejects(() => service.runtime(created.sandboxId, 1, "other-task", spec.attemptId, { operation: "health" }), /identity/i);
   await assert.rejects(() => service.runtime(created.sandboxId, 1, spec.taskId, spec.attemptId, { operation: "exec", command: "id" }), /operation|field/i);
   await assert.rejects(() => service.runtime(created.sandboxId, 1, spec.taskId, spec.attemptId, { operation: "health", url: "http://example.invalid" }), /field/i);
+  await assert.rejects(() => service.runtime(created.sandboxId, 1, spec.taskId, spec.attemptId, {
+    operation: "session.create", title: "override", mode: "dev", profileId: "openai", modelId: "synthetic-openai",
+  }), /trusted active configuration/i);
   assert.deepEqual(engine.calls.filter(([kind]) => kind === "relayOpenCode").map(([, , request]) => request), [
     ...requests,
   ]);

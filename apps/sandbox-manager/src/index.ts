@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolveProviderCatalog, resolveProviderSelection, type ProviderCatalog, type ProviderProfile, type TrustedProviderCatalogConfiguration } from "@jarvis/llm";
 export const serviceName = "sandbox-manager";
 
 const MANAGED_LABEL = "jarvis.managed";
@@ -55,9 +56,9 @@ export type ManagedNetworkInspection = { id: string; name: string; labels: Manag
 export type TrustedGatewayFilterProfile = {
   readonly gatewayImage: string;
   readonly filterImage: string;
-  readonly providerId: string;
-  readonly model: string;
+  readonly providerCatalog: TrustedProviderCatalogConfiguration;
   readonly platform: "linux/arm64";
+  readonly activeProfile: ProviderProfile;
 };
 
 export type ContainerRequest = {
@@ -67,7 +68,7 @@ export type ContainerRequest = {
   entrypoint: string[];
   user: "10001:10001";
   labels: ManagedLabels;
-  environment?: Readonly<Partial<Record<"LLM_GATEWAY_SOCKET" | "LLM_GATEWAY_PROVIDER_ID" | "LLM_GATEWAY_MODEL" | "LLM_GATEWAY_MAX_INPUT_BYTES" | "LLM_GATEWAY_MAX_OUTPUT_TOKENS" | "LLM_GATEWAY_MAX_REQUESTS", string>>>;
+  environment?: Readonly<Partial<Record<"LLM_GATEWAY_SOCKET" | "LLM_GATEWAY_PROVIDER_ID" | "LLM_GATEWAY_MODEL" | "LLM_GATEWAY_PROFILE_ID" | "LLM_GATEWAY_CONTEXT_WINDOW_TOKENS" | "LLM_GATEWAY_MAX_OUTPUT_TOKENS" | "LLM_GATEWAY_MAX_INPUT_BYTES" | "LLM_GATEWAY_MAX_REQUESTS" | "XDG_CONFIG_HOME", string>>>;
   networkMode: "none";
   readOnlyRootfs: true;
   privileged: false;
@@ -76,7 +77,7 @@ export type ContainerRequest = {
   memoryBytes: number;
   nanoCpus: number;
   pidsLimit: number;
-  mounts: readonly { type: "volume"; source: string; target: "/workspace" | "/state" | "/etc/jarvis" | "/run"; readOnly: boolean }[];
+  mounts: readonly { type: "volume"; source: string; target: "/workspace" | "/state" | "/etc/jarvis" | "/run" | "/config/opencode"; readOnly: boolean }[];
 };
 
 export type ContainerInspection = {
@@ -106,7 +107,7 @@ export interface SandboxEngine {
 
 export type OpenCodeRelayRequest =
   | { readonly operation: "health" }
-  | { readonly operation: "session.create"; readonly title: string }
+  | { readonly operation: "session.create"; readonly title: string; readonly mode: "plan" | "dev"; readonly profileId: string; readonly modelId: string }
   | { readonly operation: "prompt"; readonly sessionID: string; readonly text: string }
   | { readonly operation: "messages"; readonly sessionID: string }
   | { readonly operation: "status"; readonly sessionID: string }
@@ -115,20 +116,19 @@ export type OpenCodeRelayResponse = Readonly<Record<string, unknown>>;
 
 export function createAttemptConfigArchive(
   filterCapability: string,
-  providerId = "inactive",
-  model = "inactive",
+  profile: ProviderProfile,
   filterHost = "jarvis-egress-filter-00000000-0000-4000-8000-000000000000",
   filterPort = 8080,
 ): Uint8Array {
   if (typeof filterCapability !== "string" || !/^[a-f0-9]{64}$/i.test(filterCapability) ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(providerId) || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(model) ||
       !/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$/.test(filterHost) || filterPort !== 8080) {
     invalid("Attempt filter capability must be a generated 256-bit hexadecimal value.");
   }
+  const selected = resolveProviderSelection(profile);
   const encode = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
   const entries = [
     { name: "egress.json", content: encode({ providers: [], dispatch_enabled: false, filterCapability }) },
-    { name: "gateway.json", content: encode({ dispatch_enabled: false, providerId, model, filterHost, filterPort }) },
+    { name: "gateway.json", content: encode({ dispatch_enabled: false, profile: selected, filterHost, filterPort }) },
   ];
   const blocks: Uint8Array[] = [];
   for (const entry of entries) {
@@ -156,6 +156,68 @@ export function createAttemptConfigArchive(
   const archive = new Uint8Array(blocks.reduce((sum, block) => sum + block.byteLength, 1024));
   let offset = 0;
   for (const block of blocks) { archive.set(block, offset); offset += block.byteLength; }
+  return archive;
+}
+export function createOpenCodeProfileArchive(profileInput: ProviderProfile): Uint8Array {
+  const profile = resolveProviderSelection(profileInput);
+  const planPermissions = [
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "read", resource: "*", effect: "allow" },
+    { action: "glob", resource: "*", effect: "allow" },
+    { action: "grep", resource: "*", effect: "allow" },
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "shell", resource: "*", effect: "deny" },
+  ];
+  const buildPermissions = [
+    { action: "*", resource: "*", effect: "deny" },
+    { action: "read", resource: "*", effect: "allow" },
+    { action: "glob", resource: "*", effect: "allow" },
+    { action: "grep", resource: "*", effect: "allow" },
+    { action: "edit", resource: "*", effect: "allow" },
+    { action: "shell", resource: "*", effect: "deny" },
+  ];
+  const content = new TextEncoder().encode(JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    default_agent: "plan",
+    update: "disable",
+    model: `jarvis-gateway/${profile.modelId}`,
+    agents: {
+      plan: { mode: "primary", permissions: planPermissions },
+      build: { mode: "primary", permissions: buildPermissions },
+    },
+    plugin: [],
+    mcp: {},
+    providers: {
+      "jarvis-gateway": {
+        name: "JARVIS fixed gateway",
+        env: ["LLM_GATEWAY_ATTEMPT_CAPABILITY"],
+        package: "@opencode/ai/providers/openai-compatible",
+        settings: { baseURL: "http://127.0.0.1:4010/v1", encoding: "none" },
+        models: { [profile.modelId]: { name: profile.modelId, limit: { context: profile.contextWindowTokens, output: profile.maxOutputTokens } } },
+      },
+    },
+  }));
+  const header = new Uint8Array(512);
+  const write = (offset: number, length: number, value: string): void => {
+    header.set(new TextEncoder().encode(value).subarray(0, length), offset);
+  };
+  const octal = (value: number, length: number): string => value.toString(8).padStart(length - 1, "0") + "\0";
+  write(0, 100, "opencode.json");
+  write(100, 8, octal(0o444, 8));
+  write(108, 8, octal(10001, 8));
+  write(116, 8, octal(10001, 8));
+  write(124, 12, octal(content.byteLength, 12));
+  write(136, 12, octal(0, 12));
+  header.fill(0x20, 148, 156);
+  write(156, 1, "0");
+  write(257, 6, "ustar\0");
+  write(263, 2, "00");
+  write(148, 8, header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0") + "\0 ");
+  const padded = new Uint8Array(Math.ceil(content.byteLength / 512) * 512);
+  padded.set(content);
+  const archive = new Uint8Array(header.byteLength + padded.byteLength + 1024);
+  archive.set(header);
+  archive.set(padded, header.byteLength);
   return archive;
 }
 
@@ -195,7 +257,7 @@ export class SandboxManagerError extends Error {
 export type SandboxManagerOptions = {
   engine: SandboxEngine;
   profiles: readonly SandboxProfile[];
-  gatewayFilter?: TrustedGatewayFilterProfile;
+  gatewayFilter?: unknown;
   now?: () => Date;
   createId?: () => string;
   createCapability?: () => string;
@@ -312,8 +374,15 @@ function validateRelayRequest(input: unknown): OpenCodeRelayRequest {
   switch (record.operation) {
     case "health": exact("operation"); return { operation: "health" };
     case "session.create":
-      exact("operation", "title");
-      return { operation: "session.create", title: string("title", 200) };
+      exact("operation", "title", "mode", "profileId", "modelId");
+      if (record.mode !== "plan" && record.mode !== "dev") invalid("Relay mode is invalid.");
+      return {
+        operation: "session.create",
+        title: string("title", 200),
+        mode: record.mode,
+        profileId: string("profileId", 32),
+        modelId: string("modelId", 128),
+      };
     case "prompt":
       exact("operation", "sessionID", "text");
       return { operation: "prompt", sessionID: sessionId(string("sessionID", 128)), text: string("text", 64 * 1024) };
@@ -367,22 +436,21 @@ export function parseTrustedGatewayFilterConfig(input: unknown): TrustedGatewayF
   if (input === undefined) return undefined;
   if (typeof input !== "object" || input === null || Array.isArray(input)) invalid("Trusted gateway/filter configuration must be an object.");
   const value = input as Record<string, unknown>;
-  const keys = ["filterImage", "gatewayImage", "model", "platform", "providerId"].sort();
+  const keys = ["filterImage", "gatewayImage", "platform", "providerCatalog"].sort();
   if (Object.keys(value).sort().join(",") !== keys.join(",")) invalid("Trusted gateway/filter configuration contains unknown or missing fields.");
   if (typeof value.gatewayImage !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(value.gatewayImage) ||
       typeof value.filterImage !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(value.filterImage)) {
     invalid("Trusted gateway/filter images must use immutable digests.");
   }
-  if (value.platform !== "linux/arm64" || typeof value.providerId !== "string" ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value.providerId) || typeof value.model !== "string" ||
-      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value.model)) {
-    invalid("Trusted gateway/filter platform or inert provider/model identity is invalid.");
-  }
+  if (value.platform !== "linux/arm64") invalid("Trusted gateway/filter platform is invalid.");
+  let catalog: ProviderCatalog;
+  try { catalog = resolveProviderCatalog(value.providerCatalog); }
+  catch { invalid("Trusted provider catalog is invalid."); }
   return Object.freeze({
     gatewayImage: value.gatewayImage,
     filterImage: value.filterImage,
-    providerId: value.providerId,
-    model: value.model,
+    providerCatalog: value.providerCatalog as TrustedProviderCatalogConfiguration,
+    activeProfile: catalog.active,
     platform: "linux/arm64",
   });
 }
@@ -390,14 +458,13 @@ export function parseTrustedGatewayFilterConfig(input: unknown): TrustedGatewayF
 export function createSandboxManagerFromConfiguration(options: Omit<SandboxManagerOptions, "gatewayFilter"> & {
   readonly gatewayFilterConfig?: unknown;
 }): SandboxManager {
-  const gatewayFilter = parseTrustedGatewayFilterConfig(options.gatewayFilterConfig);
   return createSandboxManager({
     engine: options.engine,
     profiles: options.profiles,
     ...(options.now ? { now: options.now } : {}),
     ...(options.createId ? { createId: options.createId } : {}),
     ...(options.createCapability ? { createCapability: options.createCapability } : {}),
-    ...(gatewayFilter ? { gatewayFilter } : {}),
+    ...(options.gatewayFilterConfig === undefined ? {} : { gatewayFilter: options.gatewayFilterConfig }),
   });
 }
 
@@ -558,6 +625,9 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
     }
     const profile = profiles.get(spec.profileId);
     if (!profile) invalid("Unknown sandbox profile.");
+    if (gatewayFilter && spec.modelProfileId !== gatewayFilter.activeProfile.id) {
+      throw new SandboxManagerError("Sandbox model profile does not match trusted active configuration.", "CONFLICT");
+    }
 
     const nowMs = now().getTime();
     const deadlineMs = new Date(spec.deadline).getTime();
@@ -661,7 +731,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
           assertOwned(writer.labels, writerLabels);
           await options.engine.startContainer(writer.id);
           await options.engine.putContainerArchive(writer.id, "/etc/jarvis", createAttemptConfigArchive(
-            createCapability(), gatewayFilter.providerId, gatewayFilter.model, `jarvis-egress-filter-${sandboxId}`,
+            createCapability(), gatewayFilter.activeProfile, `jarvis-egress-filter-${sandboxId}`,
           ));
           await options.engine.stopContainer(writer.id, 5);
           await options.engine.removeContainer(writer.id, writerLabels);
@@ -677,6 +747,7 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
           assertOwned(socketWriter.labels, writerLabels);
           await options.engine.startContainer(socketWriter.id);
           await options.engine.putContainerArchive(socketWriter.id, "/etc/jarvis", createGatewaySocketArchive());
+          await options.engine.putContainerArchive(socketWriter.id, "/etc/jarvis", createOpenCodeProfileArchive(gatewayFilter.activeProfile));
           await options.engine.stopContainer(socketWriter.id, 5);
           await options.engine.removeContainer(socketWriter.id, writerLabels);
           sidecars.pop();
@@ -732,10 +803,22 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
           memoryBytes: profile.memoryBytes,
           nanoCpus: profile.nanoCpus,
           pidsLimit: profile.pidsLimit,
+          ...(gatewayFilter ? {
+            environment: {
+              LLM_GATEWAY_PROFILE_ID: gatewayFilter.activeProfile.id,
+              LLM_GATEWAY_MODEL: gatewayFilter.activeProfile.modelId,
+              LLM_GATEWAY_CONTEXT_WINDOW_TOKENS: String(gatewayFilter.activeProfile.contextWindowTokens),
+              LLM_GATEWAY_MAX_OUTPUT_TOKENS: String(gatewayFilter.activeProfile.maxOutputTokens),
+              XDG_CONFIG_HOME: "/config",
+            },
+          } : {}),
           mounts: [
             { type: "volume", source: workspaceVolume, target: WORKSPACE_TARGET, readOnly: profile.readOnlyWorkspace },
             { type: "volume", source: stateVolume, target: STATE_TARGET, readOnly: false },
-            ...(socketVolume ? [{ type: "volume" as const, source: socketVolume, target: "/run" as const, readOnly: false }] : []),
+            ...(socketVolume ? [
+              { type: "volume" as const, source: socketVolume, target: "/run" as const, readOnly: false },
+              { type: "volume" as const, source: socketVolume, target: "/config/opencode" as const, readOnly: true },
+            ] : []),
           ],
         });
         assertOwned(container.labels, labels);
@@ -886,6 +969,10 @@ export function createSandboxManager(options: SandboxManagerOptions): SandboxMan
       throw new SandboxManagerError("Managed sandbox deadline has expired.", "NOT_FOUND");
     }
     const request = validateRelayRequest(requestInput);
+    if (request.operation === "session.create" &&
+        (request.profileId !== gatewayFilter?.activeProfile.id || request.modelId !== gatewayFilter?.activeProfile.modelId)) {
+      throw new SandboxManagerError("Session selected profile does not match trusted active configuration.", "CONFLICT");
+    }
     const inspection = await options.engine.inspectContainer(record.engineId);
     assertOwned(inspection.labels, record.labels);
     if (inspection.state !== "running") throw new SandboxManagerError("Managed sandbox is not running.", "CONFLICT");

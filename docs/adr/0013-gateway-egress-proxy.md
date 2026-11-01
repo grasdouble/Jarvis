@@ -4,13 +4,13 @@
 - Created: October 26, 2026
 - Decision owner: Repository owner
 - Requirements and scope: PRD F08/N05/N09/N12/N14 and relevant POL; per-attempt LLM gateway egress only
-- Related Dxx / legacy ADR / issue / PR: D02, D05, ADR 05 and ADR 10; #253, #254; owner direction recorded in #253 and the active delivery session
+- Related Dxx / legacy ADR / issue / PR: D02, D05, ADR 05 and ADR 10; #253, #254, #300; proxy direction in #253 and current provider/consumption decisions in the #300 delivery conversation
 
 ## Context and decision needed
 
 The existing design uses an OpenCode sandbox with `network_mode: none` and a per-attempt gateway reached over a Unix socket. The technical architecture also described a networked gateway/proxy variant but deferred it because application proxy settings do not force traffic through the proxy, and the actual Colima/Lima guest network path had not been shown to prevent bypass.
 
-The owner selected the proxy direction for a proposal: a trusted egress proxy/filter per attempt, explicit authorized-provider allowlist, deny by default, and network topology that prevents gateway bypass. OpenCode remains `network_mode: none`. This ADR records that owner-selected design direction; it does not accept the ADR, resolve D02/D05, authorize a provider, or establish implementation or qualification. D02 (provider and data-processing selection) and D05 (hard spending ceiling) remain open and continue to gate provider dispatch.
+The owner selected the proxy direction for a proposal: a trusted egress proxy/filter per attempt, explicit authorized-provider allowlist, deny by default, and network topology that prevents gateway bypass. OpenCode remains `network_mode: none`. This ADR records that owner-selected design direction; it does not accept the ADR or establish implementation or qualification. The owner has since selected GitHub Copilot and OpenAI as the two permitted provider choices, with trusted configuration selecting exactly one; private code may go only to that selected provider, and there is no automatic failover. Under the owner's D05 decision, provider subscriptions/credits remain provider-managed: no JARVIS monetary reservation/ceiling, billing/admin credential, billing API, or quota polling is authorized. Dispatch remains inactive until the required egress implementation and pinned Colima/Lima network-path qualification pass.
 
 ## Options and trade-offs
 
@@ -34,12 +34,12 @@ Before enabling provider dispatch, qualify the pinned Colima/Lima and Docker Eng
 
 The prior JV-006 synthetic gateway prototype remains historical evidence only: it exercised a synthetic provider through Unix-socket/loopback transport, was not wired to Compose or the sandbox-manager lifecycle, and did not pin DNS against rebinding or qualify this networked egress path. It is not evidence for the selected proxy design. Existing JV-007 synthetic sandbox qualification likewise does not qualify gateway egress or product readiness. No live provider or GitHub operation, Docker/Colima qualification, or service start was performed for this proposal.
 
-The technical architecture's §5.3 deferred-variant rationale is retained as historical context, narrowed to explain the earlier deferral; this proposal supersedes that deferral only if accepted, and does not change the PRD or existing acceptance criteria. D02 and D05 remain unresolved. Provider dispatch remains gated until their applicable owner decisions and enforcement/qualification gates are satisfied. Qualification alone does not authorize provider use.
+The technical architecture's §5.3 deferred-variant rationale is retained as historical context, narrowed to explain the earlier deferral; this proposal supersedes that deferral only if accepted. The owner's current #300 decision resolves provider choice and data-processing authorization (D02) to exactly one trusted-selected profile, GitHub Copilot or OpenAI, with no automatic failover and private code limited to the selected provider. It resolves D05 to provider-managed subscriptions/credits with no JARVIS monetary reservation/ceiling, billing/admin API access or quota polling; only actually returned normal-traffic usage/quota signals may be recorded. This ADR remains Proposed. Implementation of the egress path and pinned Colima/Lima qualification remain mandatory and independent; dispatch remains disabled until those gates pass. Qualification alone does not authorize provider use.
 
 ## Acceptance and history
 
-The owner-selected direction is evidenced by the active owner decision recorded in issue #253 and the delivery session on October 26, 2026. This is not acceptance of this ADR. Required: human review and owner acceptance of the exact reviewed ADR revision under current repository gates. Until then, status remains Proposed; no runtime authority follows from this candidate record.
+The proxy direction is evidenced by the owner decision recorded in issue #253 and the delivery session on October 26, 2026. The provider and D05 decisions are evidenced by the owner decision in the current #300 delivery conversation. This is not acceptance of this ADR. Required: human review and owner acceptance of the exact reviewed ADR revision under current repository gates. Until then, status remains Proposed; no runtime authority follows from this candidate record.
 
 ## Follow-up
 
-Update the architecture proposal and retain the applicable open D02/D05 decisions. Any implementation, pinned-platform qualification, provider authorization, or dispatch activation requires its own authorized work and existing review/acceptance gates. Stop if the required topology cannot demonstrate prevention of gateway bypass.
+Implement the accepted provider profile choices only behind the existing disabled dispatch gate. Pinned-platform qualification and any dispatch activation require their own authorized work and current review/acceptance gates. Stop if the required topology cannot demonstrate prevention of gateway bypass.
