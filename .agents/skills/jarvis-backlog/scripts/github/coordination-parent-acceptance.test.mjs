@@ -159,6 +159,19 @@ test('parses exact criterion text and positions without counting fenced examples
   ]);
 });
 
+test('accepts only a standalone token-accounting anchor outside acceptance criteria', () => {
+  const anchor = '<!-- jarvis:token-accounting:JV-306 -->';
+  assert.deepEqual(parseAcceptanceCriteria(`${anchor}\n${body}`), { valid: true, total: 3, unchecked: 3 });
+  assert.deepEqual(parseAcceptanceCriteria(`${body}\n\n${anchor}`), { valid: true, total: 3, unchecked: 3 });
+  for (const value of [
+    `<!-- hidden -->\n${body}`,
+    `${body.replace('## Acceptance criteria', '## Acceptance criteria\n<!-- jarvis:token-accounting:JV-306 -->')}`,
+    `<!-- jarvis:token-accounting:JV-30 -->\n${body}`,
+    `<!-- jarvis:token-accounting:JV-306--> \n${body}`,
+    `<!-- jarvis:token-accounting:JV-306 --> extra\n${body}`,
+  ]) assert.equal(parseAcceptanceCriteria(value).reason, 'criteria_malformed');
+});
+
 test('acceptance assessment preserves parent body bytes and ignores unchecked markers', () => {
   assert.equal(parseAcceptanceCriteria(`<!-- hidden -->\n${body}`).reason, 'criteria_malformed');
   const unmanaged = assessParentAcceptance({

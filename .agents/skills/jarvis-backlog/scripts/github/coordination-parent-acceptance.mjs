@@ -162,7 +162,22 @@ export function parseAcceptanceCriteria(body) {
     return { valid: false, total: parsed.total, unchecked: parsed.unchecked, reason: 'criteria_malformed' };
   }
 
-  const bodyComment = lines.some(line => line !== null && (line.includes('<!--') || line.includes('-->')));
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  if (parsed.valid) {
+    sectionStart = lines.findIndex(line => heading(line)?.title.toLowerCase() === 'acceptance criteria');
+    for (let index = sectionStart + 1; index < lines.length; index += 1) {
+      const item = heading(lines[index]);
+      if (item && item.level <= parsed.sectionLevel) {
+        sectionEnd = index;
+        break;
+      }
+    }
+  }
+  const bodyComment = lines.some((line, index) => line !== null
+    && (line.includes('<!--') || line.includes('-->'))
+    && !(sectionStart >= 0 && (index < sectionStart || index >= sectionEnd)
+      && /^<!-- jarvis:token-accounting:JV-\d{3,} -->$/.test(line)));
   if (bodyComment) {
     return { valid: false, total: parsed.total, unchecked: parsed.unchecked, reason: 'criteria_malformed' };
   }

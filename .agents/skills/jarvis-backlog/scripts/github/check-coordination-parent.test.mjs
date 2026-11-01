@@ -169,6 +169,12 @@ test('parses one non-empty acceptance task list independent of checkbox state', 
 - [ ] unrelated`;
   assert.deepEqual(parseAcceptanceCriteria(body), { valid: true, total: 1, unchecked: 0 });
 });
+test('acceptance parser allows the known standalone accounting anchor only outside checklist', () => {
+  const anchor = '<!-- jarvis:token-accounting:JV-306 -->';
+  assert.deepEqual(parseAcceptanceCriteria(`${anchor}\n${acceptedBody}`), { valid: true, total: 2, unchecked: 0 });
+  assert.equal(parseAcceptanceCriteria(`<!-- other -->\n${acceptedBody}`).reason, 'criteria_malformed');
+  assert.equal(parseAcceptanceCriteria(`## Acceptance criteria\n${anchor}\n- [x] required`).reason, 'criteria_malformed');
+});
 
 test('fails closed for absent, duplicated, empty, and malformed criteria but permits unchecked items', () => {
   assert.equal(parseAcceptanceCriteria('## Notes\n- [x] unrelated').reason, 'criteria_missing');
