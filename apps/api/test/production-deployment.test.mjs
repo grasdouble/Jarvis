@@ -136,7 +136,11 @@ test("Compose manifests keep the ARM64 API on the internal network without host 
   assert.equal(app.services.api.platform, "linux/arm64");
   assert.equal(app.services.api.environment.PUBLIC_ORIGIN, "http://127.0.0.1:3000");
   assert.equal(app.services.api.environment.LISTEN_HOST, "0.0.0.0");
-  assert.equal(app.services.api.volumes, undefined);
+  assert.equal(app.services.api.user, "0:10001");
+  assert.deepEqual(app.services.api.cap_drop, ["ALL"]);
+  assert.deepEqual(app.services.api.volumes, [{ type: "volume", source: "accounting_socket", target: "/run/jarvis-accounting" }]);
+  assert.equal(app.services.api.environment.USAGE_ACCOUNTING_SOCKET, "/run/jarvis-accounting/accounting.sock");
+  assert.deepEqual(app.volumes.accounting_socket, { name: "jarvis-accounting-socket" });
   assert.deepEqual(app.services.api.secrets, ["jarvis_runtime_password", "owner_onboarding_secret"]);
   assert.deepEqual(app.services["db-bootstrap"].secrets, ["postgres_password", "jarvis_migrator_password", "jarvis_runtime_password"]);
   assert.equal(app.services["db-bootstrap"].command[0], "bootstrap");

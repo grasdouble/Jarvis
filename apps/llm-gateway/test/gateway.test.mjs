@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { createServer } from "node:http";
 
 import { resolveProviderCatalog } from "@jarvis/llm";
-import { createBoundedGateway, createConfiguredGateway, createUnixSocketFetch } from "../dist/gateway.js";
+import { createBoundedGateway, createConfiguredGateway, createUnixSocketFetch, listenGatewaySocket } from "../dist/gateway.js";
 
 const profile = resolveProviderCatalog({
   activeProfileId: "copilot",
@@ -43,7 +43,7 @@ before(async () => {
       }), { status: 200, headers: { "content-type": "text/event-stream" } });
     } },
   });
-  await new Promise((resolve) => gateway.listen(socketPath, resolve));
+  await new Promise((resolve) => listenGatewaySocket(gateway, socketPath).once("listening", resolve));
 });
 
 after(async () => {
@@ -51,6 +51,9 @@ after(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
+test("gateway UDS is group-writable for the trusted broker without world permissions", async () => {
+  assert.equal((await stat(socketPath)).mode & 0o777, 0o660);
+});
 test("gateway exports a Unix-socket fetch transport for loopback HTTP bridge tests", async () => {
   const { createUnixSocketFetch } = await import("../dist/gateway.js");
   const fetchOverSocket = createUnixSocketFetch(socketPath);
@@ -99,18 +102,26 @@ test("gateway dispatch is inactive without an explicitly wired trusted filter", 
 test("configured gateway reaches the fixed internal filter port and forwards its disabled 503", async () => {
   const configuredSocket = join(directory, "configured-filter.sock");
   const calls = [];
+  const accountingEvents = [];
   const configured = createConfiguredGateway({
     socketPath: configuredSocket,
     egressConfig: { providers: [], dispatch_enabled: false, filterCapability: "e".repeat(64) },
     gatewayConfig: {
+      accounting: { taskId: "00000000-0000-4000-8000-000000000001", attemptId: "00000000-0000-4000-8000-000000000002", leaseEpoch: 1 },
       dispatch_enabled: true, profile,
       filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000251", filterPort: 8080,
+    },
+    accounting: {
+      recordIntent: async () => accountingEvents.push("intent"),
+      markDispatched: async () => accountingEvents.push("dispatched"),
+      recordOutcome: async () => accountingEvents.push("outcome"),
     },
     maxInputBytes: 2048,
     maxOutputTokens: 64,
     maxRequests: 2,
     fetcher: async (url, init) => {
       calls.push({ url, init });
+      accountingEvents.push("filter");
       return new globalThis.Response("{\"error\":\"provider_dispatch_inactive\"}", {
         status: 503, headers: { "content-type": "application/json" },
       });
@@ -128,6 +139,7 @@ test("configured gateway reaches the fixed internal filter port and forwards its
     assert.equal(calls[0].url, "http://jarvis-egress-filter-00000000-0000-4000-8000-000000000251:8080/v1/dispatch");
     assert.equal(calls[0].init.redirect, "manual");
     assert.equal(calls[0].init.headers.authorization, `Bearer ${"e".repeat(64)}`);
+    assert.deepEqual(accountingEvents, ["intent", "dispatched", "filter", "outcome"]);
   } finally {
     await new Promise((resolve, reject) => configured.close((error) => error ? reject(error) : resolve()));
   }
@@ -140,6 +152,7 @@ test("production-style disabled gateway configuration returns 503 without invoki
     socketPath: disabledSocket,
     egressConfig: { providers: [], dispatch_enabled: false, filterCapability: "f".repeat(64) },
     gatewayConfig: {
+      accounting: { taskId: "00000000-0000-4000-8000-000000000001", attemptId: "00000000-0000-4000-8000-000000000002", leaseEpoch: 1 },
       dispatch_enabled: false, profile,
       filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000251", filterPort: 8080,
     },
@@ -165,6 +178,7 @@ test("production gateway composition rejects enabled dispatch before creating a 
     socketPath: join(directory, "must-not-start.sock"),
     egressConfig: { providers: [], dispatch_enabled: false, filterCapability: "a".repeat(64) },
     gatewayConfig: {
+      accounting: { taskId: "00000000-0000-4000-8000-000000000001", attemptId: "00000000-0000-4000-8000-000000000002", leaseEpoch: 1 },
       dispatch_enabled: true, profile,
       filterHost: "jarvis-egress-filter-00000000-0000-4000-8000-000000000251", filterPort: 8080,
     },
@@ -212,7 +226,7 @@ test("gateway refuses missing attempt capability, unknown routes and model or ou
     }),
   });
   assert.equal((await send({ model: "test-model", max_tokens: 1 }, "wrong")).status, 403);
-  await assert.rejects(() => fetchOverSocket("http://127.0.0.1/v1/models", { method: "POST" }), /fixed chat-completion route/);
+  await assert.rejects(() => fetchOverSocket("http://127.0.0.1/v1/models", { method: "POST" }), /fixed provider and runtime-accounting routes/);
   assert.equal((await send({ model: "attacker-model", max_tokens: 1 })).status, 400);
   assert.equal((await send({ model: "test-model", max_tokens: 65 })).status, 400);
   assert.equal((await send({ model: "test-model", max_completion_tokens: 64 })).status, 200);
@@ -220,6 +234,172 @@ test("gateway refuses missing attempt capability, unknown routes and model or ou
   assert.equal((await send({ model: "test-model", max_tokens: 1, max_completion_tokens: 65 })).status, 400);
   assert.equal(upstreamCalls.length, 2);
 });
+test("OpenAI streaming usage is incrementally extracted while response bytes are forwarded transparently", async () => {
+  const catalog = resolveProviderCatalog({
+    activeProfileId: "openai",
+    profiles: {
+      copilot: { modelId: "test-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+      openai: { modelId: "other-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+    },
+  });
+  const streamSocket = join(directory, "openai-stream.sock");
+  const outcomes = [];
+  const events = [];
+  const server = createBoundedGateway({
+    socketPath: streamSocket, capability: "openai-stream-capability", profile: catalog.profiles.openai,
+    maxInputBytes: 2048, maxOutputTokens: 64, maxRequests: 1,
+    accounting: {
+      async recordIntent() { events.push("intent"); },
+      async markDispatched() { events.push("dispatched"); },
+      async recordOutcome(_identity, usage, lifecycle, quota) { events.push("observation"); outcomes.push({ usage, lifecycle, quota }); },
+    },
+    dispatchToFilter: { dispatch: async () => {
+      const body = 'data: {"choices":[{"delta":{"content":"ok"}}],"usage":null}\n\n' +
+        "data: {malformed}\n\n" +
+        'data: {"choices":[{"delta":{"content":"private response text"}}],"usage":{"prompt_tokens":12,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":1}},"provider_extra":"not retained"}\n\n' +
+        "data: [DONE]\n\n";
+      const split = [body.slice(0, 8), body.slice(8, 51), body.slice(51, 106), body.slice(106)];
+      return new globalThis.Response(new ReadableStream({
+        start(controller) { for (const chunk of split) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); },
+      }), { headers: {
+
+        "content-type": "text/event-stream",
+        "x-ratelimit-limit-requests": "100",
+        "x-ratelimit-remaining-requests": "93",
+        "x-ratelimit-limit-tokens": "5000",
+        "x-ratelimit-remaining-tokens": "4200",
+      } });
+    } },
+  });
+  await new Promise((resolve) => server.listen(streamSocket, resolve));
+  try {
+    const response = await createUnixSocketFetch(streamSocket)("http://127.0.0.1/v1/chat/completions", {
+      method: "POST", headers: { authorization: "Bearer openai-stream-capability", "content-type": "application/json" },
+      body: JSON.stringify({ model: "other-model", max_tokens: 8, stream: true, messages: [{ role: "user", content: "fixture" }] }),
+    });
+    assert.equal(await response.text(), 'data: {"choices":[{"delta":{"content":"ok"}}],"usage":null}\n\n' +
+      "data: {malformed}\n\n" +
+      'data: {"choices":[{"delta":{"content":"private response text"}}],"usage":{"prompt_tokens":12,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":1}},"provider_extra":"not retained"}\n\n' +
+      "data: [DONE]\n\n");
+    assert.deepEqual(events, ["intent", "dispatched", "observation"]);
+    assert.equal(outcomes[0].lifecycle, "succeeded");
+    assert.deepEqual(outcomes[0].usage.counters, { inputTotal: 12, outputTotal: 7, cacheReadInput: 2, cacheWriteInput: null, reasoningOutput: 1 });
+    assert.doesNotMatch(JSON.stringify(outcomes[0].usage), /private response text|provider_extra|choices/);
+    assert.deepEqual(outcomes[0].quota.counters, { requestLimit: 100, requestRemaining: 93, tokenLimit: 5000, tokenRemaining: 4200 });
+    assert.equal(outcomes[0].quota.source, "provider-response-header");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("Copilot responses retain unknown usage and quota coverage when OpenAI-shaped fields appear", async () => {
+  const copilotSocket = join(directory, "copilot-unknown.sock");
+  const outcomes = [];
+  const server = createBoundedGateway({
+    socketPath: copilotSocket, capability: "copilot-unknown-capability", profile,
+    maxInputBytes: 2048, maxOutputTokens: 64, maxRequests: 1,
+    accounting: {
+      async recordIntent() {}, async markDispatched() {},
+      async recordOutcome(_identity, usage, _lifecycle, quota) { outcomes.push({ usage, quota }); },
+    },
+    dispatchToFilter: { dispatch: async () => globalThis.Response.json({
+      usage: { prompt_tokens: 9, completion_tokens: 4 },
+    }, { headers: { "x-ratelimit-limit-requests": "12" } }) },
+  });
+  await new Promise((resolve) => server.listen(copilotSocket, resolve));
+  try {
+    const response = await createUnixSocketFetch(copilotSocket)("http://127.0.0.1/v1/chat/completions", {
+      method: "POST", headers: { authorization: "Bearer copilot-unknown-capability", "content-type": "application/json" },
+      body: JSON.stringify({ model: "test-model", max_tokens: 8, messages: [{ role: "user", content: "fixture" }] }),
+    });
+    assert.equal(response.status, 200);
+    await response.text();
+    assert.deepEqual(outcomes[0].usage.counters, { inputTotal: null, outputTotal: null, cacheReadInput: null, cacheWriteInput: null, reasoningOutput: null });
+    assert.deepEqual(outcomes[0].quota.coverage, { requestLimit: "unknown", requestRemaining: "unknown", tokenLimit: "unknown", tokenRemaining: "unknown" });
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+test("oversized provider responses retain reported quota while token usage remains unknown", async () => {
+  const catalog = resolveProviderCatalog({
+    activeProfileId: "openai",
+    profiles: {
+      copilot: { modelId: "copilot-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+      openai: { modelId: "oversized-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+    },
+  });
+  const quotaProfile = catalog.profiles.openai;
+  const oversizedSocket = join(directory, "oversized-response.sock");
+  let resolveOutcome;
+  const recorded = new Promise((resolve) => { resolveOutcome = resolve; });
+  let outcome;
+  const server = createBoundedGateway({
+    socketPath: oversizedSocket, capability: "oversized-response-capability", profile: quotaProfile,
+    maxInputBytes: 2048, maxResponseBytes: 1, maxOutputTokens: 64, maxRequests: 1,
+    accounting: {
+      async recordIntent() {}, async markDispatched() {},
+      async recordOutcome(_identity, usage, lifecycle, quota) { outcome = { usage, lifecycle, quota }; resolveOutcome(); },
+    },
+    dispatchToFilter: { dispatch: async () => new globalThis.Response("oversized synthetic response", {
+      headers: {
+        "content-type": "text/plain",
+        "x-ratelimit-limit-requests": "100",
+        "x-ratelimit-remaining-requests": "91",
+      },
+    }) },
+  });
+  await new Promise((resolve) => server.listen(oversizedSocket, resolve));
+  try {
+    await assert.rejects(createUnixSocketFetch(oversizedSocket)("http://127.0.0.1/v1/chat/completions", {
+      method: "POST", headers: { authorization: "Bearer oversized-response-capability", "content-type": "application/json" },
+      body: JSON.stringify({ model: "oversized-model", max_tokens: 8, messages: [{ role: "user", content: "fixture" }] }),
+    }), { code: "ECONNRESET" });
+    await recorded;
+    assert.equal(outcome.lifecycle, "unknown");
+    assert.equal(outcome.usage.counters.inputTotal, null);
+    assert.equal(outcome.usage.coverage.inputTotal, "unknown");
+    assert.equal(outcome.quota.counters.requestLimit, 100);
+    assert.equal(outcome.quota.counters.requestRemaining, 91);
+    assert.equal(outcome.quota.coverage.requestRemaining, "reported");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+test("oversized SSE line disables extraction while preserving transparent response bytes", async () => {
+  const catalog = resolveProviderCatalog({
+    activeProfileId: "openai",
+    profiles: {
+      copilot: { modelId: "test-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+      openai: { modelId: "oversized-model", contextWindowTokens: 8192, maxOutputTokens: 1024, capabilities: ["chat-completions", "streaming", "cancellation", "context-budget"] },
+    },
+  });
+  const socket = join(directory, "oversized-sse.sock");
+  const outcomes = [];
+  const oversized = `data: ${"x".repeat(17 * 1024)}\n\n`;
+  const body = oversized + 'data: {"usage":{"prompt_tokens":8,"completion_tokens":3}}\n\n';
+  const server = createBoundedGateway({
+    socketPath: socket, capability: "oversized-capability", profile: catalog.profiles.openai,
+    maxInputBytes: 2048, maxOutputTokens: 64, maxRequests: 1,
+    accounting: {
+      async recordIntent() {}, async markDispatched() {},
+      async recordOutcome(_identity, usage) { outcomes.push(usage); },
+    },
+    dispatchToFilter: { dispatch: async () => new globalThis.Response(body, { headers: { "content-type": "text/event-stream" } }) },
+  });
+  await new Promise((resolve) => server.listen(socket, resolve));
+  try {
+    const response = await createUnixSocketFetch(socket)("http://127.0.0.1/v1/chat/completions", {
+      method: "POST", headers: { authorization: "Bearer oversized-capability", "content-type": "application/json" },
+      body: JSON.stringify({ model: "oversized-model", max_tokens: 8, stream: true, messages: [{ role: "user", content: "fixture" }] }),
+    });
+    assert.equal(await response.text(), body);
+    assert.equal(outcomes[0].coverage.inputTotal, "unknown");
+    assert.equal(outcomes[0].counters.inputTotal, null);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 
 test("gateway rejects redirects and enforces the per-attempt request count", async () => {
   const { createBoundedGateway } = await import("../dist/gateway.js");
@@ -297,6 +477,9 @@ test("loopback cancellation aborts the in-flight provider request", async () => 
   let providerAborted = false;
   let announceAborted;
   const aborted = new Promise((resolve) => { announceAborted = resolve; });
+  let capturedOutcome;
+  let resolveOutcome;
+  const outcomeRecorded = new Promise((resolve) => { resolveOutcome = resolve; });
   const provider = createBoundedGateway({
     socketPath: cancelSocket,
     capability: "cancel-attempt-capability",
@@ -304,6 +487,10 @@ test("loopback cancellation aborts the in-flight provider request", async () => 
     maxInputBytes: 1024,
     maxOutputTokens: 16,
     maxRequests: 1,
+    accounting: {
+      async recordIntent() {}, async markDispatched() {},
+      async recordOutcome(_identity, usage, lifecycle) { capturedOutcome = { usage, lifecycle }; resolveOutcome(); },
+    },
     dispatchToFilter: { dispatch: async ({ signal }) => {
       announceStarted();
       await new Promise((resolve, reject) => {
@@ -340,6 +527,9 @@ test("loopback cancellation aborts the in-flight provider request", async () => 
     await assert.rejects(request, { name: "AbortError" });
     await aborted;
     assert.equal(providerAborted, true);
+    await outcomeRecorded;
+    assert.equal(capturedOutcome.lifecycle, "cancelled");
+    assert.deepEqual(capturedOutcome.usage.counters, { inputTotal: null, outputTotal: null, cacheReadInput: null, cacheWriteInput: null, reasoningOutput: null });
   } finally {
     await new Promise((resolve, reject) => bridge.close((error) => error ? reject(error) : resolve()));
     await new Promise((resolve, reject) => provider.close((error) => error ? reject(error) : resolve()));

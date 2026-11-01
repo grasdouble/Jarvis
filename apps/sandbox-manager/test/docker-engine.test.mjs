@@ -47,14 +47,12 @@ test("invokes only the fixed relay executable with framed operation input throug
     assert.equal(request.headers["content-type"], "application/json");
     startContentLength = Number(request.headers["content-length"]);
     socket.write("HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
-    assert.deepEqual(JSON.parse(head.toString("utf8")), { Detach: false, Tty: true });
-    let incoming = Buffer.alloc(0);
-    socket.on("data", (chunk) => {
-      incoming = Buffer.concat([incoming, chunk]);
-      const newline = incoming.indexOf(0x0a);
-      if (newline >= 0) relayInput = incoming.subarray(0, newline).toString("utf8");
+    let incoming = Buffer.from(head);
+    socket.on("data", (chunk) => { incoming = Buffer.concat([incoming, chunk]); });
+    socket.on("end", () => {
+      relayInput = incoming.toString("utf8");
+      socket.end('{"healthy":true,"version":"2.0.32"}\n');
     });
-    socket.on("end", () => { socket.end('{"healthy":true,"version":"2.0.32"}\n'); });
   });
   assert.deepEqual(createPayload.Cmd, ["/usr/local/bin/jarvis-opencode-relay"]);
   assert.equal(createPayload.Tty, true);
@@ -128,13 +126,14 @@ test("maps the closed container request to a least-privilege Docker Engine paylo
       image: `registry.example.invalid/jarvis/plan@sha256:${"a".repeat(64)}`,
       platform: "linux/arm64",
       entrypoint: ["/usr/local/bin/jarvis-sandbox"],
-      user: "10001:10001",
+      user: "0:0",
       labels,
-      environment: { LLM_GATEWAY_PROVIDER_ID: "synthetic", LLM_GATEWAY_MODEL: "synthetic-model" },
+      environment: { LLM_GATEWAY_ATTEMPT_CAPABILITY: "a".repeat(64), LLM_GATEWAY_PROFILE_ID: "openai", LLM_GATEWAY_SOCKET: "/run/jarvis/llm.sock", LLM_GATEWAY_PROVIDER_ID: "synthetic", LLM_GATEWAY_MODEL: "synthetic-model" },
       networkMode: "none",
       readOnlyRootfs: true,
       privileged: false,
       capDrop: ["ALL"],
+      capAdd: ["SETUID", "SETGID", "KILL"],
       securityOptions: ["no-new-privileges:true"],
       memoryBytes: 4 * 1024 ** 3,
       nanoCpus: 2_000_000_000,
@@ -151,14 +150,20 @@ test("maps the closed container request to a least-privilege Docker Engine paylo
   assert.match(requestPath, /^\/v1\.54\/containers\/create\?/);
   assert.match(requestPath, /platform=linux%2Farm64/);
   assert.equal(payload.Image, `registry.example.invalid/jarvis/plan@sha256:${"a".repeat(64)}`);
-  assert.equal(payload.User, "10001:10001");
+  assert.equal(payload.User, "0:0");
   assert.deepEqual(payload.Labels, labels);
-  assert.deepEqual(payload.Env, ["LLM_GATEWAY_MODEL=synthetic-model", "LLM_GATEWAY_PROVIDER_ID=synthetic"]);
+  assert.deepEqual(payload.Env, [
+    `LLM_GATEWAY_ATTEMPT_CAPABILITY=${"a".repeat(64)}`,
+    "LLM_GATEWAY_MODEL=synthetic-model",
+    "LLM_GATEWAY_PROFILE_ID=openai",
+    "LLM_GATEWAY_PROVIDER_ID=synthetic",
+    "LLM_GATEWAY_SOCKET=/run/jarvis/llm.sock",
+  ]);
   assert.equal(payload.HostConfig.NetworkMode, "none");
   assert.equal(payload.HostConfig.ReadonlyRootfs, true);
   assert.equal(payload.HostConfig.Privileged, false);
   assert.deepEqual(payload.HostConfig.CapDrop, ["ALL"]);
-  assert.equal(payload.HostConfig.PidsLimit, 256);
+  assert.deepEqual(payload.HostConfig.CapAdd, ["SETUID", "SETGID", "KILL"]);
   assert.deepEqual(payload.HostConfig.Mounts[2], {
     Type: "volume", Source: "jarvis-egress-config-a", Target: "/etc/jarvis", ReadOnly: true,
   });

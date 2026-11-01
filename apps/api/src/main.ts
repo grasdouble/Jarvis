@@ -1,3 +1,4 @@
+import type { Server } from "node:http";
 import { databaseReadiness } from "./database-readiness.js";
 import { readFile } from "node:fs/promises";
 import { Pool, type PoolConfig } from "pg";
@@ -7,6 +8,7 @@ import {
   PostgresPersistence,
   PostgresStopControlStore,
   PostgresTaskResultReadModel,
+  PostgresUsageAccountingStore,
 } from "@jarvis/persistence";
 import { createOwnerAuthBoundary, createOwnerAuthService } from "./auth.js";
 import { createOperationalDashboardBoundary, createOperationalDashboardHttpHandler } from "./dashboard.js";
@@ -14,6 +16,7 @@ import { createTaskResultReadBoundary } from "./task-results.js";
 import { createOperationalDashboardServer } from "./http-server.js";
 import { createStaticAssetHandler } from "./static-assets.js";
 import { createStopControlHttpHandler } from "./stop-controls.js";
+import { listenUsageAccounting } from "./usage-accounting.js";
 
 const DATABASE_HOST = process.env.DATABASE_HOST ?? "postgres";
 const DATABASE_PORT = Number(process.env.DATABASE_PORT ?? "5432");
@@ -76,7 +79,6 @@ async function migrate(): Promise<void> {
     await pool.end();
   }
 }
-
 async function serve(): Promise<void> {
   if (!Number.isSafeInteger(LISTEN_PORT) || LISTEN_PORT < 1 || LISTEN_PORT > 65_535) throw new Error("LISTEN_PORT is invalid.");
   const onboardingSecret = await secret(process.env.ONBOARDING_SECRET_FILE, "ONBOARDING_SECRET_FILE");
@@ -92,18 +94,30 @@ async function serve(): Promise<void> {
     if (request.url.split("?", 1)[0]?.startsWith("/api/")) return dashboard(request);
     return assets(request);
   }, stopControls, taskResults: (request, taskId) => taskResults.get(request, taskId) });
+  let accounting: Server | undefined;
   try {
-    await pool.query("SELECT 1");
+    const accountingStore = new PostgresUsageAccountingStore(pool);
+    await accountingStore.reconcileInterrupted();
+    accounting = await listenUsageAccounting({
+      path: process.env.USAGE_ACCOUNTING_SOCKET ?? "/run/jarvis-accounting/accounting.sock",
+      store: accountingStore,
+    });
     server.listen(LISTEN_PORT, LISTEN_HOST);
   } catch {
+    accounting?.close();
     await pool.end();
-    throw new Error("API database startup check failed.");
+    throw new Error("API database or usage accounting socket startup failed.");
   }
   server.on("error", () => {
     process.stderr.write("API server failed to bind.\n");
-    void pool.end().finally(() => { process.exitCode = 1; });
+    const finishStartupFailure = (): void => {
+      void pool.end().finally(() => { process.exitCode = 1; });
+    };
+    if (accounting) accounting.close(finishStartupFailure);
+    else finishStartupFailure();
   });
   const shutdown = (): void => {
+    accounting?.close();
     server.close((): void => { void pool.end(); });
   };
   process.once("SIGTERM", shutdown);

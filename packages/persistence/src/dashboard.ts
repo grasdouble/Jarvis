@@ -88,6 +88,7 @@ export class PostgresOperationalDashboardReadModel {
                 'purpose', mr.purpose,
                 'state', mr.state,
                 'dispatchedAt', mr.dispatched_at,
+                'runtimeCoverage', mr.runtime_coverage,
                 'observationsCount', (SELECT count(*)::integer FROM jarvis.usage_observations count_uo WHERE count_uo.model_request_id=mr.id),
                 'ledger', CASE WHEN ul.model_request_id IS NULL THEN NULL ELSE jsonb_build_object(
                   'reserved', ul.reserved::text,
@@ -102,7 +103,8 @@ export class PostgresOperationalDashboardReadModel {
                 'observations', COALESCE((
                   SELECT jsonb_agg(jsonb_build_object(
                     'source', uo.source, 'revision', uo.revision, 'numericUsage', uo.numeric_usage,
-                    'mappingVersion', uo.mapping_version, 'coverage', uo.coverage, 'observedAt', uo.observed_at
+                    'mappingVersion', uo.mapping_version, 'coverage', uo.coverage, 'observedAt', uo.observed_at,
+                    'quotaSignals', uo.quota_signals
                   ) ORDER BY uo.observed_at DESC, uo.revision DESC)
                   FROM jarvis.usage_observations uo
                   WHERE uo.model_request_id=mr.id AND uo.id IN (
@@ -157,6 +159,7 @@ export class PostgresOperationalDashboardReadModel {
 }
 
 const UNSAFE_METRIC_KEY = /(?:secret|password|credential|private.?key|api.?key|access.?token|refresh.?token|bearer|prompt|repository.?content|^(?:token|session)$)/i;
+const QUOTA_COUNTER_KEYS = new Set(["requestLimit", "requestRemaining", "tokenLimit", "tokenRemaining"]);
 function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { modelRequestCount: null, modelRequests: [], modelRequestsTruncated: false, modelRequestsOmitted: null,
@@ -167,7 +170,7 @@ function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
     const safe: Record<string, number | string | null> = {};
     for (const [key, entry] of Object.entries(value as Record<string, unknown>).slice(0, 32)) {
-      if (UNSAFE_METRIC_KEY.test(key) || !/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key)) continue;
+      if ((!QUOTA_COUNTER_KEYS.has(key) && UNSAFE_METRIC_KEY.test(key)) || !/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key)) continue;
       if (numeric && typeof entry === "number" && Number.isFinite(entry) && entry >= 0) safe[key] = entry;
       if (!numeric && typeof entry === "string" && /^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/.test(entry)) safe[key] = entry;
       if (entry === null) safe[key] = null;
@@ -185,10 +188,23 @@ function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
     const observations = sourceObservations.slice(0, 100).flatMap((entry) => {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
       const observation = entry as Record<string, unknown>;
+      const rawQuota = observation.quotaSignals;
+      const quota = rawQuota !== null && typeof rawQuota === "object" && !Array.isArray(rawQuota)
+        ? rawQuota as Record<string, unknown> : null;
+      const quotaFields = ["requestLimit", "requestRemaining", "tokenLimit", "tokenRemaining"] as const;
+      const quotaCounters = safeMap(quota?.counters, true);
+      const quotaCoverage = safeMap(quota?.coverage, false);
+      const quotaSignals = quota === null ? null : {
+        mappingVersion: safeLabel(quota.mappingVersion), source: quota.source === "provider-response-header" ? quota.source : null,
+        provider: safeAttribution(quota.provider), observedAt: safeTimestamp(quota.observedAt),
+        freshness: ["current", "stale", "unknown"].includes(String(quota.freshness)) ? quota.freshness : "unknown",
+        counters: Object.fromEntries(quotaFields.map((field) => [field, typeof quotaCounters[field] === "number" ? quotaCounters[field] : null])),
+        coverage: Object.fromEntries(quotaFields.map((field) => [field, ["reported", "unknown", "not_supported"].includes(String(quotaCoverage[field])) ? quotaCoverage[field] : "unknown"])),
+      };
       return [{
         source: safeLabel(observation.source), revision: typeof observation.revision === "number" ? observation.revision : null,
         numericUsage: safeMap(observation.numericUsage, true), mappingVersion: safeLabel(observation.mappingVersion),
-        coverage: safeLabel(observation.coverage), observedAt: safeTimestamp(observation.observedAt),
+        coverage: safeLabel(observation.coverage), observedAt: safeTimestamp(observation.observedAt), quotaSignals,
       }];
     });
     const observationsCount = Number.isSafeInteger(row.observationsCount) && (row.observationsCount as number) >= sourceObservations.length
@@ -197,6 +213,7 @@ function safeUsage(value: unknown): Readonly<Record<string, unknown>> {
       id: safeUuid(row.id), requestId: safeUuid(row.requestId), taskId: safeUuid(row.taskId), attemptId: safeUuid(row.attemptId),
       provider: safeAttribution(row.provider), model: safeAttribution(row.model), purpose: safeAttribution(row.purpose),
       state: safeLabel(row.state),
+      runtimeCoverage: ["observed", "unknown", "not_supported"].includes(String(row.runtimeCoverage)) ? row.runtimeCoverage : "unknown",
       dispatchedAt: safeTimestamp(row.dispatchedAt),
       ledger: ledger === null ? null : {
         reserved: safeDecimal(ledger.reserved), tokenCounts: safeMap(ledger.tokenCounts, true),

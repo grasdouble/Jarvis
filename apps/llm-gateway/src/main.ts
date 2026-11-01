@@ -1,5 +1,5 @@
 import { readFileSync, unlinkSync } from "node:fs";
-import { createProductionGateway } from "./gateway.js";
+import { createProductionGateway, listenGatewaySocket } from "./gateway.js";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -22,13 +22,14 @@ const server = createProductionGateway({
   socketPath,
   egressConfig,
   gatewayConfig,
+  accountingSocketPath: process.env.LLM_GATEWAY_ACCOUNTING_SOCKET ?? "/run/jarvis-accounting/accounting.sock",
   maxInputBytes: positiveInteger("LLM_GATEWAY_MAX_INPUT_BYTES", 256 * 1024),
   maxOutputTokens: positiveInteger("LLM_GATEWAY_MAX_OUTPUT_TOKENS", 4096),
   maxRequests: positiveInteger("LLM_GATEWAY_MAX_REQUESTS", 8),
   requestTimeoutMs: positiveInteger("LLM_GATEWAY_REQUEST_TIMEOUT_MS", 30_000),
 });
 
-server.listen(socketPath);
+listenGatewaySocket(server, socketPath);
 server.once("listening", () => {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
