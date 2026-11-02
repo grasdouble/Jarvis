@@ -116,7 +116,7 @@ export class PostgresOperationalDashboardReadModel {
                 SELECT recent.id FROM jarvis.model_requests recent
                 JOIN jarvis.requests recent_request ON recent_request.id=recent.request_id
                 WHERE recent_request.project_id=p.id AND recent_request.owner_id=p.owner_id
-                ORDER BY recent.created_at, recent.id LIMIT 100
+                ORDER BY recent.created_at DESC, recent.id DESC LIMIT 100
               )
             ), '[]'::jsonb),
             'allocationLimits', NULL,
