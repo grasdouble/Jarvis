@@ -1564,13 +1564,13 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       await latest100Client.query("BEGIN");
       await latest100Client.query(`
         INSERT INTO jarvis.projects (id, repository_id, installation_id, owner_id, repository_name, state, config_version)
-        VALUES ('00000000-0000-4000-8000-000000000301', 3002,
+        VALUES ('00000000-0000-4000-8000-000000000301', 3006,
           '00000000-0000-4000-8000-000000000001', 'owner', 'latest-100', 'active', 1)
       `);
       await latest100Client.query(`
         INSERT INTO jarvis.project_config_versions
           (project_id, repository_id, version, config_json, config_hash, policy_hash, created_by)
-        VALUES ('00000000-0000-4000-8000-000000000301', 3002, 1, '{}'::jsonb,
+        VALUES ('00000000-0000-4000-8000-000000000301', 3006, 1, '{}'::jsonb,
           repeat('c', 64), repeat('b', 64), 'owner')
       `);
       await latest100Client.query(`
@@ -1578,7 +1578,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
           (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key,
            config_version, policy_hash, created_at, updated_at)
         SELECT ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
-          'owner', '00000000-0000-4000-8000-000000000301', 3002, 'plan',
+          'owner', '00000000-0000-4000-8000-000000000301', 3006, 'plan',
           repeat('a', 64), 'completed', 'latest-100-' || n, 1, repeat('b', 64),
           '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second',
           '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
