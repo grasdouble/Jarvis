@@ -58,8 +58,8 @@ function validateIntegrationDatabaseUrl(value, { expectedDatabaseName } = {}) {
   if (expectedDatabaseName !== undefined) {
     assert.equal(databaseName, expectedDatabaseName, "database URL must match the expected workflow database");
   } else {
-    assert.match(databaseName, /^jarvis_issue8_[a-f0-9]{32}$/,
-      "local integration requires a uniquely named jarvis_issue8_ disposable database");
+    assert.match(databaseName, /^jarvis_issue(?:8|307)_[a-f0-9]{32}$/,
+      "local integration requires a uniquely named jarvis_issue8_ or jarvis_issue307_ disposable database");
   }
   return databaseName;
 }
@@ -294,6 +294,8 @@ describe("PostgreSQL persistence integration", { concurrency: false }, () => {
 test("integration URL guard rejects unsafe targets before a pool can be created", () => {
   const valid = "postgresql://test:secret@127.0.0.1:54321/jarvis_issue8_0123456789abcdef0123456789abcdef";
   assert.equal(validateIntegrationDatabaseUrl(valid), "jarvis_issue8_0123456789abcdef0123456789abcdef");
+  const issue307 = "jarvis_issue307_abcdef0123456789abcdef0123456789";
+  assert.equal(validateIntegrationDatabaseUrl(`postgresql://test:secret@127.0.0.1:54321/${issue307}`), issue307);
   const runDatabase = "jarvis_integration_auto_123456789_2";
   assert.throws(() => validateIntegrationDatabaseUrl(`postgresql://test:secret@127.0.0.1:5432/${runDatabase}`),
     "local mode must retain its dedicated reviewer database-name contract");
@@ -642,8 +644,8 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       assert.equal(database.name, expectedDatabaseName,
         `integration run requires database ${expectedDatabaseName}, got ${database.name}`);
     } else {
-      assert.match(database.name, /^jarvis_issue8_[a-f0-9]{32}$/,
-        "local reviewer integration requires a uniquely named jarvis_issue8_ disposable database");
+      assert.match(database.name, /^jarvis_issue(?:8|307)_[a-f0-9]{32}$/,
+        "local integration requires a uniquely named jarvis_issue8_ or jarvis_issue307_ disposable database");
     }
 
     const persistence = new PostgresPersistence(pool);
@@ -1557,6 +1559,60 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       client.query("UPDATE jarvis.task_checkpoints SET step = 'mutated' WHERE id = $1", [saved.id]),
       /immutable record/,
     );
+    const latest100Client = await pool.connect();
+    try {
+      await latest100Client.query("BEGIN");
+      await latest100Client.query(`
+        INSERT INTO jarvis.projects (id, repository_id, installation_id, owner_id, repository_name, state, config_version)
+        VALUES ('00000000-0000-4000-8000-000000000301', 3006,
+          '00000000-0000-4000-8000-000000000001', 'owner', 'latest-100', 'active', 1)
+      `);
+      await latest100Client.query(`
+        INSERT INTO jarvis.project_config_versions
+          (project_id, repository_id, version, config_json, config_hash, policy_hash, created_by)
+        VALUES ('00000000-0000-4000-8000-000000000301', 3006, 1, '{}'::jsonb,
+          repeat('c', 64), repeat('b', 64), 'owner')
+      `);
+      await latest100Client.query(`
+        INSERT INTO jarvis.requests
+          (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key,
+           config_version, policy_hash, created_at, updated_at)
+        SELECT ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+          'owner', '00000000-0000-4000-8000-000000000301', 3006, 'plan',
+          repeat('a', 64), 'completed', 'latest-100-' || n, 1, repeat('b', 64),
+          '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second',
+          '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
+        FROM generate_series(1, 101) AS n
+      `);
+      await latest100Client.query(`
+        INSERT INTO jarvis.model_requests
+          (id, request_id, purpose, provider, model, profile_version, state, created_at)
+        SELECT ('30800000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+          ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+          'task_execution', 'synthetic', 'latest-100-model', 1, 'completed',
+          '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
+        FROM generate_series(1, 101) AS n
+      `);
+      await latest100Client.query("COMMIT");
+    } catch (error) {
+      await latest100Client.query("ROLLBACK");
+      throw error;
+    } finally {
+      latest100Client.release();
+    }
+    const { PostgresOperationalDashboardReadModel } = await import("../dist/index.js");
+    const latest100Project = (await new PostgresOperationalDashboardReadModel(pool).list("owner"))
+      .find(({ id }) => id === "00000000-0000-4000-8000-000000000301");
+    assert.ok(latest100Project, "dashboard exposes the seeded project");
+    const latest100Requests = latest100Project.usage.modelRequests;
+    assert.equal(latest100Project.usage.modelRequestCount, 101);
+    assert.equal(latest100Project.usage.modelRequestsTruncated, true);
+    assert.equal(latest100Project.usage.modelRequestsOmitted, 1);
+    assert.equal(latest100Requests.length, 100);
+    assert.equal(latest100Requests.some(({ id }) => id === "30800000-0000-4000-8000-000000000001"), false,
+      "oldest model request is excluded");
+    assert.equal(latest100Requests.some(({ id }) => id === "30800000-0000-4000-8000-000000000101"), true,
+      "newest model request is included");
   } catch (error) {
     testFailure = error;
   }
@@ -1613,19 +1669,19 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'owner_accounts' THEN 0
                   WHEN 'owner_sessions' THEN 0
                   WHEN 'policies' THEN 1
-                  WHEN 'projects' THEN 5
-                  WHEN 'project_config_versions' THEN 12
+                  WHEN 'projects' THEN 6
+                  WHEN 'project_config_versions' THEN 13
                   WHEN 'audit_events' THEN 22
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
                   WHEN 'stop_controls' THEN 2
-                  WHEN 'requests' THEN 11
+                  WHEN 'requests' THEN 112
                   WHEN 'tasks' THEN 8
                   WHEN 'task_attempts' THEN 6
                   WHEN 'task_checkpoints' THEN 1
                   WHEN 'task_results' THEN 2
                   WHEN 'queue_entries' THEN 7
-                  WHEN 'model_requests' THEN 6
+                  WHEN 'model_requests' THEN 107
                   WHEN 'usage_observations' THEN 5
                   WHEN 'usage_ledger' THEN 3
                   WHEN 'outbox' THEN 17

@@ -1,6 +1,10 @@
 import type { OwnerAuthBoundary, OwnerAuthHttpRequest, OwnerAuthHttpResponse } from "./auth.js";
 import { PostgresOperationalDashboardReadModel, type SqlPool } from "@jarvis/persistence";
 
+const USAGE_FIELDS = ["inputTotal", "outputTotal", "cacheReadInput", "cacheWriteInput", "reasoningOutput"] as const;
+const QUOTA_FIELDS = ["requestLimit", "requestRemaining", "tokenLimit", "tokenRemaining"] as const;
+const SAFE_QUOTA_SIGNALS = Symbol("safeQuotaSignals");
+
 export interface DashboardProject {
   readonly id: string;
   readonly repository: string;
@@ -47,6 +51,10 @@ const MAX_TEXT = 1024;
 const SECRET_KEY = /(?:secret|password|credential|private.?key|api.?key|access.?token|refresh.?token|bearer|prompt|repository.?content|^(?:token|session)$)/i;
 
 function redact(value: unknown, depth = 0): unknown {
+  // This subtree is built from a closed quota allowlist before bypassing the global depth cap.
+  if (typeof value === "object" && value !== null && !Array.isArray(value) && Object.hasOwn(value, SAFE_QUOTA_SIGNALS)) {
+    return value;
+  }
   if (depth > 8) return "[bounded]";
   if (typeof value === "string") return value.slice(0, MAX_TEXT);
   if (Array.isArray(value)) return value.slice(0, 100).map((item) => redact(item, depth + 1));
@@ -107,14 +115,23 @@ function boundedUsage(value: Readonly<Record<string, unknown>> | null): unknown 
     const observations = sourceObservations.slice(0, 100).flatMap((observation) => {
       if (observation === null || typeof observation !== "object" || Array.isArray(observation)) return [];
       const item = observation as Record<string, unknown>;
-      return [{ source: item.source, revision: item.revision, numericUsage: item.numericUsage,
-        mappingVersion: item.mappingVersion, coverage: item.coverage, observedAt: item.observedAt }];
+      return [{
+        source: item.source === "gateway" || item.source === "runtime" ? item.source : null,
+        revision: Number.isSafeInteger(item.revision) && (item.revision as number) > 0 ? item.revision : null,
+        numericUsage: safeUsageCounters(item.numericUsage),
+        mappingVersion: safeLabel(item.mappingVersion),
+        coverage: ["complete", "partial", "unknown"].includes(String(item.coverage)) ? item.coverage : "unknown",
+        freshness: ["current", "stale", "unknown"].includes(String(item.freshness)) ? item.freshness : "unknown",
+        observedAt: safeUsageTimestamp(item.observedAt),
+        quotaSignals: safeQuotaSignals(item.quotaSignals),
+      }];
     });
     const observationsCount = Number.isSafeInteger(row.observationsCount) && (row.observationsCount as number) >= sourceObservations.length
       ? row.observationsCount as number : sourceObservations.length;
     const ledger = row.ledger !== null && typeof row.ledger === "object" && !Array.isArray(row.ledger)
       ? row.ledger as Record<string, unknown> : null;
     const id = safeUsageUuid(row.id);
+    const operationId = safeUsageUuid(row.operationId);
     const requestId = safeUsageUuid(row.requestId);
     const taskId = safeUsageUuid(row.taskId);
     const attemptId = safeUsageUuid(row.attemptId);
@@ -124,7 +141,8 @@ function boundedUsage(value: Readonly<Record<string, unknown>> | null): unknown 
     const state = safeLabel(row.state);
     const dispatchedAt = safeUsageTimestamp(row.dispatchedAt);
     return {
-      ...(id === null ? {} : { id }), ...(requestId === null ? {} : { requestId }),
+      ...(id === null ? {} : { id }), ...(operationId === null ? {} : { operationId }),
+      ...(requestId === null ? {} : { requestId }),
       ...(taskId === null ? {} : { taskId }), ...(attemptId === null ? {} : { attemptId }),
       ...(provider === null ? {} : { provider }), ...(model === null ? {} : { model }), ...(purpose === null ? {} : { purpose }),
       ...(state === null ? {} : { state }), ...(dispatchedAt === null ? {} : { dispatchedAt }),
@@ -168,6 +186,43 @@ function safeUsageTimestamp(value: unknown): string | null {
 
 function safeLabel(value: unknown): string | null {
   return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value) ? value : null;
+}
+function safeUsageCounters(value: unknown): Partial<Record<typeof USAGE_FIELDS[number], number | null>> {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const counters: Partial<Record<typeof USAGE_FIELDS[number], number | null>> = {};
+  for (const field of USAGE_FIELDS) {
+    if (!Object.hasOwn(record, field)) continue;
+    counters[field] = Number.isSafeInteger(record[field]) && (record[field] as number) >= 0
+      ? record[field] as number : null;
+  }
+  return counters;
+}
+
+function safeQuotaSignals(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const quota = value as Record<string, unknown>;
+  const counters = typeof quota.counters === "object" && quota.counters !== null && !Array.isArray(quota.counters)
+    ? quota.counters as Record<string, unknown> : {};
+  const coverage = typeof quota.coverage === "object" && quota.coverage !== null && !Array.isArray(quota.coverage)
+    ? quota.coverage as Record<string, unknown> : {};
+  const safe = {
+    source: quota.source === "provider-response-header" ? quota.source : null,
+    provider: safeAttributionLabel(quota.provider),
+    mappingVersion: safeLabel(quota.mappingVersion),
+    observedAt: safeUsageTimestamp(quota.observedAt),
+    freshness: ["current", "stale", "unknown"].includes(String(quota.freshness)) ? quota.freshness : "unknown",
+    counters: Object.fromEntries(QUOTA_FIELDS.map((field) => [
+      field,
+      Number.isSafeInteger(counters[field]) && (counters[field] as number) >= 0 ? counters[field] as number : null,
+    ])),
+    coverage: Object.fromEntries(QUOTA_FIELDS.map((field) => [
+      field,
+      ["reported", "unknown", "not_supported"].includes(String(coverage[field])) ? coverage[field] : "unknown",
+    ])),
+  };
+  Object.defineProperty(safe, SAFE_QUOTA_SIGNALS, { value: true });
+  return safe;
 }
 
 function canonicalPullRequestUrl(repository: string, number: number): string | null {
