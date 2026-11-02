@@ -960,37 +960,47 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
         AND dispatched_at >= $3::timestamptz AND dispatched_at < $4::timestamptz`,
     [boundaryRequestId, periodEndRequestId, dispatchedAt, periodEnd]);
     assert.equal(endBoundary.request_count, 1, "the exact upper bound belongs to the next half-open period");
-    await pool.query(`
-      INSERT INTO jarvis.projects (id, repository_id, installation_id, owner_id, repository_name, state, config_version)
-      VALUES ('00000000-0000-4000-8000-000000000301', 3002,
-        '00000000-0000-4000-8000-000000000001', 'owner', 'latest-100', 'active', 1)
-    `);
-    await pool.query(`
-      INSERT INTO jarvis.project_config_versions
-        (project_id, repository_id, version, config_json, config_hash, policy_hash, created_by)
-      VALUES ('00000000-0000-4000-8000-000000000301', 3002, 1, '{}'::jsonb,
-        repeat('c', 64), repeat('b', 64), 'owner')
-    `);
-    await pool.query(`
-      INSERT INTO jarvis.requests
-        (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key,
-         config_version, policy_hash, created_at, updated_at)
-      SELECT ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
-        'owner', '00000000-0000-4000-8000-000000000301', 3002, 'plan',
-        repeat('a', 64), 'completed', 'latest-100-' || n, 1, repeat('b', 64),
-        '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second',
-        '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
-      FROM generate_series(1, 101) AS n
-    `);
-    await pool.query(`
-      INSERT INTO jarvis.model_requests
-        (id, request_id, purpose, provider, model, profile_version, state, created_at)
-      SELECT ('30800000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
-        ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
-        'task_execution', 'synthetic', 'latest-100-model', 1, 'completed',
-        '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
-      FROM generate_series(1, 101) AS n
-    `);
+    const latest100Client = await pool.connect();
+    try {
+      await latest100Client.query("BEGIN");
+      await latest100Client.query(`
+        INSERT INTO jarvis.projects (id, repository_id, installation_id, owner_id, repository_name, state, config_version)
+        VALUES ('00000000-0000-4000-8000-000000000301', 3002,
+          '00000000-0000-4000-8000-000000000001', 'owner', 'latest-100', 'active', 1)
+      `);
+      await latest100Client.query(`
+        INSERT INTO jarvis.project_config_versions
+          (project_id, repository_id, version, config_json, config_hash, policy_hash, created_by)
+        VALUES ('00000000-0000-4000-8000-000000000301', 3002, 1, '{}'::jsonb,
+          repeat('c', 64), repeat('b', 64), 'owner')
+      `);
+      await latest100Client.query(`
+        INSERT INTO jarvis.requests
+          (id, owner_id, project_id, repository_id, mode, prompt_digest, state, idempotency_key,
+           config_version, policy_hash, created_at, updated_at)
+        SELECT ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+          'owner', '00000000-0000-4000-8000-000000000301', 3002, 'plan',
+          repeat('a', 64), 'completed', 'latest-100-' || n, 1, repeat('b', 64),
+          '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second',
+          '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
+        FROM generate_series(1, 101) AS n
+      `);
+      await latest100Client.query(`
+        INSERT INTO jarvis.model_requests
+          (id, request_id, purpose, provider, model, profile_version, state, created_at)
+        SELECT ('30800000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+          ('30700000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,
+          'task_execution', 'synthetic', 'latest-100-model', 1, 'completed',
+          '2026-05-01T00:00:00Z'::timestamptz + n * interval '1 second'
+        FROM generate_series(1, 101) AS n
+      `);
+      await latest100Client.query("COMMIT");
+    } catch (error) {
+      await latest100Client.query("ROLLBACK");
+      throw error;
+    } finally {
+      latest100Client.release();
+    }
     const { PostgresOperationalDashboardReadModel } = await import("../dist/index.js");
     const [latest100Project] = await new PostgresOperationalDashboardReadModel(pool).list("owner");
     assert.ok(latest100Project, "dashboard exposes the seeded project");
@@ -1658,19 +1668,19 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'owner_accounts' THEN 0
                   WHEN 'owner_sessions' THEN 0
                   WHEN 'policies' THEN 1
-                  WHEN 'projects' THEN 5
-                  WHEN 'project_config_versions' THEN 12
+                  WHEN 'projects' THEN 6
+                  WHEN 'project_config_versions' THEN 13
                   WHEN 'audit_events' THEN 22
                   WHEN 'project_skills' THEN 1
                   WHEN 'project_skill_approvals' THEN 4
                   WHEN 'stop_controls' THEN 2
-                  WHEN 'requests' THEN 11
+                  WHEN 'requests' THEN 112
                   WHEN 'tasks' THEN 8
                   WHEN 'task_attempts' THEN 6
                   WHEN 'task_checkpoints' THEN 1
                   WHEN 'task_results' THEN 2
                   WHEN 'queue_entries' THEN 7
-                  WHEN 'model_requests' THEN 6
+                  WHEN 'model_requests' THEN 107
                   WHEN 'usage_observations' THEN 5
                   WHEN 'usage_ledger' THEN 3
                   WHEN 'outbox' THEN 17
