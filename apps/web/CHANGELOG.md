@@ -1,5 +1,18 @@
 # @jarvis/web
 
+## 0.1.0
+
+### Minor Changes
+
+- a262fa7: Add the single-owner onboarding, password login, server-side session and browser CSRF foundation.
+- d268715: Add durable owner stop controls and a stop-aware worker execution contract.
+
+### Patch Changes
+
+- bbce16c: Add an authenticated, read-only operational dashboard with scoped persisted read models and bounded redacted exports.
+- Updated dependencies [01a95e6]
+  - @jarvis/contracts@0.1.0
+
 ## 0.0.1
 
 ### Patch Changes
