@@ -86,6 +86,12 @@ function validate(ownerId: string, filter: UsagePeriodFilter, maxDays: number): 
   return { start, end, zone };
 }
 
+function isCanonicalCursorInstant(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value)) return false;
+  const millisecond = `${value.slice(0, 23)}Z`;
+  return Number.isFinite(Date.parse(millisecond)) && new Date(millisecond).toISOString() === millisecond;
+}
+
 function decodeCursor(cursor: string | undefined): { at: string; id: string } | null {
   if (cursor === undefined) return null;
   try {
@@ -94,7 +100,7 @@ function decodeCursor(cursor: string | undefined): { at: string; id: string } | 
     const value = JSON.parse(decoded) as { at?: unknown; id?: unknown };
     if (typeof value !== "object" || value === null || Array.isArray(value) ||
         Object.keys(value).sort().join(",") !== "at,id" || typeof value.at !== "string" ||
-        !Number.isFinite(Date.parse(value.at)) || new Date(value.at).toISOString() !== value.at ||
+        !isCanonicalCursorInstant(value.at) ||
         typeof value.id !== "string" || !UUID.test(value.id) ||
         Buffer.from(JSON.stringify({ at: value.at, id: value.id })).toString("base64url") !== cursor) throw new Error();
     return { at: value.at, id: value.id };
@@ -124,7 +130,8 @@ function aggregateCount(value: unknown): number | string | null {
 }
 
 function encodeCursor(at: string, id: string): string {
-  return Buffer.from(JSON.stringify({ at: new Date(at).toISOString(), id })).toString("base64url");
+  if (!isCanonicalCursorInstant(at)) throw new TypeError("Invalid usage cursor timestamp.");
+  return Buffer.from(JSON.stringify({ at, id })).toString("base64url");
 }
 
 /** Owner/project-scoped period usage read model. It never selects legacy monetary or content columns. */
@@ -253,7 +260,8 @@ export class PostgresUsageReadModel {
       if (cursor) { values.push(cursor.at, cursor.id); cursorClause = ` AND (mr.dispatched_at,mr.id)<($${values.length - 1}::timestamptz,$${values.length}::uuid)`; }
       values.push(limit + 1);
       const { rows } = await client.query<Record<string, unknown>>(`SELECT mr.id,p.id AS project_id,mr.operation_id,mr.request_id,mr.task_id,mr.attempt_id,
-          mr.provider,mr.model,mr.purpose,mr.lifecycle,mr.dispatched_at,mr.completed_at,mr.runtime_coverage,
+          mr.provider,mr.model,mr.purpose,mr.lifecycle,
+          to_char(mr.dispatched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS dispatched_at,mr.completed_at,mr.runtime_coverage,
           ul.token_counts AS canonical_usage,ul.field_statuses,ul.canonical_revision,ul.canonical_observed_at,ul.reconciliation_state_v2,
           go.mapping_version,go.freshness,go.observed_at AS gateway_observed_at,qgo.quota_signals,
           ro.numeric_usage AS runtime_usage,ro.field_statuses AS runtime_field_statuses,

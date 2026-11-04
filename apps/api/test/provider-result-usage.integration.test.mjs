@@ -729,6 +729,16 @@ test("selected provider usage crosses the configured gateway and API socket into
     }, "quota headers are exposed as a distinct latest observation, not combined with token usage");
     const summaryPaginationResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage?${usageFilter}&limit=10`, { headers: { "x-fixture-owner": "owner" } });
     assert.equal(summaryPaginationResponse.status, 400, "summary route rejects request-only pagination parameters");
+    for (const [operationId, micros] of [
+      [firstOperationId, "000001"],
+      [retryOperationId, "000002"],
+      [failedOperationId, "000003"],
+    ]) {
+      await pool.query(
+        "UPDATE jarvis.model_requests SET dispatched_at=$2::timestamptz WHERE operation_id=$1",
+        [operationId, `${localToday}T12:00:00.${micros}Z`],
+      );
+    }
     const usageRequestsResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage/requests?${usageFilter}&limit=100`, { headers: { "x-fixture-owner": "owner" } });
     assert.equal(usageRequestsResponse.status, 200);
     const usageRequests = await usageRequestsResponse.json();
@@ -746,6 +756,40 @@ test("selected provider usage crosses the configured gateway and API socket into
     assert.equal(usageRequests.records.find((record) => record.lifecycle === "failed").usage.inputTotal.status, "unknown");
     assert.equal(JSON.stringify(usageRequests).includes("synthetic retry"), false);
     assert.equal(JSON.stringify(usageRequests).includes("estimated_charge"), false);
+    assert.equal(usageRequests.truncated, false);
+    assert.equal(usageRequests.nextCursor, null);
+    assert.deepEqual(usageRequests.records.map(({ operationId }) => operationId), [
+      failedOperationId, retryOperationId, firstOperationId,
+    ]);
+    assert.deepEqual(usageRequests.records.map(({ dispatchedAt }) => dispatchedAt), [
+      `${localToday}T12:00:00.000003Z`,
+      `${localToday}T12:00:00.000002Z`,
+      `${localToday}T12:00:00.000001Z`,
+    ]);
+    const cursorPageRecords = [];
+    let cursor;
+    for (let pageIndex = 0; pageIndex < usageRequests.records.length; pageIndex += 1) {
+      const pageQuery = new URLSearchParams(usageFilter);
+      pageQuery.set("limit", "1");
+      if (cursor !== undefined) pageQuery.set("cursor", cursor);
+      const pageResponse = await globalThis.fetch(
+        `${apiOrigin}/api/v1/usage/requests?${pageQuery}`, { headers: { "x-fixture-owner": "owner" } },
+      );
+      assert.equal(pageResponse.status, 200);
+      const page = await pageResponse.json();
+      assert.equal(page.records.length, 1);
+      const hasNextPage = pageIndex < usageRequests.records.length - 1;
+      assert.equal(page.truncated, hasNextPage);
+      assert.equal(page.nextCursor !== null, hasNextPage);
+      if (pageIndex === 0) {
+        assert.equal(JSON.parse(Buffer.from(page.nextCursor, "base64url").toString("utf8")).at, page.records[0].dispatchedAt);
+      }
+      cursorPageRecords.push(...page.records);
+      cursor = page.nextCursor ?? undefined;
+    }
+    const cursorPageIds = cursorPageRecords.map(({ id }) => id);
+    assert.deepEqual(cursorPageIds, usageRequests.records.map(({ id }) => id));
+    assert.equal(new Set(cursorPageIds).size, cursorPageIds.length, "HTTP cursor pages contain no duplicate request IDs");
     const malformedCounterCases = [
       { name: "missing", value: "token_counts - 'inputTotal'" },
       { name: "null", value: "jsonb_set(token_counts,'{inputTotal}','null'::jsonb)" },
