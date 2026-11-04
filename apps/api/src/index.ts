@@ -34,6 +34,7 @@ export { createOperationalStopControlHandler, createStopControlHttpHandler } fro
 export { createRuntimeComposition } from "./runtime-composition.js";
 export type { StopControlChangedPort, StopControlWorkerPort } from "./stop-controls.js";
 export { createTaskResultReadBoundary } from "./task-results.js";
+export { createUsageReadBoundary } from "./usage-read.js";
 export type { TaskResultReadModel } from "./task-results.js";
 export type { DashboardHttpRequest, DashboardProject, DashboardPullRequest, DashboardRequest, OperationalDashboardReadModel } from "./dashboard.js";
 export type {

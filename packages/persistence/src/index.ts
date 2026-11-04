@@ -513,5 +513,7 @@ export { PostgresStopControlStore } from "./stop-controls.js";
 export type { RestoreStopActivation, StopControlRecord, StopControlSnapshot } from "./stop-controls.js";
 export { PostgresOperationalDashboardReadModel } from "./dashboard.js";
 export { digestTaskResult, PostgresTaskResultReadModel } from "./results.js";
+export { PostgresUsageReadModel } from "./usage-read.js";
+export type { UsagePeriodFilter } from "./usage-read.js";
 export { PostgresUsageAccountingStore, UsageAccountingRejectedError } from "./usage-accounting.js";
 export type { UsageAttribution, UsageLifecycle, UsageObservation, UsageObservationSource, UsageQuotaSignals } from "./usage-accounting.js";

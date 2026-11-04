@@ -118,6 +118,26 @@ jobs:
         env:
           JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: pnpm --filter @jarvis/persistence test
+      - name: Test owner-authenticated period usage API against a separate PostgreSQL database
+        env:
+          JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          api_database_suffix="$(printf '%s:%s' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | sha256sum | cut -c1-32)"
+          if ! [[ "$api_database_suffix" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "Could not derive a unique API integration database name." >&2
+            exit 1
+          fi
+          api_database="jarvis_issue307_${api_database_suffix}"
+          docker exec "$JV265_RESTORE_GATE_POSTGRES_CONTAINER_ID" createdb \
+            --username "$POSTGRES_USER" --owner "$POSTGRES_USER" "$api_database"
+          export JARVIS_TEST_DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${api_database}"
+          export JARVIS_TEST_EXPECTED_DATABASE_NAME="$api_database"
+          echo "::add-mask::$POSTGRES_PASSWORD"
+          pnpm --filter @jarvis/llm build
+          pnpm --filter @jarvis/llm-gateway build
+          test -f apps/llm-gateway/dist/gateway.js
+          test -f apps/llm-gateway/node_modules/@jarvis/llm/dist/index.js
+          pnpm --filter @jarvis/api test
       - name: Test contributor GitHub tooling without real credentials
         run: node --test .agents/skills/jarvis-backlog/scripts/github/*.test.mjs
 

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:http";
@@ -6,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL, URLSearchParams } from "node:url";
 import { test } from "node:test";
 import pg from "pg";
 
@@ -17,6 +18,7 @@ import {
   PostgresStopControlStore,
   PostgresTaskResultReadModel,
   PostgresUsageAccountingStore,
+  PostgresUsageReadModel,
 } from "@jarvis/persistence";
 import { QueueService } from "../../../packages/queue/dist/index.js";
 import {
@@ -24,10 +26,12 @@ import {
   createOperationalDashboardHttpHandler,
   createOperationalDashboardServer,
   createTaskResultReadBoundary,
+  createUsageReadBoundary,
 } from "../dist/index.js";
 import { listenUsageAccounting } from "../dist/usage-accounting.js";
 
 const { Pool } = pg;
+const { Response, fetch } = globalThis;
 const databaseUrl = process.env.JARVIS_TEST_DATABASE_URL;
 const expectedDatabaseName = process.env.JARVIS_TEST_EXPECTED_DATABASE_NAME;
 const gatewayPath = new URL("../../llm-gateway/dist/gateway.js", import.meta.url);
@@ -57,8 +61,8 @@ function validateDisposableDatabaseUrl(value) {
   assert.equal(url.hash, "", "database URL fragments are not permitted");
   const databaseName = decodeURIComponent(url.pathname.slice(1));
   if (expectedDatabaseName !== undefined) {
-    assert.match(expectedDatabaseName, /^jarvis_integration_(?:auto|manual)_[0-9]+_[0-9]+$/,
-      "expected workflow database must use the per-run naming scheme");
+    assert.match(expectedDatabaseName, /^(?:jarvis_integration_(?:auto|manual)_[0-9]+_[0-9]+|jarvis_issue307_[a-f0-9]{32})$/,
+      "expected database must use a unique per-run integration name");
     assert.equal(databaseName, expectedDatabaseName, "database URL must match the expected workflow database");
   } else {
     assert.match(databaseName, /^jarvis_issue307_[a-f0-9]{32}$/,
@@ -345,10 +349,13 @@ test("selected provider usage crosses the configured gateway and API socket into
       new PostgresOperationalDashboardReadModel(pool), auth,
     ));
     const taskResult = createTaskResultReadBoundary(new PostgresTaskResultReadModel(pool), auth);
+    const usageRead = createUsageReadBoundary(new PostgresUsageReadModel(pool), auth);
     apiServer = createOperationalDashboardServer({
       auth,
       dashboard,
       taskResults: (requestValue, taskId) => taskResult.get(requestValue, taskId),
+      usageSummary: (requestValue) => usageRead.summary(requestValue),
+      usageRequests: (requestValue) => usageRead.requests(requestValue),
     });
     await listen(apiServer, 0, "127.0.0.1");
     const address = apiServer.address();
@@ -667,6 +674,155 @@ test("selected provider usage crosses the configured gateway and API socket into
     assert.deepEqual(await ownerResultResponse.json(), canonicalResult);
     const otherResultResponse = await fetch(`${apiOrigin}/api/v1/tasks/${fixture.taskId}/result`, { headers: { "x-fixture-owner": "other" } });
     assert.equal(otherResultResponse.status, 404, "canonical result read does not disclose another owner's task result");
+    const olderRevisionObservedAt = new Date(Date.parse(storedObservation.observed_at) - 1).toISOString();
+    const quotaRevision = await postJson(accountingSocketPath, "/v1/usage/observation", {
+      attribution: { ...attemptIdentity, operationId: firstOperationId },
+      lifecycle: "succeeded",
+      observation: {
+        source: "gateway", observationId: storedObservation.observation_id, revision: storedObservation.revision + 1,
+        observedAt: olderRevisionObservedAt, freshness: "stale",
+        usage: {
+          mappingVersion: storedObservation.mapping_version,
+          counters: storedObservation.numeric_usage,
+          coverage: storedObservation.field_statuses,
+        },
+        quota: {
+          ...storedObservation.quota_signals,
+          observedAt: olderRevisionObservedAt,
+          freshness: "stale",
+          counters: { requestLimit: 100, requestRemaining: 77, tokenLimit: 10000, tokenRemaining: 7000 },
+        },
+      },
+    });
+    assert.equal(quotaRevision.status, 204, quotaRevision.body);
+    const localToday = new Date().toISOString().slice(0, 10);
+    const localTomorrow = new Date(Date.parse(`${localToday}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const usageFilter = new URLSearchParams({
+      start: localToday, end: localTomorrow, timeZone: "UTC", projectId: fixture.projectId, taskId: fixture.taskId,
+    });
+    await pool.query(`UPDATE jarvis.usage_observations SET mapping_version='synthetic-openai-v2'
+      WHERE model_request_id=(SELECT id FROM jarvis.model_requests WHERE operation_id=$1)
+        AND source='gateway'`, [firstOperationId]);
+    const usageResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage?${usageFilter}`, { headers: { "x-fixture-owner": "owner" } });
+    assert.equal(usageResponse.status, 200);
+    const usageSummary = await usageResponse.json();
+    assert.equal(usageSummary.groups.length, 2, "canonical totals remain split by normalization mapping version");
+    const currentMapping = usageSummary.groups.find((group) => group.mappingVersion === "openai-chat-completions-v1");
+    const revisedMapping = usageSummary.groups.find((group) => group.mappingVersion === "synthetic-openai-v2");
+    assert.ok(currentMapping && revisedMapping);
+    assert.equal(currentMapping.requestCount, 2);
+    assert.equal(currentMapping.inputTotal, 4);
+    assert.equal(revisedMapping.requestCount, 1);
+    assert.equal(revisedMapping.inputTotal, 2000);
+    assert.equal(usageSummary.retentionCoverage, "unknown", "retained rows do not prove full-period completeness");
+    assert.equal(usageSummary.coverage, "partial", "observations are not represented as a complete retained-period total");
+    assert.ok(Number.isFinite(Date.parse(usageSummary.observationWatermark)));
+    assert.deepEqual(revisedMapping.quotaSignals, {
+      source: "provider-response-header",
+      additive: false,
+      provider: selected.providerId,
+      mappingVersion: "openai-rate-limit-headers-v1",
+      observedAt: olderRevisionObservedAt,
+      freshness: "stale",
+      counters: { requestLimit: 100, requestRemaining: 77, tokenLimit: 10000, tokenRemaining: 7000 },
+      coverage: { requestLimit: "reported", requestRemaining: "reported", tokenLimit: "reported", tokenRemaining: "reported" },
+    }, "quota headers are exposed as a distinct latest observation, not combined with token usage");
+    const summaryPaginationResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage?${usageFilter}&limit=10`, { headers: { "x-fixture-owner": "owner" } });
+    assert.equal(summaryPaginationResponse.status, 400, "summary route rejects request-only pagination parameters");
+    for (const [operationId, micros] of [
+      [firstOperationId, "000001"],
+      [retryOperationId, "000002"],
+      [failedOperationId, "000003"],
+    ]) {
+      await pool.query(
+        "UPDATE jarvis.model_requests SET dispatched_at=$2::timestamptz WHERE operation_id=$1",
+        [operationId, `${localToday}T12:00:00.${micros}Z`],
+      );
+    }
+    const usageRequestsResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage/requests?${usageFilter}&limit=100`, { headers: { "x-fixture-owner": "owner" } });
+    assert.equal(usageRequestsResponse.status, 200);
+    const usageRequests = await usageRequestsResponse.json();
+    assert.equal(usageRequests.records.length, 3);
+    assert.equal(usageRequests.records[0].projectId, fixture.projectId);
+    const firstUsageRequest = usageRequests.records.find((record) => record.operationId === firstOperationId);
+    assert.equal(firstUsageRequest.usage.inputTotal.provenance.mappingVersion, "synthetic-openai-v2");
+    assert.equal(firstUsageRequest.quotaSignals.observedAt, olderRevisionObservedAt);
+    assert.equal(firstUsageRequest.quotaSignals.freshness, "stale");
+    assert.deepEqual(firstUsageRequest.quotaSignals.counters, {
+      requestLimit: 100, requestRemaining: 77, tokenLimit: 10000, tokenRemaining: 7000,
+    });
+    assert.equal(firstUsageRequest.quotaSignals.source, "provider-response-header");
+    assert.equal(firstUsageRequest.quotaSignals.additive, false);
+    assert.equal(usageRequests.records.find((record) => record.lifecycle === "failed").usage.inputTotal.status, "unknown");
+    assert.equal(JSON.stringify(usageRequests).includes("synthetic retry"), false);
+    assert.equal(JSON.stringify(usageRequests).includes("estimated_charge"), false);
+    assert.equal(usageRequests.truncated, false);
+    assert.equal(usageRequests.nextCursor, null);
+    assert.deepEqual(usageRequests.records.map(({ operationId }) => operationId), [
+      failedOperationId, retryOperationId, firstOperationId,
+    ]);
+    assert.deepEqual(usageRequests.records.map(({ dispatchedAt }) => dispatchedAt), [
+      `${localToday}T12:00:00.000003Z`,
+      `${localToday}T12:00:00.000002Z`,
+      `${localToday}T12:00:00.000001Z`,
+    ]);
+    const cursorPageRecords = [];
+    let cursor;
+    for (let pageIndex = 0; pageIndex < usageRequests.records.length; pageIndex += 1) {
+      const pageQuery = new URLSearchParams(usageFilter);
+      pageQuery.set("limit", "1");
+      if (cursor !== undefined) pageQuery.set("cursor", cursor);
+      const pageResponse = await globalThis.fetch(
+        `${apiOrigin}/api/v1/usage/requests?${pageQuery}`, { headers: { "x-fixture-owner": "owner" } },
+      );
+      assert.equal(pageResponse.status, 200);
+      const page = await pageResponse.json();
+      assert.equal(page.records.length, 1);
+      const hasNextPage = pageIndex < usageRequests.records.length - 1;
+      assert.equal(page.truncated, hasNextPage);
+      assert.equal(page.nextCursor !== null, hasNextPage);
+      if (pageIndex === 0) {
+        assert.equal(JSON.parse(Buffer.from(page.nextCursor, "base64url").toString("utf8")).at, page.records[0].dispatchedAt);
+      }
+      cursorPageRecords.push(...page.records);
+      cursor = page.nextCursor ?? undefined;
+    }
+    const cursorPageIds = cursorPageRecords.map(({ id }) => id);
+    assert.deepEqual(cursorPageIds, usageRequests.records.map(({ id }) => id));
+    assert.equal(new Set(cursorPageIds).size, cursorPageIds.length, "HTTP cursor pages contain no duplicate request IDs");
+    const malformedCounterCases = [
+      { name: "missing", value: "token_counts - 'inputTotal'" },
+      { name: "null", value: "jsonb_set(token_counts,'{inputTotal}','null'::jsonb)" },
+      { name: "invalid", value: "jsonb_set(token_counts,'{inputTotal}','\"invalid_counter\"'::jsonb)" },
+    ];
+    for (const counterCase of malformedCounterCases) {
+      await pool.query(`UPDATE jarvis.usage_ledger
+        SET token_counts=${counterCase.value},field_statuses=jsonb_set(field_statuses,'{inputTotal}','"reported"'::jsonb)
+        WHERE model_request_id=(SELECT id FROM jarvis.model_requests WHERE operation_id=$1)`, [firstOperationId]);
+      const malformedSummaryResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage?${usageFilter}`, {
+        headers: { "x-fixture-owner": "owner" },
+      });
+      assert.equal(malformedSummaryResponse.status, 200, `${counterCase.name} counter does not cause an HTTP 500`);
+      const malformedSummary = await malformedSummaryResponse.json();
+      const malformedGroup = malformedSummary.groups.find((group) => group.mappingVersion === "synthetic-openai-v2");
+      assert.equal(malformedGroup.inputTotal, null);
+      assert.equal(malformedGroup.unknown.inputTotal, 1);
+      const malformedDetailsResponse = await globalThis.fetch(
+        `${apiOrigin}/api/v1/usage/requests?${usageFilter}&limit=100`,
+        { headers: { "x-fixture-owner": "owner" } },
+      );
+      assert.equal(malformedDetailsResponse.status, 200, `${counterCase.name} detail counter does not cause an HTTP 500`);
+      const malformedDetails = await malformedDetailsResponse.json();
+      const malformedRecord = malformedDetails.records.find((record) => record.operationId === firstOperationId);
+      assert.equal(malformedRecord.usage.inputTotal.value, null);
+      assert.equal(malformedRecord.usage.inputTotal.status, "unknown");
+    }
+    const otherUsageResponse = await globalThis.fetch(`${apiOrigin}/api/v1/usage?${usageFilter}`, { headers: { "x-fixture-owner": "other" } });
+    assert.equal(otherUsageResponse.status, 200);
+    const otherSummary = await otherUsageResponse.json();
+    assert.deepEqual(otherSummary.groups, [], "period usage never reveals another owner's project rows");
+    assert.equal(otherSummary.coverage, "unknown");
+    assert.equal(otherSummary.retentionCoverage, "unknown");
   } finally {
     if (apiServer?.listening) await close(apiServer);
     if (gateway?.listening) await close(gateway);

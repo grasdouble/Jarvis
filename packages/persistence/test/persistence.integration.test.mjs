@@ -22,8 +22,9 @@ import {
   PostgresRequestIntakeStore,
   PostgresStopControlStore,
   PostgresTaskResultReadModel,
-  createSandboxLeaseStore,
+  PostgresUsageReadModel,
   SandboxLeaseRejectedError,
+  createSandboxLeaseStore,
 } from "../dist/index.js";
 import { ProjectRequestIntake } from "@jarvis/domain";
 import { QueueError, QueueService } from "@jarvis/queue";
@@ -652,7 +653,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     await persistence.migrate();
     await persistence.migrate();
     const { rows: migrations } = await pool.query("SELECT version FROM jarvis.schema_migrations");
-    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations", "009_task_results", "010_usage_accounting"]);
+    assert.deepEqual(migrations.map(({ version }) => version), ["001_initial", "002_skill_approval_order", "003_durable_queue", "004_project_request_intake", "005_owner_auth", "006_project_configuration_api", "007_durable_stop_controls", "008_sandbox_reservations", "009_task_results", "010_usage_accounting", "011_usage_read_queries"]);
     const { rows: [initialStop] } = await pool.query("SELECT stopped FROM jarvis.stop_controls WHERE scope='global' AND project_id IS NULL");
     assert.equal(initialStop.stopped, true, "fresh database migration must start fail-closed");
     const restoreControls = new PostgresStopControlStore(pool);
@@ -864,6 +865,12 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
       counters: { requestLimit: 100, requestRemaining: 80, tokenLimit: 10000, tokenRemaining: 7000 },
       coverage: { requestLimit: "reported", requestRemaining: "reported", tokenLimit: "reported", tokenRemaining: "reported" },
     };
+    const laterObservedLowerRevisionQuota = {
+      mappingVersion: "openai-rate-limit-headers-v1", source: "provider-response-header", provider: "openai",
+      observedAt: "2026-03-01T00:00:00.000Z", freshness: "current",
+      counters: { requestLimit: 100, requestRemaining: 90, tokenLimit: 10000, tokenRemaining: 9000 },
+      coverage: { requestLimit: "reported", requestRemaining: "reported", tokenLimit: "reported", tokenRemaining: "reported" },
+    };
     const unavailableQuota = {
       mappingVersion: "openai-rate-limit-headers-v1", source: "provider-response-header", provider: "openai",
       observedAt: "2026-01-01T00:01:00.000Z", freshness: "unknown",
@@ -887,7 +894,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     }, "succeeded");
     await accounting.recordObservation(attribution, {
       source: "gateway", observationId: boundaryOperationId, revision: 1,
-      observedAt: "2026-03-01T00:00:00.000Z", freshness: "current", usage: usage10,
+      observedAt: "2026-03-01T00:00:00.000Z", freshness: "current", usage: usage10, quota: laterObservedLowerRevisionQuota,
     }, "succeeded");
     await accounting.recordObservation({
       ...attribution, operationId: retryOperationId,
@@ -934,10 +941,15 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
     [[boundaryOperationId, retryOperationId]]);
     assert.deepEqual(billedAttempts, { request_count: 2, distinct_operations: 2, dispatch_attempts: 1, separately_billed_input: 2004 },
       "a retry has a distinct operation UUID and is separately billed");
-    const { rows: revisions } = await pool.query(`SELECT revision, freshness, numeric_usage, quota_signals
+    const { rows: revisions } = await pool.query(`SELECT revision, freshness, numeric_usage, quota_signals, observed_at
       FROM jarvis.usage_observations WHERE model_request_id=$1 AND source='gateway' ORDER BY revision`,
     [boundaryRequestId]);
     assert.equal(revisions.length, 2, "100 replays for each observation revision create only one SQL row per revision");
+    assert.equal(revisions[0].revision, 1);
+    assert.equal(revisions[1].revision, 2);
+    assert.ok(Date.parse(String(revisions[0].observed_at)) > Date.parse(String(revisions[1].observed_at)),
+      "the lower revision carries a later observation time");
+    assert.equal(revisions[0].quota_signals.freshness, "current");
     assert.equal(revisions[1].freshness, "stale");
     assert.equal(revisions[1].quota_signals.freshness, "stale");
     assert.deepEqual(Object.keys(revisions[1].numeric_usage).sort(),
@@ -960,6 +972,170 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
         AND dispatched_at >= $3::timestamptz AND dispatched_at < $4::timestamptz`,
     [boundaryRequestId, periodEndRequestId, dispatchedAt, periodEnd]);
     assert.equal(endBoundary.request_count, 1, "the exact upper bound belongs to the next half-open period");
+    const localEndRequestId = randomUUID();
+    await pool.query(`INSERT INTO jarvis.model_requests
+      (id,request_id,task_id,attempt_id,purpose,provider,model,profile_version,dispatched_at,state,
+       operation_id,dispatch_attempt,purpose_version,requested_model,lifecycle,mapping_version)
+      VALUES ($1,'00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000005',
+        '00000000-0000-4000-8000-000000000006','task_execution','openai','boundary-model',1,
+        '2026-01-01T23:00:00Z','unknown',$2,1,'jarvis-usage-v1','boundary-model','unknown','openai-chat-completions-v1')`,
+    [localEndRequestId, randomUUID()]);
+    const usageReads = new PostgresUsageReadModel(pool);
+    await assert.rejects(usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris", limit: 1,
+    }), TypeError, "summary persistence rejects request-page parameters");
+    const periodRead = await usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+      projectId: "00000000-0000-4000-8000-000000000003",
+    });
+    assert.deepEqual(periodRead.period, {
+      start: "2025-12-31T23:00:00.000Z", end: "2026-01-01T23:00:00.000Z",
+      timeZone: "Europe/Paris", inclusiveStart: true, exclusiveEnd: true,
+    });
+    const gatewayMapping = periodRead.groups.find((group) => group.mappingVersion === "openai-chat-completions-v1");
+    assert.equal(gatewayMapping.requestCount, 3);
+    assert.equal(gatewayMapping.observedCount, 3);
+    assert.equal(gatewayMapping.runtimeCoverage.observed, 1);
+    assert.equal(gatewayMapping.runtimeCoverage.additive, false);
+    assert.equal(gatewayMapping.inputTotal, 2004,
+      "late gateway correction is counted once in the immutable dispatch period; runtime corroboration is non-additive");
+    assert.equal(gatewayMapping.unknown.inputTotal, 1);
+    assert.equal(periodRead.retentionCoverage, "unknown", "retained rows do not establish full-period completeness");
+    assert.equal(periodRead.coverage, "partial", "period token totals remain explicitly incomplete");
+    await pool.query(`UPDATE jarvis.usage_observations SET mapping_version='synthetic-alt-v2'
+      WHERE model_request_id=$1 AND source='gateway'`, [retryRequestId]);
+    const splitMappingPeriod = await usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+      projectId: "00000000-0000-4000-8000-000000000003",
+    });
+    const alternateMapping = splitMappingPeriod.groups.find((group) => group.mappingVersion === "synthetic-alt-v2");
+    const canonicalMapping = splitMappingPeriod.groups.find((group) => group.mappingVersion === "openai-chat-completions-v1");
+    assert.equal(alternateMapping.inputTotal, 4);
+    assert.equal(canonicalMapping.inputTotal, 2000,
+      "late revisions and different normalization versions are not combined into one total");
+    assert.deepEqual(canonicalMapping.quotaSignals.counters, {
+      requestLimit: 100, requestRemaining: 80, tokenLimit: 10000, tokenRemaining: 7000,
+    });
+    assert.equal(canonicalMapping.quotaSignals.freshness, "stale");
+    const unsupportedStatuses = {
+      inputTotal: "not_supported", outputTotal: "not_supported", cacheReadInput: "not_supported",
+      cacheWriteInput: "not_supported", reasoningOutput: "not_supported",
+    };
+    await pool.query("UPDATE jarvis.model_requests SET model='synthetic-unsupported' WHERE id=$1", [cancelRequestId]);
+    await pool.query(`UPDATE jarvis.usage_observations SET field_statuses=$2::jsonb WHERE model_request_id=$1 AND source='gateway'`,
+      [cancelRequestId, JSON.stringify(unsupportedStatuses)]);
+    await pool.query("UPDATE jarvis.usage_ledger SET field_statuses=$2::jsonb WHERE model_request_id=$1",
+      [cancelRequestId, JSON.stringify(unsupportedStatuses)]);
+    const unsupportedCoverage = await usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris", model: "synthetic-unsupported",
+    });
+    assert.equal(unsupportedCoverage.groups[0].unknown.inputTotal, 0);
+    assert.equal(unsupportedCoverage.groups[0].unsupported.inputTotal, 1);
+    assert.equal(unsupportedCoverage.groups[0].tokenCoverage, "partial");
+    assert.equal(unsupportedCoverage.groups[0].coverage, "partial",
+      "unsupported fields prevent an observed/complete coverage claim even when unknown count is zero");
+    await pool.query("UPDATE jarvis.model_requests SET model='synthetic-malformed' WHERE id=$1", [cancelRequestId]);
+    const malformedStatuses = { ...unsupportedStatuses, inputTotal: "future_status" };
+    await pool.query("UPDATE jarvis.usage_ledger SET field_statuses=$2::jsonb WHERE model_request_id=$1",
+      [cancelRequestId, JSON.stringify(malformedStatuses)]);
+    const malformedCoverage = await usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris", model: "synthetic-malformed",
+    });
+    assert.equal(malformedCoverage.groups[0].inputTotal, null,
+      "unrecognized persisted statuses must not make counter values appear reported");
+    assert.equal(malformedCoverage.groups[0].unknown.inputTotal, 1,
+      "unrecognized persisted statuses are unknown rather than complete coverage");
+    assert.equal(malformedCoverage.groups[0].coverage, "partial");
+    const malformedCounterCases = [
+      { name: "missing", value: "token_counts - 'inputTotal'" },
+      { name: "null", value: "jsonb_set(token_counts,'{inputTotal}','null'::jsonb)" },
+      { name: "invalid", value: "jsonb_set(token_counts,'{inputTotal}','\"invalid_counter\"'::jsonb)" },
+    ];
+    for (const counterCase of malformedCounterCases) {
+      await pool.query(`UPDATE jarvis.usage_ledger
+        SET token_counts=${counterCase.value},field_statuses=jsonb_set(field_statuses,'{inputTotal}','"reported"'::jsonb)
+        WHERE model_request_id=$1`, [cancelRequestId]);
+      const malformedCounterSummary = await usageReads.summary("owner-a", {
+        start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris", model: "synthetic-malformed",
+      });
+      assert.equal(malformedCounterSummary.groups[0].inputTotal, null, `${counterCase.name} reported counter is not summed`);
+      assert.equal(malformedCounterSummary.groups[0].unknown.inputTotal, 1, `${counterCase.name} reported counter is unknown`);
+      assert.equal(malformedCounterSummary.groups[0].coverage, "partial");
+      const malformedCounterDetails = await usageReads.requests("owner-a", {
+        start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris", model: "synthetic-malformed", limit: 1,
+      });
+      assert.equal(malformedCounterDetails.records[0].usage.inputTotal.value, null,
+        `${counterCase.name} reported counter is not exposed as a null-valued report`);
+      assert.equal(malformedCounterDetails.records[0].usage.inputTotal.status, "unknown",
+        `${counterCase.name} reported counter is unknown in request details`);
+    }
+    await assert.rejects(usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-04-02", timeZone: "Europe/Paris",
+    }), TypeError, "period range cannot exceed the existing 90-day D09 boundary");
+    assert.equal((await usageReads.summary("owner-b", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+    })).groups.length, 0, "cross-owner reads return no project data");
+    const nextLocalPeriod = await usageReads.summary("owner-a", {
+      start: "2026-01-02", end: "2026-01-03", timeZone: "Europe/Paris",
+    });
+    assert.equal(nextLocalPeriod.groups[0].requestCount, 1,
+      "a dispatch exactly at the Paris local upper bound belongs only to the following period");
+    await pool.query("UPDATE jarvis.projects SET state='removed' WHERE id=$1", ["00000000-0000-4000-8000-000000000003"]);
+    assert.equal((await usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+    })).groups.length, 0, "removed projects are not queryable");
+    await pool.query("UPDATE jarvis.projects SET state='active' WHERE id=$1", ["00000000-0000-4000-8000-000000000003"]);
+    await pool.query("UPDATE jarvis.installations SET state='suspended' WHERE id=$1", ["00000000-0000-4000-8000-000000000001"]);
+    assert.equal((await usageReads.summary("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+    })).groups.length, 0, "suspended installations do not authorize usage reads");
+    await pool.query("UPDATE jarvis.installations SET state='active' WHERE id=$1", ["00000000-0000-4000-8000-000000000001"]);
+    const dstRead = await usageReads.summary("owner-a", {
+      start: "2026-03-29", end: "2026-03-30", timeZone: "Europe/Paris",
+    });
+    assert.equal(Date.parse(dstRead.period.end) - Date.parse(dstRead.period.start), 23 * 60 * 60 * 1000,
+      "Europe/Paris spring DST period uses its actual local-day duration");
+    const fallBackRead = await usageReads.summary("owner-a", {
+      start: "2026-10-25", end: "2026-10-26", timeZone: "Europe/Paris",
+    });
+    assert.equal(Date.parse(fallBackRead.period.end) - Date.parse(fallBackRead.period.start), 25 * 60 * 60 * 1000,
+      "Europe/Paris fall-back period includes its repeated local hour");
+    const firstPage = await usageReads.requests("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+      projectId: "00000000-0000-4000-8000-000000000003", limit: 2,
+    });
+    assert.equal(firstPage.records.length, 2);
+    assert.equal(firstPage.truncated, true);
+    assert.ok(firstPage.nextCursor);
+    const secondPage = await usageReads.requests("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+      projectId: "00000000-0000-4000-8000-000000000003", limit: 2, cursor: firstPage.nextCursor,
+    });
+    assert.equal(secondPage.records.length, 2);
+    assert.equal(new Set([...firstPage.records, ...secondPage.records].map((record) => record.id)).size, 4);
+    assert.equal(JSON.stringify(firstPage).includes("estimated_charge"), false);
+    const detailed = await usageReads.requests("owner-a", {
+      start: "2026-01-01", end: "2026-01-02", timeZone: "Europe/Paris",
+      projectId: "00000000-0000-4000-8000-000000000003", limit: 100,
+    });
+    const correctedRequest = detailed.records.find((record) => record.id === boundaryRequestId);
+    assert.equal(correctedRequest.runtimeCorroboration.counters.inputTotal.value, 9000);
+    assert.equal(correctedRequest.runtimeCorroboration.additive, false);
+    assert.equal(correctedRequest.usage.inputTotal.value, 2000);
+    assert.equal(correctedRequest.quotaSignals.source, "provider-response-header");
+    assert.equal(correctedRequest.quotaSignals.additive, false);
+    assert.equal(correctedRequest.quotaSignals.provider, "openai");
+    assert.equal(correctedRequest.quotaSignals.mappingVersion, "openai-rate-limit-headers-v1");
+    assert.equal(correctedRequest.quotaSignals.freshness, "stale");
+    assert.deepEqual(correctedRequest.quotaSignals.counters, {
+      requestLimit: 100, requestRemaining: 80, tokenLimit: 10000, tokenRemaining: 7000,
+    });
+    assert.deepEqual(Object.keys(correctedRequest.quotaSignals.counters).sort(),
+      ["requestLimit", "requestRemaining", "tokenLimit", "tokenRemaining"]);
+    assert.equal(detailed.retentionCoverage, "unknown");
+    assert.equal(detailed.coverage, "partial");
+    assert.equal(correctedRequest.projectId, "00000000-0000-4000-8000-000000000003");
+
 
     const transactionPersistence = new PostgresPersistence(pool);
     const input = {
@@ -1681,7 +1857,7 @@ test("PostgreSQL migrations and checkpoint authorization work against the real d
                   WHEN 'task_checkpoints' THEN 1
                   WHEN 'task_results' THEN 2
                   WHEN 'queue_entries' THEN 7
-                  WHEN 'model_requests' THEN 107
+                  WHEN 'model_requests' THEN 108
                   WHEN 'usage_observations' THEN 5
                   WHEN 'usage_ledger' THEN 3
                   WHEN 'outbox' THEN 17
