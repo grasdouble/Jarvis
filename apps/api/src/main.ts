@@ -9,11 +9,13 @@ import {
   PostgresStopControlStore,
   PostgresTaskResultReadModel,
   PostgresUsageAccountingStore,
+  PostgresUsageReadModel,
 } from "@jarvis/persistence";
 import { createOwnerAuthBoundary, createOwnerAuthService } from "./auth.js";
 import { createOperationalDashboardBoundary, createOperationalDashboardHttpHandler } from "./dashboard.js";
 import { createTaskResultReadBoundary } from "./task-results.js";
 import { createOperationalDashboardServer } from "./http-server.js";
+import { createUsageReadBoundary } from "./usage-read.js";
 import { createStaticAssetHandler } from "./static-assets.js";
 import { createStopControlHttpHandler } from "./stop-controls.js";
 import { listenUsageAccounting } from "./usage-accounting.js";
@@ -87,13 +89,15 @@ async function serve(): Promise<void> {
   const auth = createOwnerAuthBoundary(createOwnerAuthService({ store: new PostgresOwnerAuthStore(pool), onboardingSecret }), { origin: PUBLIC_ORIGIN });
   const dashboard = createOperationalDashboardHttpHandler(createOperationalDashboardBoundary(new PostgresOperationalDashboardReadModel(pool), auth));
   const taskResults = createTaskResultReadBoundary(new PostgresTaskResultReadModel(pool), auth);
+  const usageRead = createUsageReadBoundary(new PostgresUsageReadModel(pool), auth);
   const stopControls = createStopControlHttpHandler(new PostgresStopControlStore(pool), auth);
   const assets = createStaticAssetHandler(WEB_ROOT);
   const server = createOperationalDashboardServer({ auth, dashboard: async (request) => {
     if (request.url.split("?", 1)[0] === "/healthz") return databaseReadiness(pool);
     if (request.url.split("?", 1)[0]?.startsWith("/api/")) return dashboard(request);
     return assets(request);
-  }, stopControls, taskResults: (request, taskId) => taskResults.get(request, taskId) });
+  }, stopControls, taskResults: (request, taskId) => taskResults.get(request, taskId),
+    usageSummary: (request) => usageRead.summary(request), usageRequests: (request) => usageRead.requests(request) });
   let accounting: Server | undefined;
   try {
     const accountingStore = new PostgresUsageAccountingStore(pool);

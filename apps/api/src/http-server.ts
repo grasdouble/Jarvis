@@ -7,9 +7,10 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 export type DashboardHttpHandler = (request: DashboardHttpRequest) => Promise<OwnerAuthHttpResponse>;
 export type StopControlHttpHandler = (request: OwnerAuthHttpRequest & { readonly method: string; readonly projectId?: string }) => Promise<OwnerAuthHttpResponse>;
 export type TaskResultHttpHandler = (request: OwnerAuthHttpRequest, taskId: string) => Promise<OwnerAuthHttpResponse>;
+export type UsageReadHttpHandler = (request: DashboardHttpRequest) => Promise<OwnerAuthHttpResponse>;
 
 /** Creates a real listener composing existing owner-session and dashboard boundaries; bind policy belongs to deployment. */
-export function createOperationalDashboardServer(options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler; readonly taskResults?: TaskResultHttpHandler }): Server {
+export function createOperationalDashboardServer(options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler; readonly taskResults?: TaskResultHttpHandler; readonly usageSummary?: UsageReadHttpHandler; readonly usageRequests?: UsageReadHttpHandler }): Server {
   return createServer((request, response) => {
     void dispatch(request, response, options);
   });
@@ -18,7 +19,7 @@ export function createOperationalDashboardServer(options: { readonly dashboard: 
 async function dispatch(
   request: IncomingMessage,
   response: ServerResponse,
-  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler; readonly taskResults?: TaskResultHttpHandler },
+  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler; readonly taskResults?: TaskResultHttpHandler; readonly usageSummary?: UsageReadHttpHandler; readonly usageRequests?: UsageReadHttpHandler },
 ): Promise<void> {
   try {
     const body = await readBody(request);
@@ -52,9 +53,14 @@ async function dispatch(
 
 async function dispatchRoute(
   request: DashboardHttpRequest,
-  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler; readonly taskResults?: TaskResultHttpHandler },
+  options: { readonly dashboard: DashboardHttpHandler; readonly auth: OwnerAuthBoundary; readonly stopControls?: StopControlHttpHandler; readonly taskResults?: TaskResultHttpHandler; readonly usageSummary?: UsageReadHttpHandler; readonly usageRequests?: UsageReadHttpHandler },
 ): Promise<OwnerAuthHttpResponse> {
   const path = request.url.split("?", 1)[0] ?? "/";
+  if (path === "/api/v1/usage" || path === "/api/v1/usage/requests") {
+    if (request.method !== "GET") return { status: 405, body: { error: "method_not_allowed" }, headers: { allow: "GET" } };
+    const handler = path.endsWith("/requests") ? options.usageRequests : options.usageSummary;
+    return handler ? handler(request) : { status: 404, body: { error: "not_found" } };
+  }
   const taskResultPath = /^\/api\/v1\/tasks\/([0-9a-f-]{36})\/result$/.exec(path);
   if (taskResultPath) {
     if (request.method !== "GET") return { status: 405, body: { error: "method_not_allowed" }, headers: { allow: "GET" } };
